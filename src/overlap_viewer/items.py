@@ -23,7 +23,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPen, QWheelEvent
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QSizePolicy
 
-from overlap_viewer.config import BAR_HEIGHT, HATCH_COLOR
+from overlap_viewer import theme
+from overlap_viewer.config import BAR_HEIGHT
 from overlap_viewer.palette import text_color
 from overlap_viewer.timemap import TimeMap
 
@@ -170,7 +171,6 @@ class SegmentsItem(pg.GraphicsObject):
         self._labels: list[str] = []
         self._label_colors: list[QColor] = []
         self._hatched: list[bool] = []
-        self._hatch_color = QColor(HATCH_COLOR)
 
     def set_segments(
         self,
@@ -241,7 +241,7 @@ class SegmentsItem(pg.GraphicsObject):
 
         if any(self._hatched):
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(self._hatch_color, Qt.BrushStyle.FDiagPattern))
+            p.setBrush(QBrush(QColor(theme.current().hatch), Qt.BrushStyle.FDiagPattern))
             for x0, x1, hatched in zip(self._x0, self._x1, self._hatched):
                 if hatched:
                     p.drawRect(device_rect(x0, x1))
@@ -344,6 +344,7 @@ class InstanceBarsItem(pg.GraphicsObject):
         metrics = QFontMetricsF(font)
         half = BAR_HEIGHT / 2
         highlighting = self._hover >= 0
+        colors = theme.current()
 
         for i in range(len(self._x0)):
             rect = QRectF(
@@ -357,9 +358,9 @@ class InstanceBarsItem(pg.GraphicsObject):
             faded = False
             if highlighting:
                 if i == self._hover:
-                    edge, width = QColor("#000000"), 2.5
+                    edge, width = QColor(colors.outline), 2.5
                 elif i in self._partners:
-                    edge, width = QColor("#000000"), 1.5
+                    edge, width = QColor(colors.outline), 1.5
                 else:
                     faded = True
                     fill.setAlphaF(0.22)
@@ -378,8 +379,10 @@ class InstanceBarsItem(pg.GraphicsObject):
                         break
 
         if self._hatches:
+            hatch = QColor(colors.overlap_hatch)
+            hatch.setAlpha(80)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(QColor(0, 0, 0, 80), Qt.BrushStyle.BDiagPattern))
+            p.setBrush(QBrush(hatch, Qt.BrushStyle.BDiagPattern))
             for hx0, hx1, lane in self._hatches:
                 rect = QRectF(
                     transform.map(QPointF(hx0, lane - half)),
@@ -605,11 +608,14 @@ class AnchoredText(pg.TextItem):
     """
 
     def __init__(self, html: str, frac=(1.0, 1.0), anchor=(1.03, -0.25), boxed: bool = True):
+        colors = theme.current()
+        fill = QColor(colors.note_fill)
+        fill.setAlpha(215)  # the trace stays faintly readable under the note
         super().__init__(
             html=html,
             anchor=anchor,
-            fill=pg.mkBrush(255, 255, 255, 215) if boxed else None,
-            border=pg.mkPen("#666666", width=0.6) if boxed else None,
+            fill=pg.mkBrush(fill) if boxed else None,
+            border=pg.mkPen(colors.note_border, width=0.6) if boxed else None,
         )
         self._frac = frac
         self._vb = None

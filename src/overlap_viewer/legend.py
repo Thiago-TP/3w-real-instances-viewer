@@ -33,15 +33,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from overlap_viewer import theme
 from overlap_viewer.palette import LegendEntry
 
-# Styling of a swatch in its three states (plain, pointed at, filtered on).
-SWATCH_STYLE = {
-    "plain": ("transparent", "transparent", "#333333"),
-    "highlight": ("#e8eef7", "#4a6fa5", "#12305e"),
-    "selected": ("#ececec", "#333333", "#000000"),
-    "dimmed": ("transparent", "transparent", "#aaaaaa"),
-}
 CHIP_SIZE = (18, 12)
 MAX_POPPED = 4  # entries the retracted key shows at once before counting the rest
 
@@ -193,7 +187,6 @@ class LegendSwatch(QFrame):
         layout.setSpacing(5)
         chip = QFrame()
         chip.setFixedSize(*CHIP_SIZE)
-        chip.setStyleSheet(f"background-color: {entry.fill}; border: 1px solid {entry.edge};")
         self._label = QLabel(entry.label)
         # Highlighting bolds the text, which is wider; the label is sized for the
         # bold version from the start so that pointing at an entry cannot shift
@@ -204,6 +197,13 @@ class LegendSwatch(QFrame):
         layout.addWidget(chip)
         layout.addWidget(self._label)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._chip = chip
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        """Take the colors of the theme now in force, chip and state styling alike."""
+        entry = self.entry
+        self._chip.setStyleSheet(f"background-color: {entry.fill}; border: 1px solid {entry.edge};")
         self._restyle()
 
     def set_state(self, state: str) -> None:
@@ -220,7 +220,7 @@ class LegendSwatch(QFrame):
 
     def _restyle(self) -> None:
         state = "selected" if self._selected and self._state != "dimmed" else self._state
-        background, border, text = SWATCH_STYLE[state]
+        background, border, text = theme.current().swatches[state]
         weight = "bold" if state in ("highlight", "selected") else "normal"
         self.setStyleSheet(
             f"LegendSwatch {{ background-color: {background}; border: 1px solid {border};"
@@ -276,10 +276,8 @@ class LegendBar(QWidget):
         self._pop_layout.setSpacing(8)
         header_layout.addLayout(self._pop_layout)
         self._more = QLabel()
-        self._more.setStyleSheet("color: #777777;")
         header_layout.addWidget(self._more)
         self._hint = QLabel()
-        self._hint.setStyleSheet("color: #888888;")
         header_layout.addWidget(self._hint)
         header_layout.addStretch(1)
         # Fixed, so that popping an entry in and out cannot change the height of
@@ -295,7 +293,16 @@ class LegendBar(QWidget):
         self._flow = FlowLayout(self._body)
         outer.addWidget(self._body)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self.apply_theme()
         self._refresh_header()
+
+    def apply_theme(self) -> None:
+        """Take the colors of the theme now in force."""
+        colors = theme.current()
+        self._more.setStyleSheet(f"color: {colors.muted};")
+        self._hint.setStyleSheet(f"color: {colors.faint};")
+        for swatch in (*self._swatches, *self._popped):
+            swatch.apply_theme()
 
     # -- contents
 
@@ -324,6 +331,7 @@ class LegendBar(QWidget):
 
         present = {entry.fault_class for entry in entries}
         self.set_selected_fault(self._selected if self._selected in present else None)
+        self.apply_theme()
         self._refresh_header()
         self.updateGeometry()
 

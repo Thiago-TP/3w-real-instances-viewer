@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from overlap_viewer import theme
 from overlap_viewer.config import FAULT_SIGNATURES, WELL_STATES, asset_path
 from overlap_viewer.dataset import DatasetInfo
 from overlap_viewer.help_text import (
@@ -47,17 +48,28 @@ SOURCES = (
     "R. E. V. Vargas, which the two articles condense."
 )
 
-STYLE = """
+
+def style() -> str:
+    """The stylesheet of every page, in the colors of the theme in force.
+
+    Rich text carries its own colors, so the pages have to be written again
+    after a theme change rather than merely repainted; both windows throw their
+    help away when the mode changes, which is what makes that happen.
+    """
+    colors = theme.current()
+    return f"""
 <style>
-  body { font-size: 10pt; }
-  h2 { font-size: 12pt; margin-bottom: 2px; }
-  h3 { font-size: 10.5pt; margin-bottom: 2px; }
-  p { margin-top: 3px; margin-bottom: 8px; }
-  .muted { color: #666666; }
-  .sub { color: #444444; font-size: 9pt; }
-  th { text-align: left; background-color: #efefef; }
+  body {{ font-size: 10pt; color: {colors.text}; }}
+  h2 {{ font-size: 12pt; margin-bottom: 2px; }}
+  h3 {{ font-size: 10.5pt; margin-bottom: 2px; }}
+  p {{ margin-top: 3px; margin-bottom: 8px; }}
+  a {{ color: {colors.link}; }}
+  .muted {{ color: {colors.faint}; }}
+  .sub {{ color: {colors.muted}; font-size: 9pt; }}
+  th {{ text-align: left; background-color: {colors.alternate_base}; }}
 </style>
 """
+
 
 # Reaches a bar can carry, in the order the legend lists them.
 REACH_ROWS = (
@@ -73,11 +85,12 @@ REACH_ROWS = (
 
 def _swatch(color: str, width: int = 34) -> str:
     """A colored cell, for a legend-like table."""
-    return f'<td width="{width}" bgcolor="{color}" style="border: 1px solid #888888;">&nbsp;</td>'
+    border = theme.current().border
+    return f'<td width="{width}" bgcolor="{color}" style="border: 1px solid {border};">&nbsp;</td>'
 
 
 def _document(body: str) -> str:
-    return f"<html><head>{STYLE}</head><body>{body}</body></html>"
+    return f"<html><head>{style()}</head><body>{body}</body></html>"
 
 
 class Figures:
@@ -136,8 +149,8 @@ def fault_page(
     parts.append(
         '<p class="sub">Normal-operation instances are never tinted: they have no event to develop.'
         " The example above uses one fault's hue; every fault has its own. Stretches the experts"
-        " left unlabeled are drawn in pale grey under a diagonal hatch — a texture rather than one"
-        " more shade, since two of the fault hues are themselves grey.</p>"
+        " left unlabeled are drawn in a neutral grey under a diagonal hatch — a texture rather than"
+        " one more shade, since two of the fault hues are themselves grey.</p>"
     )
     if figures is not None:
         parts.append(figures.html("platform-overview"))

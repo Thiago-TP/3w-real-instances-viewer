@@ -1,4 +1,4 @@
-"""Constants of the viewer: dataset conventions, palettes, layout tunables, cache location.
+"""Constants of the viewer: dataset conventions, the color ladder, layout, cache location.
 
 Everything the dataset itself can state — event names and labels, variable
 units, the transient offset — is read from the 3W ``dataset.ini`` at run time
@@ -95,47 +95,15 @@ FAULT_SIGNATURES: dict[int, tuple[str, ...]] = {
 # hand-drawn instances have no well to overlap on and are ignored.
 REAL_PREFIX = "WELL-"
 
-# -- Palettes ------------------------------------------------------------------
+# -- The color ladder -----------------------------------------------------------
 
-# One hue per fault-class folder. Normal is green; the faults get distinct
-# categorical colors.
-FAULT_COLORS: dict[int, str] = {
-    0: "#4c9e4c",
-    1: "#1f77b4",
-    2: "#ff7f0e",
-    3: "#d62728",
-    4: "#9467bd",
-    5: "#8c564b",
-    6: "#e377c2",
-    7: "#7f7f7f",
-    8: "#bcbd22",
-    9: "#17becf",
-}
-FALLBACK_FAULT_COLOR = "#555555"  # a folder the palette does not know
-
-# Colors of the well operational status band; ``None`` stands for unknown.
-STATE_COLORS: dict[int | None, str] = {
-    None: "#d9d9d9",
-    0: "#4c9e4c",
-    1: "#d95f5f",
-    2: "#c9a227",
-    3: "#8f7ee6",
-    4: "#5fa8d3",
-    5: "#e6a23c",
-    6: "#7f8c8d",
-    7: "#3fbf9f",
-    8: "#d47fb8",
-}
-
-# Unlabeled stretches: a pale grey, hatched with these strokes. Grey alone
-# would read as one more class — two of the fault hues are themselves grey —
-# so the texture, not the shade, is what says "nothing is known here".
-UNKNOWN_LABEL_COLOR = "#e9e9e9"
-HATCH_COLOR = "#8a8a8a"
+# The hues themselves are a property of the light or dark mode in force and live
+# in ``theme``; what is fixed here is how far along the ladder each step sits,
+# which says the same thing in either mode.
 
 # How far the fault developed inside an instance fixes the tint of its bar:
-# full hue once the steady fault state is labeled, lighter when only the
-# transient is, lightest when the window never leaves normal operation.
+# full hue once the steady fault state is labeled, weaker when only the
+# transient is, weakest when the window never leaves normal operation.
 REACH_TINTS: dict[str, float] = {"steady": 1.00, "transient": 0.55, "normal": 0.25}
 REACH_LABELS: dict[str, str] = {
     "steady": "steady state reached",
@@ -144,12 +112,9 @@ REACH_LABELS: dict[str, str] = {
 }
 
 # The time series plots shade their background with the same hues and the same
-# three-step ladder, compressed toward white so the trace stays legible; the
-# band above each plot carries the exact bar colors.
+# three-step ladder, compressed toward the plotting ground so the trace stays
+# legible; the band above each plot carries the exact bar colors.
 BACKGROUND_TINTS: dict[str, float] = {"steady": 0.62, "transient": 0.38, "normal": 0.18}
-
-# Line color of a time series; saturated, since it sits on tinted backgrounds.
-TRACE_COLOR = "#1f4e79"
 
 # -- Layout ---------------------------------------------------------------------
 

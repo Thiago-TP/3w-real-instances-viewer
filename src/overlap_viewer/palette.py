@@ -1,19 +1,21 @@
 """Colors: fault hues tinted by reach, label shading, legend entries. No Qt here.
 
+The hues themselves belong to the theme in force (see ``theme``); what is here
+is how they combine — the ladder of tints that says how far a fault developed,
+and the key that names every color drawn. The theme is read on every call rather
+than captured, so switching mode and rebuilding is enough to repaint everything.
+
 Every color is a ``#rrggbb`` string so the backend and its tests stay free of
 Qt; the widgets turn them into ``QColor`` at draw time.
 """
 
 from dataclasses import dataclass
 
+from overlap_viewer import theme
 from overlap_viewer.config import (
     BACKGROUND_TINTS,
-    FALLBACK_FAULT_COLOR,
-    FAULT_COLORS,
     REACH_LABELS,
     REACH_TINTS,
-    STATE_COLORS,
-    UNKNOWN_LABEL_COLOR,
 )
 
 
@@ -28,14 +30,23 @@ def to_hex(rgb: tuple[float, float, float]) -> str:
     return "#" + "".join(f"{round(max(0.0, min(1.0, c)) * 255):02x}" for c in rgb)
 
 
-def tint(color: str, strength: float) -> str:
-    """Mix one color toward white, ``strength`` 1.0 keeping it untouched."""
-    return to_hex(tuple(1.0 - (1.0 - c) * strength for c in to_rgb(color)))
+def tint(color: str, strength: float, base: str | None = None) -> str:
+    """Mix one color toward the ground it is drawn on, ``strength`` 1.0 keeping it untouched.
+
+    That ground is the plotting background of the theme in force — white in
+    light mode, near-black in dark mode — so a weaker tint always means less of
+    the hue and more of the background, whichever way round the two are. Mixing
+    toward white regardless would make the faintest step of the ladder the
+    loudest thing on a dark plot.
+    """
+    ground = to_rgb(base if base is not None else theme.current().plot_background)
+    return to_hex(tuple(g - (g - c) * strength for g, c in zip(ground, to_rgb(color))))
 
 
 def fault_color(fault_class: int) -> str:
     """Hue of one fault-class folder."""
-    return FAULT_COLORS.get(fault_class, FALLBACK_FAULT_COLOR)
+    colors = theme.current()
+    return colors.faults.get(fault_class, colors.fallback_fault)
 
 
 def bar_strength(fault_class: int, reach: str) -> float:
@@ -57,8 +68,8 @@ def background_color(fault_class: int, reach: str) -> str:
     """Background of a time series stretch, on the same ladder as ``bar_color``.
 
     The three reach levels keep their order and their hue but are compressed
-    toward white (``BACKGROUND_TINTS``), so a full-strength fault hue does not
-    swallow the trace drawn over it.
+    toward the plotting ground (``BACKGROUND_TINTS``), so a full-strength fault
+    hue does not swallow the trace drawn over it.
     """
     strength = BACKGROUND_TINTS["steady"] if fault_class == 0 else BACKGROUND_TINTS[reach]
     return tint(fault_color(fault_class), strength)
@@ -66,12 +77,13 @@ def background_color(fault_class: int, reach: str) -> str:
 
 def unknown_background() -> str:
     """Background of an unlabeled stretch of a time series."""
-    return UNKNOWN_LABEL_COLOR
+    return theme.current().unknown
 
 
 def state_color(state: int | None) -> str:
-    """Color of one well operational status code, grey when unknown."""
-    return STATE_COLORS.get(state, STATE_COLORS[None])
+    """Color of one well operational status code, neutral grey when unknown."""
+    states = theme.current().states
+    return states.get(state, states[None])
 
 
 def text_color(background: str) -> str:

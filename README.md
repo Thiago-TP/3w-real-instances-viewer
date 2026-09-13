@@ -34,8 +34,8 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
 - **Drag** to pan, **Ctrl + wheel** to zoom (the plain wheel scrolls the grid), **right-click** for
   pyqtgraph's menu (view all, export).
 - The toolbar sets the number of columns, filters the grid to the wells that have overlaps, sorts
-  wells by number, overlapping instances, instances or deepest pile-up, rescans the dataset, and
-  opens the help (**F1**).
+  wells by number, overlapping instances, instances or deepest pile-up, switches between the light
+  and dark modes, rescans the dataset, and opens the help (**F1**).
 
 **Instance window** — one block per instance, stacked chronologically on a shared time axis, so the
 overlapping stretches line up vertically. Each block has a header line, the well operational status
@@ -95,6 +95,21 @@ Stretches the experts left unlabeled are hatched rather than merely grey: two of
 themselves grey, and a texture says *nothing is known here* where one more shade would just read as
 one more class.
 
+## Light and dark
+
+The **Theme** box of the toolbar switches both halves of the viewer at once — the windows Qt paints
+and the plots pyqtgraph paints — so they can never disagree; *System* follows the desktop, and
+follows it live. The choice is remembered between runs, and `--theme light|dark|system` overrides it
+for one run.
+
+The dark mode is not the light one inverted. The fault hues are lifted, because a categorical
+palette chosen to read as ink on paper sinks into a dark ground, and the ladder of tints mixes
+toward the plotting background of the mode rather than always toward white, so that a weaker tint
+always means less of the hue and more of the ground, whichever way round the two are. The trace of a
+time series crosses to the other end of the scale for the same reason: dark on the pale shading of
+the light mode, pale on the dark shading of the other. Every color of a mode is stated in one place,
+[`theme.py`](src/overlap_viewer/theme.py), and the windows rebuild from it when the mode changes.
+
 ## Running
 
 Requires Python 3.11 or newer, [uv](https://docs.astral.sh/uv/) and a local copy of the 3W dataset.
@@ -116,6 +131,7 @@ equivalent entry points.
 | `--raw-dir PATH` | see above | root of the 3W dataset (the folder holding `0/` … `9/` and `dataset.ini`) |
 | `--columns N` | 2 | plots per row of the overview (1 to 4) |
 | `--gap-hours H` | 12 | a silence at least this long splits a well's recording into two bursts |
+| `--theme MODE` | the last one chosen | `light`, `dark`, or `system` to follow the desktop |
 | `--no-cache` | off | read every instance again instead of using the cached catalogue |
 
 The first launch reads the time span and labels of every real instance (about 5 s for the 1,119
@@ -138,12 +154,14 @@ app/
 │   └── papers/               the 3W data articles and the thesis the help draws on
 ├── tests/test_backend.py     backend tests on a synthetic miniature of the 3W layout
 └── src/overlap_viewer/
-    ├── config.py             dataset fallbacks · palettes · signatures · layout · cache location
+    ├── config.py             dataset fallbacks · the tint ladder · signatures · layout · cache
     ├── dataset.py            dataset.ini · instance catalogue and its cache · overlaps per well
     ├── timemap.py            gap-compressed (or calendar) time axis in hours
     ├── labels.py             label kinds and names · runs · feature statistics · coverage counts
+    ├── theme.py              every color of the light and of the dark mode
     ├── palette.py            fault hues tinted by reach · legend entries
     ├── help_text.py          what the help says: classes, variables, statuses, usage
+    ├── styling.py            installing a theme into Qt and pyqtgraph · the saved mode
     ├── loading.py            progress dialog · cache of loaded instances
     ├── items.py              pyqtgraph items: segments, instance bars, time axis, anchored text
     ├── legend.py             the clickable color key and its flow layout
@@ -153,8 +171,8 @@ app/
     └── app.py                command line and start-up
 ```
 
-The backend (`config`, `dataset`, `timemap`, `labels`, `palette`, `help_text`) depends on pandas,
-numpy and pyarrow only, and reads what the dataset states about itself from `dataset.ini` (event
+The backend (`config`, `dataset`, `timemap`, `labels`, `theme`, `palette`, `help_text`) depends on
+pandas, numpy and pyarrow only, and reads what the dataset states about itself from `dataset.ini` (event
 names and labels, the transient offset, variable units), with built-in fallbacks for 3W 2.0.0. The
 frontend is PySide6 and pyqtgraph. The lane-packing rule that stacks the instances is the one the
 `flowml` pipeline uses to drop overlapping instances: what the overview shows on stack level 2 or

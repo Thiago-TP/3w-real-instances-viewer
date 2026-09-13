@@ -3,6 +3,7 @@
 Usage
 -----
     overlap-viewer [--raw-dir PATH] [--no-cache] [--gap-hours H] [--columns N]
+                   [--theme MODE]
 
 The dataset root is taken from ``--raw-dir``, else from the
 ``FLOWML_RAW_DATA_DIR`` environment variable, else from the usual relative
@@ -18,7 +19,7 @@ from pathlib import Path
 import pyqtgraph as pg
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from overlap_viewer import __version__
+from overlap_viewer import __version__, styling, theme
 from overlap_viewer.config import DEFAULT_GAP_HOURS, RAW_DIR_CANDIDATES, RAW_DIR_ENV
 from overlap_viewer.dataset import DatasetInfo, ScanCancelled
 from overlap_viewer.loading import catalogue_with_progress
@@ -80,12 +81,24 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--columns", type=int, default=2, choices=range(1, 5), help="plots per row (default: 2)"
     )
+    parser.add_argument(
+        "--theme",
+        choices=theme.MODES,
+        default=None,
+        help="color mode of the windows and the plots (default: the last one chosen)",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
 
 def build_window(args: argparse.Namespace) -> OverviewWindow | None:
-    """Everything up to the overview window, for ``main`` and for scripted runs."""
+    """Everything up to the overview window, for ``main`` and for scripted runs.
+
+    The theme goes in first: pyqtgraph fixes the colors of an item when it is
+    built, and the dialogs of the scan are on screen before that.
+    """
+    mode = args.theme or styling.saved_mode()
+    styling.apply(mode)
     raw_dir = resolve_raw_dir(args.raw_dir)
     if raw_dir is None:
         return None
@@ -97,15 +110,18 @@ def build_window(args: argparse.Namespace) -> OverviewWindow | None:
     except FileNotFoundError as error:
         QMessageBox.critical(None, "3W Overlap Viewer", str(error))
         return None
-    return OverviewWindow(info, catalogue, gap_hours=args.gap_hours, columns=args.columns)
+    return OverviewWindow(
+        info, catalogue, gap_hours=args.gap_hours, columns=args.columns, theme_mode=mode
+    )
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    pg.setConfigOptions(background="w", foreground="k", antialias=True)
+    pg.setConfigOptions(antialias=True)
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    app.setApplicationName("3W Overlap Viewer")
-    app.setStyle("Fusion")
+    app.setOrganizationName(styling.SETTINGS[0])
+    app.setApplicationName(styling.SETTINGS[1])
+    app.setStyle("Fusion")  # the one style that honors a palette on every platform
     window = build_window(args)
     if window is None:
         return 1

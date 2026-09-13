@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer.config import FAULT_SIGNATURES, REACH_LABELS, TRACE_COLOR
+from overlap_viewer import theme
+from overlap_viewer.config import FAULT_SIGNATURES, REACH_LABELS
 from overlap_viewer.dataset import DatasetInfo, WellData, instance_title
 from overlap_viewer.help import HelpWindow
 from overlap_viewer.items import (
@@ -72,7 +73,6 @@ PLOT_MIN_PX = 150
 AXIS_PX = 28
 ROW_SPACING = 2  # between two rows of one instance block
 BLOCK_SPACING = 16  # added above the header of every block but the first
-SHARED_COLORS = {2: "#9a9a9a", 3: "#6f6f6f"}  # instances sharing a stretch; darker beyond
 SI_UNITS = ("Pa",)  # units pyqtgraph may prefix (kPa, MPa); the others stay literal
 
 HINT = (
@@ -219,10 +219,10 @@ class InstanceWindow(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(8, 4, 8, 4)
         outer.setSpacing(4)
-        header = QLabel(self._header_html())
-        header.setTextFormat(Qt.TextFormat.RichText)
-        header.setWordWrap(True)
-        outer.addWidget(header)
+        self._header = QLabel(self._header_html())
+        self._header.setTextFormat(Qt.TextFormat.RichText)
+        self._header.setWordWrap(True)
+        outer.addWidget(self._header)
 
         body = QHBoxLayout()
         body.setSpacing(8)
@@ -241,7 +241,29 @@ class InstanceWindow(QMainWindow):
         self._status = ElidedLabel(HINT)
         self.statusBar().addWidget(self._status, 1)
         self._layout_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self._restyle()
         self.resize(1360, 860)
+
+    def _restyle(self) -> None:
+        """Take the colors of the theme now in force, for the chrome outside the plots."""
+        colors = theme.current()
+        self._layout_widget.setBackground(colors.plot_background)
+        self._note.setStyleSheet(f"color: {colors.muted}; font-size: 8pt;")
+        self._header.setText(self._header_html())
+
+    def apply_theme(self) -> None:
+        """Repaint this window in the theme now in force.
+
+        The stack is laid out again rather than recolored: pyqtgraph fixes the
+        colors of an axis when it is built, and every plot here is thrown away
+        and rebuilt whenever the feature selection changes anyway.
+        """
+        self._restyle()
+        if self._help is not None:  # its swatches carry the colors of the old theme
+            self._help.close()
+            self._help.deleteLater()
+            self._help = None
+        self._rebuild()
 
     def _build_feature_panel(self) -> QWidget:
         panel = QWidget()
@@ -283,10 +305,9 @@ class InstanceWindow(QMainWindow):
         checks.addStretch(1)
         scroll.setWidget(inner)
         layout.addWidget(scroll, 1)
-        note = QLabel("Greyed-out features were recorded by none of these instances.")
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #666666; font-size: 8pt;")
-        layout.addWidget(note)
+        self._note = QLabel("Greyed-out features were recorded by none of these instances.")
+        self._note.setWordWrap(True)
+        layout.addWidget(self._note)
         return panel
 
     def _build_signature_check(self) -> QWidget:
@@ -368,12 +389,13 @@ class InstanceWindow(QMainWindow):
         )
         return (
             f'<span style="font-size:11pt;"><b>{self.well.label}</b> · {what}</span><br>'
-            f'<span style="color:#444444;">{first:%Y-%m-%d %H:%M:%S} → {last:%Y-%m-%d %H:%M:%S} · {span_h:.1f} h spanned · '
+            f'<span style="color:{theme.current().muted};">{first:%Y-%m-%d %H:%M:%S} → {last:%Y-%m-%d %H:%M:%S} · {span_h:.1f} h spanned · '
             f"{shared_h:.1f} h recorded by two or more instances · {len(rows)} instance{'s' if len(rows) > 1 else ''} shown, "
             f"chronological</span>"
         )
 
     def _instance_html(self, position: int) -> str:
+        colors = theme.current()
         row = self.rows.iloc[position]
         fault_class = int(row["fault_class"])
         color = bar_color(fault_class, row["reach"])
@@ -387,14 +409,15 @@ class InstanceWindow(QMainWindow):
             if other != position and self._overlaps(position, other)
         )
         badge = (
-            '&nbsp;<span style="background-color:#333333; color:#ffffff;">&nbsp;clicked&nbsp;</span>'
+            f'&nbsp;<span style="background-color:{colors.highlight}; '
+            f'color:{colors.highlight_text};">&nbsp;clicked&nbsp;</span>'
             if position == self.clicked
             else ""
         )
         return (
             f'<span style="font-size:10pt;"><b>{instance_title(row)}</b></span>{badge}'
             f'&nbsp;&nbsp;<span style="font-size:9pt; color:{color};">&#9632;</span>'
-            f'<span style="font-size:9pt; color:#333333;"> {fault}{reach} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · '
+            f'<span style="font-size:9pt; color:{colors.muted};"> {fault}{reach} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · '
             f"{row['hours']:.1f} h · {int(row['n_samples']):,} samples · level {int(row['lane']) + 1} · "
             f"overlaps {partners} shown</span>"
         )
@@ -491,7 +514,9 @@ class InstanceWindow(QMainWindow):
         if self._master is not None:
             plot.setXLink(self._master)
         crosshair = pg.InfiniteLine(
-            angle=90, movable=False, pen=pg.mkPen("#333333", width=1, style=Qt.PenStyle.DashLine)
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(theme.current().crosshair, width=1, style=Qt.PenStyle.DashLine),
         )
         crosshair.setZValue(40)
         crosshair.setVisible(False)
@@ -547,11 +572,12 @@ class InstanceWindow(QMainWindow):
         )
         plot.addItem(shading, ignoreBounds=True)
 
+        colors = theme.current()
         stats = feature_stats(frame, feature)
         if stats.recorded:
             x = self.timemap.to_x(frame.index)
             y = frame[feature].to_numpy(dtype=float)
-            curve = pg.PlotDataItem(x, y, pen=pg.mkPen(TRACE_COLOR, width=1), connect="finite")
+            curve = pg.PlotDataItem(x, y, pen=pg.mkPen(colors.trace, width=1), connect="finite")
             # Added before clipping and downsampling are switched on: while an item is being
             # added, pyqtgraph resolves its view to the layout widget, which those options query.
             plot.addItem(curve)
@@ -559,11 +585,12 @@ class InstanceWindow(QMainWindow):
             curve.setClipToView(True)
             note = format_delta(stats.delta, unit) + (" (flat)" if stats.flat else "")
             AnchoredText(
-                f'<span style="font-size:8pt; color:#222222;">{note} · coverage {stats.coverage:.1f} %</span>'
+                f'<span style="font-size:8pt; color:{colors.text};">'
+                f"{note} · coverage {stats.coverage:.1f} %</span>"
             ).attach(plot)
         else:
             AnchoredText(
-                '<span style="font-size:10pt; color:#8a8a8a;">not recorded</span>',
+                f'<span style="font-size:10pt; color:{colors.faint};">not recorded</span>',
                 frac=(0.5, 0.5),
                 anchor=(0.5, 0.5),
                 boxed=False,
@@ -611,16 +638,12 @@ class InstanceWindow(QMainWindow):
         return segments
 
     def _coverage_band_segments(self) -> BandSegments:
+        colors = theme.current()
         segments = BandSegments([], [], [], [], [])
         for start, end, count in coverage_counts(self.rows["start"], self.rows["end"]):
             a, b = self.timemap.to_x([start, end])
-            if count <= 0:
-                segments.add(a, b, "#ffffff", "", False)
-            elif count == 1:
-                segments.add(a, b, "#f4f4f4", "", False)
-            else:
-                label = f"shared by {count} instances"
-                segments.add(a, b, SHARED_COLORS.get(count, "#444444"), label, False)
+            label = f"shared by {count} instances" if count >= 2 else ""
+            segments.add(a, b, colors.shared_fill(count), label, False)
         return segments
 
     # -- ranges

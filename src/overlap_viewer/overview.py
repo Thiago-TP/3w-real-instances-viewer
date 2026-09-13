@@ -15,6 +15,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QFontMetrics
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QGridLayout,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from overlap_viewer import styling, theme
 from overlap_viewer.config import (
     BAR_HEIGHT,
     DEFAULT_GAP_HOURS,
@@ -185,7 +187,7 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         plot.addItem(self._blocks, ignoreBounds=True)
         for lane in range(data.n_lanes):
             line = pg.InfiniteLine(
-                pos=lane, angle=0, pen=pg.mkPen("#dcdcdc", width=1), movable=False
+                pos=lane, angle=0, pen=pg.mkPen(theme.current().grid_line, width=1), movable=False
             )
             line.setZValue(-15)
             plot.addItem(line, ignoreBounds=True)
@@ -222,9 +224,10 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
             self._x0, self._x1, rows["lane"].to_numpy(dtype=float), fills, edges, rows["stamp"]
         )
 
+        colors = theme.current()
         spans = timemap.block_spans()
         self._blocks.set_segments(
-            [a for a, _ in spans], [b for _, b in spans], ["#f4f4f4"] * len(spans)
+            [a for a, _ in spans], [b for _, b in spans], [colors.block_fill] * len(spans)
         )
         plot = self.getPlotItem()
         for line in self._gap_lines:
@@ -235,7 +238,7 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
                 pos=x,
                 angle=90,
                 movable=False,
-                pen=pg.mkPen("#9a9a9a", width=1, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(colors.gap_line, width=1, style=Qt.PenStyle.DashLine),
             )
             line.setZValue(-12)
             plot.addItem(line, ignoreBounds=True)
@@ -291,7 +294,7 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         )
         return (
             f'<span style="font-size:10pt; font-weight:bold;">{data.label}</span>'
-            f'&nbsp;&nbsp;<span style="font-size:8pt; color:#555555;">{summary}</span>'
+            f'&nbsp;&nbsp;<span style="font-size:8pt; color:{theme.current().muted};">{summary}</span>'
         )
 
     # -- mouse
@@ -376,6 +379,7 @@ class OverviewWindow(QMainWindow):
         gap_hours: float = DEFAULT_GAP_HOURS,
         columns: int = 2,
         frames: FrameCache | None = None,
+        theme_mode: str = "system",
         parent=None,
     ):
         super().__init__(parent)
@@ -387,6 +391,7 @@ class OverviewWindow(QMainWindow):
         self._cells: dict[int, WellCell] = {}
         self._fault_filter: int | None = None
         self._help: HelpWindow | None = None
+        self._theme_mode = theme_mode
         self.setWindowTitle(f"3W Overlap Viewer — {info.raw_dir}")
 
         self._build_toolbar(columns)
@@ -407,7 +412,6 @@ class OverviewWindow(QMainWindow):
         self._grid.setVerticalSpacing(GRID_SPACING[1])
         self._empty = QLabel("No well matches the current filters.")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty.setStyleSheet("color: #777777; padding: 40px;")
         self._empty.hide()
         self._scroll.setWidget(self._container)
         layout.addWidget(self._scroll, 1)
@@ -417,7 +421,15 @@ class OverviewWindow(QMainWindow):
         self._status = ElidedLabel(HINT)
         self.statusBar().addWidget(self._status, 1)
 
+        self._restyle()
         self.set_catalogue(catalogue)
+
+        # A ``system`` mode has to keep up with the desktop changing its mind.
+        # Queued, because installing a theme sets the color scheme itself and
+        # would otherwise re-enter this window in the middle of a rebuild.
+        QApplication.instance().styleHints().colorSchemeChanged.connect(
+            self._on_system_scheme, Qt.ConnectionType.QueuedConnection
+        )
 
     # -- construction
 
@@ -457,6 +469,20 @@ class OverviewWindow(QMainWindow):
         bar.addWidget(self._compress)
 
         bar.addSeparator()
+        bar.addWidget(QLabel(" Theme "))
+        self._theme = QComboBox()
+        self._theme.addItems([mode.capitalize() for mode in theme.MODES])
+        self._theme.setCurrentIndex(theme.MODES.index(self._theme_mode))
+        self._theme.setToolTip(
+            "Light or dark for both the windows and the plots inside them; System follows the "
+            "desktop. The choice is remembered."
+        )
+        self._theme.currentIndexChanged.connect(
+            lambda index: self.set_theme_mode(theme.MODES[index])
+        )
+        bar.addWidget(self._theme)
+
+        bar.addSeparator()
         reset = QAction("Reset views", self)
         reset.setShortcut("Ctrl+R")
         reset.triggered.connect(self.reset_views)
@@ -486,7 +512,6 @@ class OverviewWindow(QMainWindow):
         self._fault_action = bar.addWidget(self._fault_button)
         self._fault_action.setVisible(False)
         self._dataset_label = QLabel()
-        self._dataset_label.setStyleSheet("color: #555555;")
         bar.addWidget(self._dataset_label)
 
     def set_catalogue(self, catalogue: pd.DataFrame) -> None:
@@ -527,6 +552,40 @@ class OverviewWindow(QMainWindow):
             f"{n_overlapping} overlapping on {n_over} wells "
         )
         self._relayout()
+
+    # -- appearance
+
+    def _restyle(self) -> None:
+        """Take the colors of the theme now in force, for the chrome this window owns."""
+        colors = theme.current()
+        self._empty.setStyleSheet(f"color: {colors.faint}; padding: 40px;")
+        self._dataset_label.setStyleSheet(f"color: {colors.muted};")
+
+    def set_theme_mode(self, mode: str) -> None:
+        """Switch to ``light``, ``dark`` or ``system``, and repaint every open window.
+
+        The plots cannot be recolored in place: pyqtgraph reads its background
+        and its foreground when an item is built, so the grid is built again
+        from the same catalogue, which is the path a rescan already takes.
+        """
+        self._theme_mode = mode
+        styling.save_mode(mode)
+        if self._theme.currentIndex() != theme.MODES.index(mode):  # a mode set in code
+            self._theme.blockSignals(True)
+            self._theme.setCurrentIndex(theme.MODES.index(mode))
+            self._theme.blockSignals(False)
+        before = theme.current()
+        if styling.apply(mode) is before:
+            return  # e.g. System on a light desktop, chosen while already light
+        self._restyle()
+        for window in list(self._windows):
+            window.apply_theme()
+        self.set_catalogue(self._catalogue)
+
+    def _on_system_scheme(self, *args) -> None:
+        """Follow the desktop switching between light and dark, while ``system`` is chosen."""
+        if self._theme_mode == "system":
+            self.set_theme_mode("system")
 
     # -- behaviour
 

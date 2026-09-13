@@ -7,11 +7,12 @@ import pandas as pd
 import pytest
 
 from overlap_viewer import dataset as ds
-from overlap_viewer import help_text
+from overlap_viewer import help_text, theme
 from overlap_viewer.config import (
     DEFAULT_FAULT_NAMES,
     DEFAULT_SENSOR_UNITS,
     FAULT_SIGNATURES,
+    REACH_TINTS,
     WELL_STATES,
     asset_path,
 )
@@ -26,10 +27,29 @@ from overlap_viewer.labels import (
     runs,
 )
 from overlap_viewer.legend import row_breaks
-from overlap_viewer.palette import bar_color, legend_entries, legend_key, tint
+from overlap_viewer.palette import (
+    background_color,
+    bar_color,
+    fault_color,
+    legend_entries,
+    legend_key,
+    state_color,
+    text_color,
+    tint,
+    to_rgb,
+    unknown_background,
+)
 from overlap_viewer.timemap import TimeMap
 
 T0 = pd.Timestamp("2017-02-01 01:00:00")
+
+
+@pytest.fixture(autouse=True)
+def light_theme():
+    """The theme is global, so a test that switches it must not colour the next one."""
+    theme.use("light")
+    yield
+    theme.use("light")
 
 
 def hours(h: float) -> pd.Timestamp:
@@ -218,6 +238,81 @@ def test_palette_ladder_and_legend():
     # The three reaches of a normal instance share one entry, so one key each.
     assert legend_key(0, "normal") == legend_key(0, "steady") == entries[0].key
     assert legend_key(9, "transient") == entries[2].key
+
+
+def distance_from_ground(color: str) -> float:
+    """How far a color has travelled from the plotting ground it is mixed toward."""
+    ground = to_rgb(theme.current().plot_background)
+    return sum(abs(a - b) for a, b in zip(ground, to_rgb(color)))
+
+
+def test_every_theme_colors_everything_the_viewer_can_draw():
+    for colors in theme.THEMES.values():
+        assert set(colors.faults) == set(DEFAULT_FAULT_NAMES)
+        assert set(colors.states) == set(WELL_STATES) | {None}
+        assert set(colors.swatches) == {"plain", "highlight", "selected", "dimmed"}
+        assert colors.name in theme.MODES
+
+
+def test_a_mode_changes_every_color_the_plots_carry():
+    light = {
+        "bar": bar_color(9, "steady"),
+        "hue": fault_color(3),
+        "state": state_color(0),
+        "unknown": unknown_background(),
+    }
+    assert theme.use("dark").dark
+    dark = {
+        "bar": bar_color(9, "steady"),
+        "hue": fault_color(3),
+        "state": state_color(0),
+        "unknown": unknown_background(),
+    }
+    assert all(light[key] != dark[key] for key in light)
+    with pytest.raises(ValueError):
+        theme.use("solarized")
+
+
+def test_the_tint_ladder_runs_away_from_the_ground_of_each_mode():
+    """A weaker reach is always a step back toward the background, dark or light."""
+    for mode in theme.MODES[1:]:
+        colors = theme.use(mode)
+        assert tint("#000000", 0.0) == colors.plot_background
+        assert tint(colors.faults[9], 1.0) == colors.faults[9]
+        steps = [distance_from_ground(bar_color(9, reach)) for reach in REACH_TINTS]
+        assert steps == sorted(steps, reverse=True), mode  # steady, transient, normal
+        # A bar always says its own color rather than blending into the plot.
+        assert min(steps) > 0.05, mode
+        # And whatever the bar, the stamp written inside it stays readable.
+        for reach in REACH_TINTS:
+            fill = bar_color(9, reach)
+            assert text_color(fill) != fill
+
+
+def luminance(color: str) -> float:
+    r, g, b = to_rgb(color)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def test_the_trace_stays_visible_over_every_shading_it_can_sit_on():
+    """A time series line keeps to one side of the ladder, the far side of it."""
+    for mode in theme.MODES[1:]:
+        colors = theme.use(mode)
+        grounds = [background_color(f, r) for f in DEFAULT_FAULT_NAMES for r in REACH_TINTS]
+        grounds += [tint(unknown_background(), 0.7), colors.plot_background]
+        gaps = [luminance(ground) - luminance(colors.trace) for ground in grounds]
+        if colors.dark:
+            assert max(gaps) < -0.3, mode  # the trace sits above every shading
+        else:
+            assert min(gaps) > 0.3, mode  # and below every one of them here
+
+
+def test_the_coverage_band_only_speaks_where_instances_pile_up():
+    colors = theme.use("dark")
+    assert colors.shared_fill(0) == colors.plot_background
+    assert colors.shared_fill(1) == colors.block_fill
+    assert colors.shared_fill(2) == colors.shared_fills[0]
+    assert colors.shared_fill(99) == colors.shared_fills[-1]
 
 
 def test_legend_keeps_each_gradient_on_its_own_row():

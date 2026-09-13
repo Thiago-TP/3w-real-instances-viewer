@@ -623,6 +623,12 @@ USAGE = {
         "Drag a plot to pan it. Ctrl with the mouse wheel zooms; the wheel alone scrolls the page.",
         "Ctrl+R resets the views of the window, F1 opens this help.",
         (
+            "The Theme box of the overview toolbar switches the windows and the plots inside them "
+            "together, so the two never disagree; System follows the desktop. The dark mode lifts "
+            "the fault hues and shades toward its own dark ground, so the ladder of tints keeps "
+            "meaning the same thing. The choice is remembered."
+        ),
+        (
             "Right-click a plot for pyqtgraph's own menu, which can export the plot as an image or "
             "as data."
         ),

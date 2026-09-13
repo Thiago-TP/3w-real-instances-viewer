@@ -1,5 +1,6 @@
 """Backend tests on a synthetic miniature of the 3W layout; no Qt involved."""
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from overlap_viewer.config import (
     REACH_TINTS,
     WELL_STATES,
     asset_path,
+    cache_dir,
 )
 from overlap_viewer.labels import (
     coverage_counts,
@@ -42,6 +44,13 @@ from overlap_viewer.palette import (
 from overlap_viewer.timemap import TimeMap
 
 T0 = pd.Timestamp("2017-02-01 01:00:00")
+
+# Where ``config.cache_dir`` looks on the platform the tests are running on. A
+# test that wants the cache inside its ``tmp_path`` sets this one rather than
+# faking ``os.name`` to reach the other branch: ``os.name`` is also what tells
+# ``pathlib`` which flavour of ``Path`` to build, so a Windows interpreter told
+# it is POSIX hands out ``PosixPath`` objects that raise on their first join.
+CACHE_HOME = "LOCALAPPDATA" if os.name == "nt" else "XDG_CACHE_HOME"
 
 
 @pytest.fixture(autouse=True)
@@ -363,9 +372,20 @@ def test_help_text_covers_the_dataset():
     assert set(help_text.CONFIRMATION_WINDOWS) == set(DEFAULT_FAULT_NAMES) - {0, 9}
 
 
+def test_cache_dir_sits_under_the_platform_cache_home(tmp_path: Path, monkeypatch):
+    """The catalogue cache goes where this platform keeps caches, named after the app."""
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "somewhere"))
+    assert cache_dir() == tmp_path / "somewhere" / "overlap-viewer"
+
+
+def test_cache_dir_falls_back_to_the_home_directory(monkeypatch):
+    """With no cache home named, the cache still lands somewhere inside the user's home."""
+    monkeypatch.delenv(CACHE_HOME, raising=False)
+    assert Path.home() in cache_dir().parents
+
+
 def test_catalogue_scan_wells_and_cache(raw_dir: Path, tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(ds.os, "name", "posix")
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
     info = ds.DatasetInfo.load(raw_dir)
 
     seen = []
@@ -376,6 +396,10 @@ def test_catalogue_scan_wells_and_cache(raw_dir: Path, tmp_path: Path, monkeypat
     assert catalogue["n_samples"].tolist() == [7200, 7200, 7200, 3600, 3600]
     assert all(isinstance(p, Path) and p.exists() for p in catalogue["path"])
     assert catalogue["hours"].iloc[3] == pytest.approx((3600 - 1) / 3600)
+    # Inside the temporary directory, not in the user's real cache: were the
+    # redirection to slip, a cache file left by an earlier run would let every
+    # assertion below pass while testing nothing.
+    assert ds.cache_path(raw_dir).is_relative_to(tmp_path)
     assert ds.cache_path(raw_dir).exists()
 
     def no_scan(*args, **kwargs):
@@ -387,7 +411,7 @@ def test_catalogue_scan_wells_and_cache(raw_dir: Path, tmp_path: Path, monkeypat
 
     # Touching a file invalidates the cache and forces a new scan.
     monkeypatch.undo()
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
     path = catalogue["path"].iloc[0]
     path.touch()
     calls = []

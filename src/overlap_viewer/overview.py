@@ -58,7 +58,13 @@ from overlap_viewer.items import (
 )
 from overlap_viewer.legend import LegendBar
 from overlap_viewer.loading import FrameCache, catalogue_with_progress
-from overlap_viewer.palette import bar_color, fault_color, legend_entries, legend_key
+from overlap_viewer.palette import (
+    bar_color,
+    fault_color,
+    legend_entries,
+    legend_key,
+    legend_label,
+)
 from overlap_viewer.timemap import TimeMap
 
 HINT = (
@@ -78,30 +84,57 @@ SORT_KEYS = {
 }
 
 
+def faults_of(data: WellData, index: int, info: DatasetInfo) -> str:
+    """The fault behind one bar — or every fault, ``+``-joined, when a joined bar mixes folders."""
+    return " + ".join(
+        info.fault_name(fault_class)
+        for fault_class in sorted({fault_class for fault_class, _ in data.colors[index]})
+    )
+
+
 def describe_instance(data: WellData, index: int, info: DatasetInfo) -> str:
-    """One line about an instance: name, fault, reach, span, size, level, partners."""
+    """One line about a bar: name, fault, reach, span, size, level, partners.
+
+    A bar joined from several instances names them, and every color it
+    carries, in place of a single fault and reach.
+    """
     row = data.rows.iloc[index]
-    fault_class = int(row["fault_class"])
-    fault = info.fault_name(fault_class)
-    reach = "" if fault_class == 0 else f" · {REACH_LABELS[row['reach']]}"
+    members = data.members[index]
+    if len(members) > 1:
+        origin = data.origin.rows
+        names = [
+            f"{instance_title(origin.iloc[m])} ({info.fault_name(int(origin.iloc[m]['fault_class']))})"
+            for m in members[:4]
+        ]
+        if len(members) > 4:
+            names.append(f"+{len(members) - 4} more")
+        what = f"joins {len(members)} instances: {', '.join(names)} · " + " + ".join(
+            legend_label(fault_class, reach, info.fault_names)
+            for fault_class, reach in data.colors[index]
+        )
+    else:
+        fault_class = int(row["fault_class"])
+        reach = "" if fault_class == 0 else f" · {REACH_LABELS[row['reach']]}"
+        what = f"{info.fault_name(fault_class)}{reach}"
     start, end = pd.Timestamp(row["start"]), pd.Timestamp(row["end"])
     end_fmt = "%H:%M:%S" if end.date() == start.date() else "%Y-%m-%d %H:%M:%S"
+    noun = "bar" if data.joined_view else "instance"
     partners = data.partners[index]
     if len(partners):
         names = [
-            f"{instance_title(data.rows.iloc[j])} ({info.fault_name(int(data.rows.iloc[j]['fault_class']))})"
+            f"{instance_title(data.rows.iloc[j])} ({faults_of(data, j, info)})"
             for j in partners[:4]
         ]
         if len(partners) > 4:
             names.append(f"+{len(partners) - 4} more")
         overlap = (
-            f"overlaps {len(partners)} instance{'s' if len(partners) > 1 else ''}: "
+            f"overlaps {len(partners)} {noun}{'s' if len(partners) > 1 else ''}: "
             + ", ".join(names)
         )
     else:
-        overlap = "overlaps no other instance"
+        overlap = f"overlaps no other {noun}"
     return (
-        f"{instance_title(row)} · {fault}{reach} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} "
+        f"{instance_title(row)} · {what} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} "
         f"({row['hours']:.1f} h, {int(row['n_samples']):,} samples) · stack level {int(row['lane']) + 1} · {overlap}"
     )
 
@@ -218,10 +251,21 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         self._x0 = timemap.to_x(data.starts)
         self._x1 = timemap.to_x(data.ends)
         rows = data.rows
-        fills = [bar_color(int(fc), reach) for fc, reach in zip(rows["fault_class"], rows["reach"])]
+        # One color per distinct legend entry behind the bar: a joined bar is striped with them.
+        fills = [
+            list(dict.fromkeys(bar_color(fault_class, reach) for fault_class, reach in keys))
+            for keys in data.colors
+        ]
         edges = [fault_color(int(fc)) for fc in rows["fault_class"]]
+        suffixes = [f" +{len(members) - 1}" if len(members) > 1 else "" for members in data.members]
         self._bars.set_bars(
-            self._x0, self._x1, rows["lane"].to_numpy(dtype=float), fills, edges, rows["stamp"]
+            self._x0,
+            self._x1,
+            rows["lane"].to_numpy(dtype=float),
+            fills,
+            edges,
+            rows["stamp"],
+            suffixes,
         )
 
         colors = theme.current()
@@ -286,9 +330,21 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         days = bursts.calendar_days
         share = bursts.recorded_hours / max(24 * days, 1e-9)
         n_blocks = len(bursts.blocks)
+        n_bars, instances = data.n_instances, data.origin.n_instances
+        if data.joined_view and n_bars < instances:
+            still = data.n_overlapping
+            counts = (
+                f"{instances} instances joined into {n_bars} bar{'s' if n_bars > 1 else ''} · "
+                f"{still} still overlap{'s' if still == 1 else ''} another"
+                + (" (labels disagree)" if still else "")
+            )
+        else:  # nothing to join on this well: the plain count says it all
+            counts = (
+                f"{data.n_instances} instance{'s' if data.n_instances > 1 else ''} · "
+                f"{data.n_overlapping} overlap another"
+            )
         summary = (
-            f"{data.n_instances} instance{'s' if data.n_instances > 1 else ''} · "
-            f"{data.n_overlapping} overlap another · deepest pile-up {data.n_lanes} · "
+            f"{counts} · deepest pile-up {data.n_lanes} · "
             f"{bursts.recorded_hours:,.1f} h in {n_blocks} burst{'s' if n_blocks > 1 else ''} over "
             f"{days:,.0f} day{'s' if round(days) != 1 else ''} ({share:.1%}) · {first:%Y-%m-%d} → {last:%Y-%m-%d}"
         )
@@ -389,6 +445,7 @@ class OverviewWindow(QMainWindow):
         self._windows: list[QMainWindow] = []
         self._plots: dict[int, WellTimelinePlot] = {}
         self._cells: dict[int, WellCell] = {}
+        self._joined_wells: list[WellData] = []
         self._fault_filter: int | None = None
         self._help: HelpWindow | None = None
         self._theme_mode = theme_mode
@@ -420,6 +477,10 @@ class OverviewWindow(QMainWindow):
 
         self._status = ElidedLabel(HINT)
         self.statusBar().addWidget(self._status, 1)
+        # The count of what is on show sits at the right end of the status bar, where
+        # it does not crowd the toolbar's controls off a window of ordinary width.
+        self._dataset_label = QLabel()
+        self.statusBar().addPermanentWidget(self._dataset_label)
 
         self._restyle()
         self.set_catalogue(catalogue)
@@ -459,7 +520,7 @@ class OverviewWindow(QMainWindow):
         bar.addWidget(self._sort)
 
         bar.addSeparator()
-        self._compress = QCheckBox("Compress silences between recordings")
+        self._compress = QCheckBox("Compress silences")  # the name the help and README use
         self._compress.setChecked(True)
         self._compress.setToolTip(
             "Collapse the months of silence between bursts of recording to narrow dashed blanks, "
@@ -467,6 +528,16 @@ class OverviewWindow(QMainWindow):
         )
         self._compress.toggled.connect(self._set_compressed)
         bar.addWidget(self._compress)
+        self._join = QCheckBox("Join overlapping instances")
+        self._join.setToolTip(
+            "Merge the instances of a well that overlap in time into one bar wherever their labels "
+            "agree on the shared stretch (an unlabeled sample agrees with anything). Instances "
+            "whose labels disagree there stay apart, so the overlaps that remain are exactly the "
+            "labeling conflicts. A bar joined from several fault folders is striped with every "
+            "folder's color; clicking it opens the time series of every instance behind it."
+        )
+        self._join.toggled.connect(self._build_grid)
+        bar.addWidget(self._join)
 
         bar.addSeparator()
         bar.addWidget(QLabel(" Theme "))
@@ -511,25 +582,34 @@ class OverviewWindow(QMainWindow):
         # A widget in a toolbar is shown through its action, which overrides hide().
         self._fault_action = bar.addWidget(self._fault_button)
         self._fault_action.setVisible(False)
-        self._dataset_label = QLabel()
-        bar.addWidget(self._dataset_label)
 
     def set_catalogue(self, catalogue: pd.DataFrame) -> None:
-        """Rebuild every timeline from a new catalogue."""
-        for cell in self._cells.values():
-            self._grid.removeWidget(cell)
-            cell.deleteLater()
+        """Take a new catalogue: split it into wells, join each, and rebuild the grid."""
         self._catalogue = catalogue
         if self._help is not None:  # its instance counts describe the old catalogue
             self._help.close()
             self._help.deleteLater()
             self._help = None
+        self.wells = split_wells(catalogue)
+        self._joined_wells = [well.joined() for well in self.wells]
+        self._build_grid()
+
+    def _shown_wells(self) -> list[WellData]:
+        """The wells as the grid draws them: instance by instance, or joined into bars."""
+        return self._joined_wells if self._join.isChecked() else self.wells
+
+    def _build_grid(self, *args) -> None:
+        """Build every timeline again, from the instances or from their joins."""
+        for cell in self._cells.values():
+            self._grid.removeWidget(cell)
+            cell.hide()  # gone from the screen at once, not only when Qt gets to deleting it
+            cell.deleteLater()
         self._plots = {}
         self._cells = {}
-        self.wells = split_wells(catalogue)
-        self.slots = lane_slots(self.wells, MIN_LANE_SLOTS, MAX_LANE_SLOTS)
+        shown = self._shown_wells()
+        self.slots = lane_slots(shown, MIN_LANE_SLOTS, MAX_LANE_SLOTS)
         height = PLOT_CHROME_PX + LANE_PX * self.slots
-        for well in self.wells:
+        for well in shown:
             plot = WellTimelinePlot(
                 well, self.info, self.slots, self._compress.isChecked(), self._gap_hours
             )
@@ -540,17 +620,24 @@ class OverviewWindow(QMainWindow):
             self._plots[well.well] = plot
             self._cells[well.well] = WellCell(plot)
 
-        present = set().union(*(well.present_colors() for well in self.wells))
+        present = set().union(*(well.present_colors() for well in shown))
         self._legend.set_entries(
             legend_entries(present, self.info.fault_names), self.info.fault_names
         )
-        n_over = sum(1 for well in self.wells if well.n_overlapping > 0)
-        n_overlapping = sum(well.n_overlapping for well in self.wells)
+        n_over = sum(1 for well in shown if well.n_overlapping > 0)
+        n_overlapping = sum(well.n_overlapping for well in shown)
         version = f"3W {self.info.version} · " if self.info.version else ""
-        self._dataset_label.setText(
-            f"{version}{len(catalogue)} real instances on {len(self.wells)} wells, "
-            f"{n_overlapping} overlapping on {n_over} wells "
-        )
+        instances = f"{version}{len(self._catalogue)} real instances on {len(shown)} wells"
+        if self._join.isChecked():
+            bars = sum(well.n_instances for well in shown)
+            self._dataset_label.setText(
+                f"{instances}, joined into {bars} bars, "
+                f"{n_overlapping} still overlapping on {n_over} wells "
+            )
+        else:
+            self._dataset_label.setText(
+                f"{instances}, {n_overlapping} overlapping on {n_over} wells "
+            )
         self._relayout()
 
     # -- appearance
@@ -590,7 +677,7 @@ class OverviewWindow(QMainWindow):
     # -- behaviour
 
     def _selected_wells(self) -> list[WellData]:
-        wells = self.wells
+        wells = self._shown_wells()
         if self._filter.currentIndex() == 1:
             wells = [well for well in wells if well.n_overlapping > 0]
         if self._fault_filter is not None:
@@ -656,11 +743,12 @@ class OverviewWindow(QMainWindow):
             self._legend.highlight(set())
             return
         self._status.setText(describe_instance(plot.data, index, self.info))
-        rows = plot.data.rows
+        data = plot.data
         self._legend.highlight(
             {
-                legend_key(int(rows.iloc[i]["fault_class"]), rows.iloc[i]["reach"])
-                for i in (index, *plot.data.partners[index])
+                legend_key(fault_class, reach)
+                for i in (index, *data.partners[index])
+                for fault_class, reach in data.colors[i]
             }
         )
 

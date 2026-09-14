@@ -1,6 +1,7 @@
 """Backend tests on a synthetic miniature of the 3W layout; no Qt involved."""
 
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -19,19 +20,26 @@ from overlap_viewer.config import (
     cache_dir,
 )
 from overlap_viewer.labels import (
+    Segment,
+    column_as_float,
     coverage_counts,
     fault_reach,
     feature_stats,
     label_kind,
     label_name,
     label_segments,
+    labels_agree,
+    merge_label_runs,
     padded_range,
     runs,
+    segments_from_json,
+    segments_to_json,
 )
 from overlap_viewer.legend import row_breaks
 from overlap_viewer.palette import (
     background_color,
     bar_color,
+    blend,
     fault_color,
     legend_entries,
     legend_key,
@@ -63,6 +71,31 @@ def light_theme():
 
 def hours(h: float) -> pd.Timestamp:
     return T0 + pd.Timedelta(hours=h)
+
+
+def segments(*spans) -> list[Segment]:
+    """Label runs from ``(start_hour, end_hour, value)`` triples."""
+    return [Segment(hours(a), hours(b), float(v)) for a, b, v in spans]
+
+
+def instance_row(well: int, fault_class: int, start: pd.Timestamp, labels) -> dict:
+    """The catalogue row of an in-memory instance sampled once a second, files left out."""
+    index = pd.date_range(start, periods=len(labels), freq="1s", name="timestamp")
+    frame = pd.DataFrame({"class": pd.array(labels, dtype="Int16")}, index=index)
+    return {
+        "file": f"WELL-{well:05d}_{start:%Y%m%d%H%M%S}.parquet",
+        "fault_class": fault_class,
+        "well": well,
+        "start": index[0],
+        "end": index[-1],
+        "n_samples": len(index),
+        "reach": fault_reach(column_as_float(frame, "class")),
+        "class_runs": segments_to_json(label_segments(frame, "class")),
+        "size": 0,
+        "mtime_ns": 0,
+        "stamp": index[0],
+        "hours": (index[-1] - index[0]).total_seconds() / 3600,
+    }
 
 
 def write_instance(folder: Path, well: int, start: pd.Timestamp, n: int, classes) -> Path:
@@ -183,6 +216,195 @@ def test_runs_and_segments_tile_the_recording():
     assert segments[0].end == segments[1].start
 
 
+def test_label_runs_survive_the_catalogue_cache():
+    index = pd.date_range(T0, periods=5, freq="1s", name="timestamp")
+    frame = pd.DataFrame({"class": pd.array([pd.NA, pd.NA, 0, 0, 109], dtype="Int16")}, index=index)
+    original = label_segments(frame, "class")
+    back = segments_from_json(segments_to_json(original))
+    assert [(s.start, s.end) for s in back] == [(s.start, s.end) for s in original]
+    assert np.isnan(back[0].value) and [s.value for s in back[1:]] == [0.0, 109.0]
+    assert segments_from_json(segments_to_json([])) == []
+
+
+def test_labels_agree_only_where_both_tracks_know_the_label():
+    a = segments((0, 2, 0), (2, 3, 109))  # normal for two hours, then the transient
+    assert labels_agree(a, segments((1, 2, 0), (2, 4, 109)))  # the same labels where shared
+    assert not labels_agree(a, segments((1, 3, 0)))  # normal where ``a`` says transient
+    assert labels_agree(a, segments((1, 3, np.nan)))  # unknown agrees with anything
+    assert labels_agree(a, segments((5, 6, 4)))  # nothing shared at all
+    assert labels_agree(a, []) and labels_agree([], a)
+    # A contradiction one sampling step long still counts.
+    second = pd.Timedelta(seconds=1)
+    b = segments((0, 2, 0)) + [Segment(hours(2), hours(2) + second, 4.0)]
+    assert not labels_agree(a, b) and not labels_agree(b, a)
+
+
+def test_merged_label_runs_fill_the_unknown_and_remember_whose_label_it_is():
+    """Merging labels shrinks the unlabeled stretches and keeps each one's folder."""
+    normal = segments((0, 1, np.nan), (1, 4, 0))  # a Normal Operation file, unlabeled head
+    hydrate = segments((3, 5, np.nan), (5, 6, 0), (6, 8, 108))  # a hydrate file, unlabeled head
+
+    def spell(found):
+        """The runs as ``(start hour, end hour, label or 'unlabeled', source)``."""
+        return [
+            (
+                (s.start - T0) / pd.Timedelta(hours=1),
+                (s.end - T0) / pd.Timedelta(hours=1),
+                "unlabeled" if np.isnan(s.value) else s.value,
+                source,
+            )
+            for s, source in found
+        ]
+
+    assert spell(merge_label_runs([normal, hydrate], [0, 8])) == [
+        (0.0, 1.0, "unlabeled", None),  # nothing knows the first hour
+        # The Normal Operation file's own label, which also fills the unlabeled
+        # head of the hydrate window where the two overlap, at hour 3.
+        (1.0, 4.0, 0.0, 0),
+        (4.0, 5.0, "unlabeled", None),  # its window has ended, the hydrate's head is still blank
+        (5.0, 6.0, 0.0, 8),  # normal, but labeled by the hydrate file: that file's color
+        (6.0, 8.0, 108.0, 8),
+    ]
+    # One track is passed through as it is, and runs that agree coalesce.
+    assert spell(merge_label_runs([normal], [0])) == [
+        (0.0, 1.0, "unlabeled", None),
+        (1.0, 4.0, 0.0, 0),
+    ]
+    assert merge_label_runs([], []) == []
+
+
+def test_join_groups_merges_agreeing_chains_and_splits_conflicts():
+    starts = np.array([hours(h) for h in (0, 1, 2.5, 3.5, 4.5)], dtype="datetime64[ns]")
+    ends = np.array([hours(h) for h in (2, 3, 4, 5, 6)], dtype="datetime64[ns]")
+    tracks = [
+        segments((0, 2, 0)),
+        segments((1, 3, 0)),
+        segments((2.5, 3, 0), (3, 4, 109)),  # agrees with the one before on their shared half hour
+        segments((3.5, 5, 0)),  # normal where the one before is transient: a conflict
+        segments((4.5, 6, 109)),  # transient where the one before is normal: another
+    ]
+    assert ds.join_groups(starts, ends, tracks) == [[0, 1, 2], [3], [4]]
+    # Nothing overlapping, nothing joined.
+    assert ds.join_groups(starts[::2], ends[::2] - np.timedelta64(1, "h"), tracks[::2]) == [
+        [0],
+        [1],
+        [2],
+    ]
+
+
+def test_joined_well_merges_agreeing_instances_and_carries_every_color():
+    n = 3600
+    catalogue = pd.DataFrame(
+        [
+            # A normal window whose tail is the normal period of a hydrate instance: joinable.
+            instance_row(7, 0, hours(0), [0] * (2 * n)),
+            instance_row(7, 8, hours(1), [0] * n + [108] * n + [8] * n),
+            # A flow-instability window over the hydrate's steady state: a labeling conflict.
+            instance_row(7, 4, hours(3.5), [4] * n),
+            # A hydrate window that never leaves normal operation, apart from the rest.
+            instance_row(7, 8, hours(5), [0] * n),
+        ]
+    )
+    well = ds.WellData.from_catalogue(catalogue, 7)
+    assert not well.joined_view and well.origin is well
+    assert well.members == [[0], [1], [2], [3]]
+    assert well.n_instances == 4 and well.n_overlapping == 3 and well.n_lanes == 2
+
+    joined = well.joined()
+    assert joined.joined_view and joined.origin is well and joined.joined() is joined
+    assert joined.members == [[0, 1], [2], [3]]
+    assert joined.colors == [[(0, "normal"), (8, "steady")], [(4, "steady")], [(8, "normal")]]
+    rows = joined.rows
+    assert rows["title"].tolist() == [
+        "WELL-00007_20170201010000 +1",
+        "WELL-00007_20170201043000",
+        "WELL-00007_20170201060000",
+    ]
+    assert rows["fault_class"].tolist() == [8, 4, 8]
+    assert rows["reach"].tolist() == ["steady", "steady", "normal"]
+    assert rows["start"].iloc[0] == hours(0) and rows["end"].iloc[0] == hours(4) - pd.Timedelta(
+        seconds=1
+    )
+    assert rows["hours"].iloc[0] == pytest.approx((4 * n - 1) / n)
+    # The hour the two joined instances share is counted once.
+    assert rows["n_samples"].tolist() == [4 * n, n, n]
+    assert rows["stamp"].iloc[0] == hours(0)
+    # The conflict is what still overlaps; the well keeps every color it drew before.
+    assert joined.n_instances == 3 and joined.n_overlapping == 2 and joined.n_lanes == 2
+    assert joined.present_colors() == well.present_colors()
+    assert joined.fault_classes() == {0, 4, 8}
+    # Clicking the joined bar opens it and the bar it overlaps, two blocks of three instances.
+    assert joined.group(0) == [0, 1]
+    assert [joined.members[p] for p in joined.group(0)] == [[0, 1], [2]]
+    # The well-wide view is built once, so the overview and the windows share it.
+    assert well.joined() is joined and joined.joined() is joined
+    assert ds.instance_title(rows.iloc[0]) == "WELL-00007_20170201010000 +1"
+    assert ds.instance_title(well.rows.iloc[0]) == "WELL-00007_20170201010000"
+
+
+def test_joining_a_chosen_set_says_what_that_set_alone_amounts_to():
+    """An instance window joins its own group, not the well: a bridge left out stays out."""
+    n = 3600
+    catalogue = pd.DataFrame(
+        [
+            instance_row(3, 0, hours(0), [0] * (2 * n)),  # [0 h, 2 h)
+            instance_row(3, 0, hours(1), [0] * (2 * n)),  # [1 h, 3 h), overlapping both others
+            instance_row(3, 0, hours(2.5), [0] * (2 * n)),  # [2.5 h, 4.5 h)
+        ]
+    )
+    well = ds.WellData.from_catalogue(catalogue, 3)
+    # The well reads as one recording: the middle instance bridges the other two.
+    assert well.joined().members == [[0, 1, 2]]
+    # Asked about the first and the last alone, it says they are two recordings. They
+    # share no sample, and what would bridge them is not in the set being asked about.
+    assert well.joined(among=[0, 2]).members == [[0], [2]]
+    assert well.joined(among=[0, 1]).members == [[0, 1]]
+    assert well.joined(among=[1]).members == [[1]]
+    # Only the well-wide join is remembered, and asking about a subset leaves it alone.
+    remembered = well.joined()
+    assert well.joined(among=[0, 2]) is not remembered
+    assert well.joined() is remembered
+    # A joined bar still knows the instances behind it, whichever set it came from.
+    pair = well.joined(among=[0, 1])
+    assert pair.n_instances == 1 and pair.origin is well
+    assert pair.rows["title"].iloc[0].endswith(" +1")
+
+
+def test_merging_instances_keeps_each_instant_once_and_fills_what_one_window_missed():
+    """Two windows of one recording read as the single series they were cut from."""
+    index = pd.date_range(T0, periods=4, freq="1s", name="timestamp")
+    early = pd.DataFrame(
+        {
+            "P-PDG": [1.0, 2.0, 3.0, 4.0],
+            "T-TPT": [np.nan] * 4,  # a sensor this window did not record
+            "class": pd.array([0, 0, 0, 0], dtype="Int16"),
+        },
+        index=index,
+    )
+    late = pd.DataFrame(
+        {
+            "P-PDG": [3.0, 4.0, 5.0],
+            "T-TPT": [10.0, 11.0, 12.0],
+            "class": pd.array([pd.NA, pd.NA, 109], dtype="Int16"),  # an unlabeled head
+        },
+        index=pd.date_range(T0 + pd.Timedelta(seconds=2), periods=3, freq="1s", name="timestamp"),
+    )
+    merged = ds.merge_instances([early, late])
+    assert len(merged) == 5 and merged.index.is_monotonic_increasing
+    assert merged["P-PDG"].tolist() == [1.0, 2.0, 3.0, 4.0, 5.0]
+    # What one window says nothing about, the other one fills: the head of the later
+    # window is labeled by the earlier one, and its sensor fills the earlier one's blank.
+    assert merged["class"].tolist()[:4] == [0, 0, 0, 0] and merged["class"].iloc[4] == 109
+    assert merged["class"].dtype == early["class"].dtype
+    assert merged["T-TPT"].isna().tolist() == [True, True, False, False, False]
+    assert merged["T-TPT"].dropna().tolist() == [10.0, 11.0, 12.0]
+    assert merged.index.name == "timestamp"
+    # One window is handed back untouched, and instances that do not overlap simply follow on.
+    assert ds.merge_instances([early]) is early
+    apart = ds.merge_instances([early, late.set_index(late.index + pd.Timedelta(hours=1))])
+    assert len(apart) == 7 and apart.index.is_monotonic_increasing
+
+
 def test_timemap_compressed_roundtrip_and_gaps():
     starts = [hours(0), hours(2), hours(100)]
     ends = [hours(3), hours(5), hours(101)]
@@ -236,6 +458,7 @@ def test_palette_ladder_and_legend():
     assert steady == "#17becf"
     assert len({steady, transient, normal}) == 3
     assert bar_color(0, "normal") == bar_color(0, "steady") == "#4c9e4c"
+    assert blend(["#000000", "#ffffff"]) == "#808080" and blend(["#17becf"]) == "#17becf"
     names = {0: "Normal Operation", 9: "Hydrate in Service Line"}
     entries = legend_entries({(0, "normal"), (9, "transient"), (9, "steady")}, names)
     assert [entry.label for entry in entries] == [
@@ -365,8 +588,14 @@ def test_help_text_covers_the_dataset():
         assert fault in DEFAULT_FAULT_NAMES
         assert set(variables) <= set(DEFAULT_SENSOR_UNITS)
         assert help_text.FAULTS[fault].figure, f"fault {fault} has a signature but names no figure"
+        # ... and the figure is reproduced, with its own caption and credit.
+        assert help_text.FAULTS[fault].illustration in help_text.FIGURES
     for entry in help_text.FAULTS.values():
         assert entry.what and entry.signature and entry.source
+    # Every variable has its position in the paper's schematic, and no two share one.
+    positions = [entry.position for entry in help_text.VARIABLES.values()]
+    assert all(re.fullmatch(r"\d+\.\d+", position) for position in positions)
+    assert len(set(positions)) == len(positions)
     # Every event but normal operation and the one added in 2.0.0 has a published
     # confirmation window; normal operation is not an occurrence to confirm.
     assert set(help_text.CONFIRMATION_WINDOWS) == set(DEFAULT_FAULT_NAMES) - {0, 9}
@@ -420,6 +649,11 @@ def test_catalogue_scan_wells_and_cache(raw_dir: Path, tmp_path: Path, monkeypat
     ds.load_catalogue(info)
     assert calls == [1]
 
+    # The label runs come out of the scan (and the cache) as they went in.
+    hydrate_runs = segments_from_json(catalogue["class_runs"].iloc[3])
+    assert [np.isnan(s.value) or s.value for s in hydrate_runs] == [True, 0.0, 109.0]
+    assert hydrate_runs[0].start == hours(0) and hydrate_runs[-1].end == hours(1)
+
     wells = ds.split_wells(catalogue)
     assert [w.well for w in wells] == [1, 2]
     chain = wells[0]
@@ -427,6 +661,11 @@ def test_catalogue_scan_wells_and_cache(raw_dir: Path, tmp_path: Path, monkeypat
     assert chain.rows["lane"].tolist() == [0, 1, 0]
     assert chain.group(1) == [0, 1, 2]
     assert chain.group(0) == [0, 1]
+    # All three windows carry the same label, so joined they are one four-hour bar.
+    joined = chain.joined()
+    assert joined.n_instances == 1 and joined.members == [[0, 1, 2]] and joined.n_lanes == 1
+    assert joined.rows["n_samples"].iloc[0] == 4 * 3600
+    assert joined.rows["title"].iloc[0] == "WELL-00001_20170201010000 +2"
     hydrate = wells[1]
     assert hydrate.n_overlapping == 0 and hydrate.n_lanes == 1
     assert hydrate.group(0) == [0]

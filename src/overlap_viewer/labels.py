@@ -7,6 +7,8 @@ unlabeled stretches. Everything a plot needs from that column — the runs of
 constant value, their names, the reach of the instance — is computed here.
 """
 
+import json
+from bisect import bisect_right
 from dataclasses import dataclass
 from itertools import pairwise
 
@@ -129,6 +131,113 @@ def label_segments(df: pd.DataFrame, column: str) -> list[Segment]:
         t_end = index[end] if end < len(index) else index[-1] + step
         segments.append(Segment(pd.Timestamp(index[start]), pd.Timestamp(t_end), value))
     return segments
+
+
+def segments_to_json(segments: list[Segment]) -> str:
+    """Write label runs as ``[[start, end, value], ...]``, for the catalogue cache.
+
+    Times are nanoseconds since the epoch, so nothing is rounded, and an
+    unlabeled run carries ``null``. A file has only a few runs, so the text
+    stays short whatever the length of the recording.
+    """
+    return json.dumps(
+        [
+            [int(s.start.value), int(s.end.value), None if np.isnan(s.value) else int(s.value)]
+            for s in segments
+        ],
+        separators=(",", ":"),
+    )
+
+
+def segments_from_json(text: str) -> list[Segment]:
+    """Read back what ``segments_to_json`` wrote."""
+    return [
+        Segment(pd.Timestamp(start), pd.Timestamp(end), np.nan if value is None else float(value))
+        for start, end, value in json.loads(text)
+    ]
+
+
+def merge_label_runs(
+    tracks: list[list[Segment]], sources: list[int]
+) -> list[tuple[Segment, int | None]]:
+    """Read several overlapping label tracks as one, remembering what each stretch came from.
+
+    At every instant the value is the one of the first track that knows a label
+    there, the tracks being given in chronological order; where none does, the
+    stretch stays unlabeled. This is the rule ``dataset.merge_instances``
+    applies to the ``class`` column of the frames themselves, so the two agree,
+    and it is what shrinks the unlabeled stretches of a merged recording: the
+    unlabeled head of a window is usually labeled by the window before it.
+
+    Each stretch is returned with the entry of ``sources`` belonging to the
+    track that supplied it (``None`` where nothing is known), so a drawing of
+    the merged recording can keep saying which file a label came from — the
+    fault folder, for this viewer, and so the hue of the shading. A stretch
+    labeled *normal* by a Normal Operation file therefore stays that file's
+    color inside a merged recording that goes on to develop a fault.
+
+    Parameters
+    ----------
+    tracks : list[list[Segment]]
+        The label runs of every instance, each tiling its own span, earliest
+        instance first (as ``label_segments`` returns them).
+    sources : list[int]
+        What to remember per track.
+
+    Returns
+    -------
+    list[(Segment, int | None)]
+        The merged runs, chronological and coalesced, with their source.
+    """
+    edges = sorted({t for track in tracks for run in track for t in (run.start, run.end)})
+    starts = [[run.start for run in track] for track in tracks]
+    merged: list[tuple[Segment, int | None]] = []
+    for a, b in pairwise(edges):
+        value: float = np.nan
+        source: int | None = None
+        for track, track_starts, origin in zip(tracks, starts, sources):
+            i = bisect_right(track_starts, a) - 1
+            if i < 0:
+                continue
+            run = track[i]
+            if run.start <= a < run.end and not np.isnan(run.value):
+                value, source = run.value, origin
+                break
+        if merged:
+            last, last_source = merged[-1]
+            same = last.value == value or (np.isnan(last.value) and np.isnan(value))
+            if last_source == source and same and last.end == a:
+                merged[-1] = (Segment(last.start, b, value), source)
+                continue
+        merged.append((Segment(a, b, value), source))
+    return merged
+
+
+def labels_agree(a: list[Segment], b: list[Segment]) -> bool:
+    """Whether two label tracks never contradict each other where both have samples.
+
+    Two labels contradict each other when both are known and differ; an
+    unlabeled (NaN) stretch agrees with anything, and so does a stretch only
+    one of the tracks covers. This is the condition under which two
+    overlapping instances can be joined into one recording without any sample
+    ending up under two different labels. Both tracks must tile their span,
+    as ``label_segments`` returns them.
+    """
+    if not a or not b:
+        return True
+    t = max(a[0].start, b[0].start)
+    hi = min(a[-1].end, b[-1].end)
+    i = j = 0
+    while t < hi:
+        while a[i].end <= t:
+            i += 1
+        while b[j].end <= t:
+            j += 1
+        va, vb = a[i].value, b[j].value
+        if not (np.isnan(va) or np.isnan(vb) or va == vb):
+            return False
+        t = min(a[i].end, b[j].end)
+    return True
 
 
 def sensor_columns(df: pd.DataFrame) -> list[str]:

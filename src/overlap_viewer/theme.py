@@ -46,7 +46,7 @@ class Theme:
     plot_foreground: str  # axes, their ticks and their labels
     block_fill: str  # a stretch of recording, behind the bars of a well
     grid_line: str  # the separator between two stack levels
-    gap_line: str  # the dashed mark of a collapsed silence
+    gap_line: str  # dashed: a collapsed silence, or a seam between two merged instances
     outline: str  # the heavy edge of a hovered bar
     overlap_hatch: str  # the texture over the stretch two instances share
     crosshair: str

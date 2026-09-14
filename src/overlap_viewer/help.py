@@ -8,7 +8,7 @@ the plots draw. Both windows open it, on the tab that suits them.
 
 import pandas as pd
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QImage, QTextDocument
+from PySide6.QtGui import QColor, QImage, QPainter, QTextDocument
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -30,7 +30,13 @@ from overlap_viewer.help_text import (
     USAGE,
     VARIABLES,
 )
+from overlap_viewer.items import hatch_brush
 from overlap_viewer.palette import bar_color, fault_color, state_color
+
+# The one swatch of the help that is a texture rather than a color: the status
+# of a stretch nobody labeled, painted as an image because rich text has no hatch.
+UNKNOWN_SWATCH = "swatch-unknown-status"
+SWATCH_SIZE = (22, 16)
 
 PAPER = (
     "Vargas et al., <i>3W Dataset 2.0.0: a realistic and public dataset with rare undesirable real "
@@ -83,14 +89,32 @@ REACH_ROWS = (
 )
 
 
-def _swatch(color: str, width: int = 34) -> str:
-    """A colored cell, for a legend-like table."""
+def _swatch(color: str, width: int = 34, texture: str | None = None) -> str:
+    """A colored cell, for a legend-like table; ``texture`` names an image to fill it with instead."""
     border = theme.current().border
-    return f'<td width="{width}" bgcolor="{color}" style="border: 1px solid {border};">&nbsp;</td>'
+    fill = f'background="{texture}"' if texture else f'bgcolor="{color}"'
+    return f'<td width="{width}" {fill} style="border: 1px solid {border};">&nbsp;</td>'
 
 
 def _document(body: str) -> str:
     return f"<html><head>{style()}</head><body>{body}</body></html>"
+
+
+def hatched_swatch(color: str, size: tuple[int, int] = SWATCH_SIZE) -> QImage:
+    """A swatch of ``color`` under the diagonal hatch the bands draw over unlabeled stretches.
+
+    Rich text can fill a cell with a color but not with a texture, so the one
+    swatch that needs the texture is painted here, with the very brush the
+    plots use, so that the help shows what the band shows.
+    """
+    image = QImage(*size, QImage.Format.Format_ARGB32)
+    image.fill(QColor(color))
+    painter = QPainter(image)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(hatch_brush())
+    painter.drawRect(image.rect())
+    painter.end()
+    return image
 
 
 class Figures:
@@ -98,6 +122,8 @@ class Figures:
 
     A figure the project does not ship simply does not appear: the help is
     text first, and an installation without the docs directory still opens.
+    The textured swatch of the status table is painted here as well, since the
+    pages reach every image the same way.
     """
 
     def __init__(self) -> None:
@@ -109,6 +135,7 @@ class Figures:
             image = QImage(str(path))
             if not image.isNull():
                 self.images[name] = image
+        self.images[UNKNOWN_SWATCH] = hatched_swatch(state_color(None))
 
     def html(self, name: str) -> str:
         """The figure and its caption, or nothing when it is not available."""
@@ -150,7 +177,8 @@ def fault_page(
         '<p class="sub">Normal-operation instances are never tinted: they have no event to develop.'
         " The example above uses one fault's hue; every fault has its own. Stretches the experts"
         " left unlabeled are drawn in a neutral grey under a diagonal hatch — a texture rather than"
-        " one more shade, since two of the fault hues are themselves grey.</p>"
+        " one more shade, since two of the fault hues are themselves grey. A bar the overview has"
+        " joined from instances of several folders is striped with every folder's color.</p>"
     )
     if figures is not None:
         parts.append(figures.html("platform-overview"))
@@ -194,9 +222,11 @@ def fault_page(
             variables = ", ".join(FAULT_SIGNATURES[number])
             parts.append(
                 f'<p class="sub">Signature variables, from {entry.figure} of the paper: '
-                f"<b>{variables}</b>. The Signature button of an instance window ticks exactly "
-                "these.</p>"
+                f"<b>{variables}</b>. The Signature box of an instance window ticks exactly "
+                "these; the figure is reproduced below.</p>"
             )
+        if figures is not None and entry.illustration:
+            parts.append(figures.html(entry.illustration))
         if entry.notes:
             parts.append(f'<p class="muted">{entry.notes}</p>')
         if entry.source:
@@ -225,8 +255,15 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
     if figures is not None:
         parts.append(figures.html("platform"))
     parts += [
+        (
+            "<p>The <b>position</b> of a variable is the number that marks its sensor in the "
+            "figure above (table 2 of the paper). Variables that share the figure before the "
+            "point are measured at the same spot of the production system — 2 is the production "
+            "choke, 14 the downhole gauge, 15 the tree transducer — and the figure after the point "
+            "tells the measurements taken there apart.</p>"
+        ),
         '<table cellspacing="0" cellpadding="5" width="100%">',
-        "<tr><th>Variable</th><th>Where it is measured</th><th>What it is</th></tr>",
+        "<tr><th>Variable</th><th>Position</th><th>Where it is measured</th><th>What it is</th></tr>",
     ]
     for name in info.sensor_names:
         entry = VARIABLES.get(name)
@@ -245,8 +282,10 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
                 f'<span class="sub">Signature variable of: {", ".join(signature_of[name])}.</span>'
             )
         where = entry.where if entry is not None else '<span class="muted">not documented</span>'
+        position = entry.position if entry is not None and entry.position else "&mdash;"
         parts.append(
             f'<tr><td valign="top">{"".join(cell)}</td>'
+            f'<td valign="top" align="center">{position}</td>'
             f'<td valign="top" class="sub">{where}</td>'
             f'<td valign="top">{"<br>".join(what) or "&mdash;"}</td></tr>'
         )
@@ -255,7 +294,7 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
     return _document("".join(parts))
 
 
-def state_page() -> str:
+def state_page(figures: "Figures | None" = None) -> str:
     """The well operational status codes drawn in the ``state`` band."""
     parts = [
         "<h2>Well operational status</h2>",
@@ -266,8 +305,7 @@ def state_page() -> str:
             "against hydrates. These are the colors of the <b>state</b> band above each time "
             "series.</p>"
         ),
-        # '<table cellspacing="0" cellpadding="5" width="100%">',
-        # "<tr><th>Status</th><th>What it means</th></tr>",
+        '<table cellspacing="0" cellpadding="4">',
     ]
     for code, name in WELL_STATES.items():
         parts.append(
@@ -275,8 +313,12 @@ def state_page() -> str:
             f'<td valign="top" width="150"><b>{name}</b> <span class="sub">({code})</span></td>'
             f'<td valign="top">{STATES.get(code, "")}</td></tr>'
         )
+    # Hatched like the band itself: the texture, not the grey, is what says
+    # that nothing is known there.
+    texture = UNKNOWN_SWATCH if figures is not None else None
     parts.append(
-        f'<tr>{_swatch(state_color(None), 22)}<td valign="top"><b>Unknown</b></td>'
+        f"<tr>{_swatch(state_color(None), 22, texture)}"
+        '<td valign="top"><b>Unknown</b></td>'
         '<td valign="top">The condition of the well at that moment could not be established.</td></tr>'
     )
     parts.append("</table>")
@@ -316,7 +358,7 @@ class HelpWindow(QDialog):
             (
                 fault_page(info, counts, figures),
                 variable_page(info, figures),
-                state_page(),
+                state_page(figures),
                 usage_page(),
             ),
         ):

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QSizePolicy
 
 from overlap_viewer import theme
 from overlap_viewer.config import BAR_HEIGHT
-from overlap_viewer.palette import text_color
+from overlap_viewer.palette import blend, text_color
 from overlap_viewer.timemap import TimeMap
 
 # Formats tried, longest first, for the stamp written inside an instance bar.
@@ -74,6 +74,9 @@ YEAR_SPACING = -3.0  # year-aligned ticks
 
 # The class band of an instance window carries this many pixels of text.
 LABEL_FONT_PX = 10
+
+# Two seams of a merged recording closer than this are drawn as one (see ``SeamsItem``).
+MIN_SEAM_PX = 8
 
 
 class ScrollFriendlyViewBox(pg.ViewBox):
@@ -147,6 +150,15 @@ def _device_font(pixel_size: int) -> QFont:
     font = QFont()
     font.setPixelSize(pixel_size)
     return font
+
+
+def hatch_brush() -> QBrush:
+    """The texture drawn over a stretch nothing is known about, in the theme in force.
+
+    Shared with the help window, so that the swatch it shows for *Unknown* is
+    the very texture the bands carry.
+    """
+    return QBrush(QColor(theme.current().hatch), Qt.BrushStyle.FDiagPattern)
 
 
 class SegmentsItem(pg.GraphicsObject):
@@ -241,7 +253,7 @@ class SegmentsItem(pg.GraphicsObject):
 
         if any(self._hatched):
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(QColor(theme.current().hatch), Qt.BrushStyle.FDiagPattern))
+            p.setBrush(hatch_brush())
             for x0, x1, hatched in zip(self._x0, self._x1, self._hatched):
                 if hatched:
                     p.drawRect(device_rect(x0, x1))
@@ -259,14 +271,84 @@ class SegmentsItem(pg.GraphicsObject):
         p.restore()
 
 
+class SeamsItem(pg.GraphicsObject):
+    """Dashed verticals where a merged recording passes from one instance to the next.
+
+    A merged block is drawn as the single continuous recording its instances
+    were cut from, so nothing else says where one window ended and the next
+    began — and that is worth seeing, since a seam is where the labels of two
+    windows were reconciled.
+
+    Drawn in device pixels, and thinned: a seam that would land within
+    ``MIN_SEAM_PX`` of the one before it is left out, so a recording stitched
+    from seventy windows still shows a readable label band when it is zoomed
+    out, and every seam appears as it is zoomed in. The time axis of this
+    module drops colliding tick labels for the same reason.
+    """
+
+    def __init__(self, z: float = 20.0):
+        super().__init__()
+        self.setZValue(z)
+        self._x = np.empty(0)
+
+    def set_seams(self, x: Sequence[float]) -> None:
+        self._x = np.sort(np.asarray(x, dtype=float))
+        self.prepareGeometryChange()
+        self.update()
+
+    def dataBounds(self, ax, frac=1.0, orthoRange=None):
+        return None
+
+    def pixelPadding(self):
+        return 0
+
+    def _view_y(self) -> tuple[float, float]:
+        vb = self.getViewBox()
+        if vb is None or not hasattr(vb, "viewRange"):
+            return 0.0, 1.0
+        ymin, ymax = vb.viewRange()[1]
+        return float(ymin), float(ymax)
+
+    def boundingRect(self):
+        if len(self._x) == 0:
+            return QRectF()
+        ymin, ymax = self._view_y()
+        return QRectF(QPointF(self._x.min(), ymin), QPointF(self._x.max(), ymax)).normalized()
+
+    def viewRangeChanged(self, *args):
+        self.prepareGeometryChange()
+        self.update()
+
+    def paint(self, p, option, widget=None):
+        if len(self._x) == 0:
+            return
+        ymin, ymax = self._view_y()
+        transform = p.transform()
+        p.save()
+        p.resetTransform()
+        p.setPen(QPen(QColor(theme.current().gap_line), 1.0, Qt.PenStyle.DashLine))
+        top = transform.map(QPointF(0.0, ymin)).y()
+        bottom = transform.map(QPointF(0.0, ymax)).y()
+        drawn = None
+        for x in self._x:
+            px = transform.map(QPointF(float(x), ymin)).x()
+            if drawn is not None and abs(px - drawn) < MIN_SEAM_PX:
+                continue
+            drawn = px
+            p.drawLine(QPointF(px, top), QPointF(px, bottom))
+        p.restore()
+
+
 class InstanceBarsItem(pg.GraphicsObject):
     """The instance bars of one well timeline, one per instance, on their stack level.
 
     A bar spans the instance in time on its lane, filled with its fault color
     tinted by reach and outlined with the full hue, and carries the timestamp
-    of its filename in the longest format that fits. While one bar is hovered
-    it gets a heavy outline, the bars it overlaps a lighter one and, over the
-    stretch they share, a hatch; every other bar fades.
+    of its filename in the longest format that fits. A bar that stands for
+    several instances joined into one carries every color they had, as
+    stripes from top to bottom, and a suffix after its timestamp. While one
+    bar is hovered it gets a heavy outline, the bars it overlaps a lighter one
+    and, over the stretch they share, a hatch; every other bar fades.
     """
 
     def __init__(self, z: float = 5.0, label_px: int = 9):
@@ -276,9 +358,10 @@ class InstanceBarsItem(pg.GraphicsObject):
         self._x0 = np.empty(0)
         self._x1 = np.empty(0)
         self._lanes = np.empty(0)
-        self._fills: list[str] = []
+        self._fills: list[list[str]] = []
         self._edges: list[str] = []
         self._stamps: list[pd.Timestamp] = []
+        self._suffixes: list[str] = []
         self._hover = -1
         self._partners: set[int] = set()
         self._hatches: list[tuple[float, float, float]] = []
@@ -288,16 +371,19 @@ class InstanceBarsItem(pg.GraphicsObject):
         x0,
         x1,
         lanes,
-        fills: Sequence[str],
+        fills: Sequence[str | Sequence[str]],
         edges: Sequence[str],
         stamps: Iterable[pd.Timestamp],
+        suffixes: Sequence[str] | None = None,
     ) -> None:
+        """Place the bars; a bar's fill is one color or the list of colors it is striped with."""
         self._x0 = np.asarray(x0, dtype=float)
         self._x1 = np.asarray(x1, dtype=float)
         self._lanes = np.asarray(lanes, dtype=float)
-        self._fills = list(fills)
+        self._fills = [[fill] if isinstance(fill, str) else list(fill) for fill in fills]
         self._edges = list(edges)
         self._stamps = [pd.Timestamp(s) for s in stamps]
+        self._suffixes = list(suffixes) if suffixes is not None else [""] * len(self._fills)
         self.prepareGeometryChange()
         self.update()
 
@@ -354,7 +440,8 @@ class InstanceBarsItem(pg.GraphicsObject):
             if rect.width() < 2.0:  # keep a very short instance visible
                 rect = QRectF(rect.center().x() - 1.0, rect.top(), 2.0, rect.height())
 
-            fill, edge, width = QColor(self._fills[i]), QColor(self._edges[i]), 1.0
+            fills = [QColor(fill) for fill in self._fills[i]]
+            edge, width = QColor(self._edges[i]), 1.0
             faded = False
             if highlighting:
                 if i == self._hover:
@@ -363,16 +450,28 @@ class InstanceBarsItem(pg.GraphicsObject):
                     edge, width = QColor(colors.outline), 1.5
                 else:
                     faded = True
-                    fill.setAlphaF(0.22)
+                    for fill in fills:
+                        fill.setAlphaF(0.22)
                     edge.setAlphaF(0.35)
+            p.setPen(Qt.PenStyle.NoPen)
+            if len(fills) == 1:
+                p.setBrush(fills[0])
+                p.drawRect(rect)
+            else:
+                # A joined bar shows every color its instances had, each stripe
+                # the exact color of a legend entry, so the key still names them.
+                stripe = rect.height() / len(fills)
+                for k, fill in enumerate(fills):
+                    p.setBrush(fill)
+                    p.drawRect(QRectF(rect.left(), rect.top() + k * stripe, rect.width(), stripe))
             p.setPen(QPen(edge, width))
-            p.setBrush(fill)
+            p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
 
             if rect.width() >= 28 and not faded:
-                label_color = QColor(text_color(self._fills[i]))
+                label_color = QColor(text_color(blend(self._fills[i])))
                 for fmt in STAMP_FORMATS:
-                    text = self._stamps[i].strftime(fmt)
+                    text = self._stamps[i].strftime(fmt) + self._suffixes[i]
                     if metrics.horizontalAdvance(text) + 6 <= rect.width():
                         p.setPen(label_color)
                         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)

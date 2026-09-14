@@ -10,6 +10,7 @@ pointer through all of them. An interactive counterpart of the
 ``fault_<n>_real_instances.pdf`` pages of the stage-0 figures.
 """
 
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import numpy as np
@@ -32,18 +33,20 @@ from PySide6.QtWidgets import (
 
 from overlap_viewer import theme
 from overlap_viewer.config import FAULT_SIGNATURES, REACH_LABELS
-from overlap_viewer.dataset import DatasetInfo, WellData, instance_title
+from overlap_viewer.dataset import DatasetInfo, WellData, instance_title, merge_instances
 from overlap_viewer.help import HelpWindow
 from overlap_viewer.items import (
     AnchoredText,
     HeaderLabel,
     ScrollFriendlyViewBox,
+    SeamsItem,
     SegmentsItem,
     TimeAxisItem,
     WheelToParent,
 )
 from overlap_viewer.labels import (
     FeatureStats,
+    Segment,
     coverage_counts,
     feature_stats,
     format_delta,
@@ -51,7 +54,9 @@ from overlap_viewer.labels import (
     label_kind,
     label_name,
     label_segments,
+    merge_label_runs,
     padded_range,
+    segments_from_json,
     sensor_columns,
     state_name,
 )
@@ -60,6 +65,7 @@ from overlap_viewer.overview import ElidedLabel
 from overlap_viewer.palette import (
     background_color,
     bar_color,
+    legend_label,
     state_color,
     tint,
     unknown_background,
@@ -67,6 +73,7 @@ from overlap_viewer.palette import (
 from overlap_viewer.timemap import TimeMap
 
 AXIS_WIDTH = 84  # every left axis has this width, so all plots share the same x pixels
+PANEL_WIDTH = 200  # the feature panel: room for the longest variable name and its unit
 BAND_PX = 18
 HEADER_PX = 24
 PLOT_MIN_PX = 150
@@ -106,8 +113,54 @@ class PlotStack(WheelToParent, pg.GraphicsLayoutWidget):
     """The stack of plots, scrolled by the plain wheel and zoomed by Ctrl + wheel."""
 
 
+class Blocks(NamedTuple):
+    """One drawing of a window's group: per block, its row, its instances and its colors.
+
+    ``members`` are positions in the well's own instance table, whether the
+    block is one instance or several merged, so everything a block is drawn
+    from is reached the same way either way.
+    """
+
+    rows: pd.DataFrame
+    members: list[list[int]]
+    colors: list[list[tuple[int, str]]]
+
+    @classmethod
+    def of(cls, view: WellData, positions) -> "Blocks":
+        positions = list(positions)
+        return cls(
+            view.rows.iloc[positions].reset_index(drop=True),
+            [view.members[position] for position in positions],
+            [view.colors[position] for position in positions],
+        )
+
+    def block_of(self, instance: int) -> int:
+        """Which block draws one instance of the well."""
+        for position, behind in enumerate(self.members):
+            if instance in behind:
+                return position
+        raise ValueError(f"instance {instance} is not drawn here")
+
+
 class InstanceWindow(QMainWindow):
-    """Time series of one instance and of the instances of its well that overlap it."""
+    """Time series of one bar of the overview and of every bar it overlaps.
+
+    One block per bar. A bar is one instance, or one merged recording: its
+    instances read as the single continuous stretch they were cut from, drawn
+    as one series over one set of bands, with a dashed line where each further
+    instance begins. A window's unlabeled head is usually labeled by the window
+    before it, so a merged ``class`` band carries far less *Unknown* than the
+    instances did separately, and the blocks stay tall enough to read where a
+    dozen thin slices would not.
+
+    **The group a window opens on is all it is ever about.** Its own *Join
+    overlapping instances* merges exactly the instances on screen and no
+    others, so it answers what this group alone amounts to rather than what the
+    whole well does; two of them that overlap only through an instance outside
+    the window stay apart. A window opened from a bar the overview had already
+    merged is showing that merge and has nothing of its own left to do, so its
+    checkbox is ticked and disabled.
+    """
 
     def __init__(
         self, data: WellData, index: int, info: DatasetInfo, frames: FrameCache, parent=None
@@ -115,41 +168,113 @@ class InstanceWindow(QMainWindow):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.info = info
-        self.well = data
-        members = data.group(index)
-        self.rows = data.rows.iloc[members].reset_index(drop=True)
-        self.clicked = members.index(index)
-        self.timemap = TimeMap.build(self.rows["start"], self.rows["end"], compressed=False)
+        self._frames = frames
+        self.well = data.origin
+        # The instance the window is about, kept across a switch: the one
+        # clicked, or the first of the bar clicked, which is the one its title
+        # names.
+        self.subject = data.members[index][0]
 
-        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
-        try:
-            self.frames = [frames.get(path) for path in self.rows["path"]]
-        finally:
-            QApplication.restoreOverrideCursor()
+        # The group is fixed here and never grows: the bars the overview would
+        # have shown for this click, and the instances behind them. The two
+        # drawings of it are built now, from the well's instance table alone —
+        # nothing outside this window is read again or written to, so joining
+        # here moves neither the grid nor another window.
+        shown = Blocks.of(data, data.group(index))
+        if data.joined_view:
+            # Already merged outside, and by the same rule: this window is
+            # showing that merge, and has nothing of its own left to join.
+            self._plain, self._merged = None, shown
+        else:
+            self._plain = shown
+            local = self.well.joined(among=[members[0] for members in shown.members])
+            self._merged = Blocks.of(local, range(local.n_instances))
+        self._joinable = self._plain is not None and len(self._merged.rows) < len(self._plain.rows)
 
-        self._features = self._feature_table()
         self._checks: dict[str, QCheckBox] = {}
         self._plots: dict[tuple[int, str], pg.PlotItem] = {}
         self._feature_masters: dict[str, pg.PlotItem] = {}
         self._crosshairs: list[pg.InfiniteLine] = []
         self._master: pg.PlotItem | None = None
         self._x_range: tuple[float, float] | None = None
-        self._signature = self._signature_for_group()
         self._help: HelpWindow | None = None
 
-        clicked = instance_title(self.rows.iloc[self.clicked])
-        others = len(self.rows) - 1
-        self.setWindowTitle(
-            f"{data.label} · {clicked}"
-            + (f" and {others} overlapping instance{'s' if others > 1 else ''}" if others else "")
-        )
+        self._adopt(self._plain is None)
         self._build_ui()
         self._rebuild()
 
     # -- data
 
+    def _adopt(self, joined: bool) -> None:
+        """Take one of the two drawings of the group, and read what its blocks need."""
+        blocks = self._merged if joined else self._plain
+        self.joined = joined
+        self.rows = blocks.rows
+        self.members = blocks.members
+        self.colors = blocks.colors
+        self.clicked = blocks.block_of(self.subject)
+        self.merged = any(len(members) > 1 for members in self.members)
+        self._noun = "recording" if self.merged else "instance"
+        self.timemap = TimeMap.build(self.rows["start"], self.rows["end"], compressed=False)
+
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            paths = self.well.rows["path"]
+            self.frames = [
+                merge_instances([self._frames.get(paths.iloc[m]) for m in members])
+                for members in self.members
+            ]
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._seams = [self._seam_positions(members) for members in self.members]
+        self._features = self._feature_table()
+        self._signature = self._signature_for_group()
+
+        others = len(self.rows) - 1
+        self.setWindowTitle(
+            f"{self.well.label} · {instance_title(self.rows.iloc[self.clicked])}"
+            + (
+                f" and {others} overlapping {self._noun}{'s' if others > 1 else ''}"
+                if others
+                else ""
+            )
+        )
+
+    def set_joined(self, joined: bool) -> None:
+        """Draw this group as its instances, or as the merged recordings they make up.
+
+        The same instances either way, regrouped: this window only, and nothing
+        is brought in from outside it. The overview and any other instance
+        window keep whatever they were showing.
+
+        A window opened on a bar the overview had already merged has no drawing
+        of the instances apart to switch to, and says so rather than trying.
+        """
+        if joined == self.joined or (self._merged if joined else self._plain) is None:
+            self._sync_join_check()  # a switch the window has nothing to switch to
+            return
+        selected = set(self.selected_features())
+        self._adopt(joined)
+        self._x_range = None  # the axis spans a different stretch of time now
+        self._sync_join_check()
+        self._swap_feature_panel(selected)
+        self._restyle()
+        self._relayout()
+
+    def _sync_join_check(self) -> None:
+        self._join_check.blockSignals(True)
+        self._join_check.setChecked(self.joined)
+        self._join_check.blockSignals(False)
+
+    def _seam_positions(self, members: list[int]) -> list[float]:
+        """Where, inside one merged block, each instance after the first begins."""
+        if len(members) < 2:
+            return []
+        starts = self.well.rows["start"].iloc[members[1:]]
+        return [float(x) for x in self.timemap.to_x(starts)]
+
     def _feature_table(self) -> pd.DataFrame:
-        """Every sensor the dataset or the files declare, alphabetically, with how many instances record it."""
+        """Every sensor the dataset or the files declare, alphabetically, with how many blocks record it."""
         names = set(self.info.sensor_names)
         for frame in self.frames:
             names.update(sensor_columns(frame))
@@ -174,10 +299,11 @@ class InstanceWindow(QMainWindow):
     def _signature_for_group(self) -> tuple[int, tuple[str, ...]] | None:
         """The documented signature this window can offer, if any.
 
-        The clicked instance decides, since the window was opened from it. Only
-        when its own fault has no published signature does the window fall back
-        to another fault present, and only if exactly one such fault is, so the
-        button never silently mixes two events' variables.
+        The clicked block decides, since the window was opened from it — the
+        event a merged one develops furthest, which is the event its bar is
+        outlined with. Only when that fault has no published signature does the
+        window fall back to another fault present, and only if exactly one such
+        fault is, so the box never silently mixes two events' variables.
         """
         clicked = self._fault_of(self.clicked)
         if clicked in FAULT_SIGNATURES:
@@ -189,7 +315,7 @@ class InstanceWindow(QMainWindow):
         return None
 
     def _signature_features(self) -> list[str]:
-        """The signature variables at least one of these instances actually recorded."""
+        """The signature variables at least one of these blocks actually recorded."""
         if self._signature is None:
             return []
         recorded = set(self._features.loc[self._features["recorded"] > 0, "sensor"])
@@ -214,6 +340,8 @@ class InstanceWindow(QMainWindow):
         close.setShortcuts(["Esc", "Ctrl+W"])
         close.triggered.connect(self.close)
         toolbar.addAction(close)
+        toolbar.addSeparator()
+        toolbar.addWidget(self._build_join_check())
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -224,9 +352,11 @@ class InstanceWindow(QMainWindow):
         self._header.setWordWrap(True)
         outer.addWidget(self._header)
 
-        body = QHBoxLayout()
+        self._body = QHBoxLayout()
+        body = self._body
         body.setSpacing(8)
-        body.addWidget(self._build_feature_panel())
+        self._panel = self._build_feature_panel()
+        body.addWidget(self._panel)
         self._layout_widget = PlotStack()
         self._layout_widget.ci.layout.setVerticalSpacing(ROW_SPACING)
         self._layout_widget.ci.setContentsMargins(0, 0, 0, 0)
@@ -265,14 +395,57 @@ class InstanceWindow(QMainWindow):
             self._help = None
         self._rebuild()
 
-    def _build_feature_panel(self) -> QWidget:
+    def _build_join_check(self) -> QCheckBox:
+        """The toolbar's local join, which changes what this window draws and nothing else."""
+        self._join_check = QCheckBox("Join overlapping instances")
+        self._join_check.setChecked(self.joined)
+        self._join_check.setEnabled(self._joinable)
+        if self._joinable:
+            self._join_check.setToolTip(
+                "Read the instances shown here as the continuous recording they were cut from, "
+                "merging those whose labels agree where they overlap: one series over one set of "
+                "bands, a dashed line where each further instance begins, and far less Unknown in "
+                "the label band than the instances carry apart. Exactly the instances on screen "
+                "are merged, and this window alone changes — the overview and any other instance "
+                "window are left as they are."
+            )
+        elif self._plain is None:
+            self._join_check.setToolTip(
+                "These instances were already merged in the overview, and this window is showing "
+                "that merge: there is nothing left to join."
+            )
+        else:
+            self._join_check.setToolTip(
+                "No two of the instances shown here overlap with labels that agree, so there is "
+                "nothing to merge."
+            )
+        self._join_check.toggled.connect(self.set_joined)
+        return self._join_check
+
+    def _swap_feature_panel(self, selected: set[str]) -> None:
+        """Build the feature panel again for the blocks now drawn, keeping the selection.
+
+        The panel is rebuilt rather than edited because every part of it
+        depends on the blocks: which features any of them recorded, in how many
+        of them, and which event's signature the window can offer.
+        """
+        previous, self._checks = self._panel, {}
+        self._panel = self._build_feature_panel(selected)
+        self._body.replaceWidget(previous, self._panel)
+        previous.setParent(None)
+        previous.deleteLater()
+
+    def _build_feature_panel(self, selected: set[str] | None = None) -> QWidget:
         panel = QWidget()
-        panel.setFixedWidth(250)
+        panel.setFixedWidth(PANEL_WIDTH)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         title = QLabel("<b>Features</b>")
         layout.addWidget(title)
-        buttons = QHBoxLayout()
+        # Stacked, not side by side: the panel is as narrow as its longest
+        # feature name allows, and two buttons in a row would widen it.
+        buttons = QVBoxLayout()
+        buttons.setSpacing(2)
         clear = QPushButton("Clear")
         clear.clicked.connect(lambda: self._set_all(False))
         every = QPushButton("All recorded")
@@ -290,22 +463,23 @@ class InstanceWindow(QMainWindow):
         checks.setContentsMargins(0, 0, 0, 0)
         checks.setSpacing(2)
         default = self._default_feature()
+        wanted = selected if selected is not None else {default}
         n = len(self.frames)
         for row in self._features.itertuples():
             unit = self.info.unit(row.sensor)
             check = QCheckBox(f"{row.sensor} [{unit}]" if unit else row.sensor)
             description = self.info.sensor_descriptions.get(row.sensor, "")
-            recorded = f"recorded in {row.recorded} of {n} instance{'s' if n > 1 else ''}"
+            recorded = f"recorded in {row.recorded} of {n} {self._noun}{'s' if n > 1 else ''}"
             check.setToolTip(f"{description}\n{recorded}" if description else recorded)
             check.setEnabled(row.recorded > 0)
-            check.setChecked(row.sensor == default)
+            check.setChecked(row.sensor in wanted and row.recorded > 0)
             check.toggled.connect(self._rebuild)
             self._checks[row.sensor] = check
             checks.addWidget(check)
         checks.addStretch(1)
         scroll.setWidget(inner)
         layout.addWidget(scroll, 1)
-        self._note = QLabel("Greyed-out features were recorded by none of these instances.")
+        self._note = QLabel(f"Greyed-out features were recorded by none of these {self._noun}s.")
         self._note.setWordWrap(True)
         layout.addWidget(self._note)
         return panel
@@ -331,14 +505,15 @@ class InstanceWindow(QMainWindow):
         fault, variables = self._signature
         name = self.info.fault_name(fault)
         missing = [v for v in variables if v not in available]
+        # The box says only "Signature"; the event it belongs to is in the tooltip,
+        # where it costs the panel no width.
         text = f"Signature of {name}: {', '.join(variables)}. These variables identify the event."
         if missing:
             text += f"\nNot recorded here, so left out: {', '.join(missing)}."
         if not available:
             self._signature_check.setEnabled(False)
-            text += "\nNone of them is recorded by these instances."
+            text += f"\nNone of them is recorded by these {self._noun}s."
         self._signature_check.setToolTip(text)
-        self._signature_check.setText(f"Signature of {name}")
         return self._signature_check
 
     def _apply_signature(self, checked: bool) -> None:
@@ -380,27 +555,42 @@ class InstanceWindow(QMainWindow):
             for a, b, count in coverage_counts(rows["start"], rows["end"])
             if count >= 2
         )
-        clicked = instance_title(rows.iloc[self.clicked])
+        noun = self._noun
         others = len(rows) - 1
-        what = f"<b>{clicked}</b>" + (
-            f" and the {others} instance{'s' if others > 1 else ''} it overlaps"
+        what = f"<b>{instance_title(rows.iloc[self.clicked])}</b>" + (
+            f" and the {others} {noun}{'s' if others > 1 else ''} it overlaps"
             if others
-            else " (overlaps no other instance)"
+            else f" (overlaps no other {noun})"
         )
+        shown = f"{len(rows)} {noun}{'s' if len(rows) > 1 else ''} shown, chronological"
+        if self.merged:
+            shown += f", merged from {sum(len(members) for members in self.members)} instances"
         return (
             f'<span style="font-size:11pt;"><b>{self.well.label}</b> · {what}</span><br>'
             f'<span style="color:{theme.current().muted};">{first:%Y-%m-%d %H:%M:%S} → {last:%Y-%m-%d %H:%M:%S} · {span_h:.1f} h spanned · '
-            f"{shared_h:.1f} h recorded by two or more instances · {len(rows)} instance{'s' if len(rows) > 1 else ''} shown, "
-            f"chronological</span>"
+            f"{shared_h:.1f} h recorded by two or more {noun}s · {shown}</span>"
         )
 
     def _instance_html(self, position: int) -> str:
         colors = theme.current()
         row = self.rows.iloc[position]
-        fault_class = int(row["fault_class"])
-        color = bar_color(fault_class, row["reach"])
-        fault = self.info.fault_name(fault_class)
-        reach = "" if fault_class == 0 else f" ({REACH_LABELS[row['reach']]})"
+        keys = self.colors[position]
+        # One square per color the bar carries, so the block is keyed like the bar was.
+        squares = "".join(
+            f'<span style="font-size:9pt; color:{bar_color(fault_class, reach)};">&#9632;</span>'
+            for fault_class, reach in keys
+        )
+        if len(keys) > 1:
+            what = " + ".join(
+                legend_label(fault_class, reach, self.info.fault_names)
+                for fault_class, reach in keys
+            )
+        else:
+            fault_class = int(row["fault_class"])
+            reach = "" if fault_class == 0 else f" ({REACH_LABELS[row['reach']]})"
+            what = f"{self.info.fault_name(fault_class)}{reach}"
+        merged = len(self.members[position])
+        joined = f"{merged} instances merged · " if merged > 1 else ""
         start, end = pd.Timestamp(row["start"]), pd.Timestamp(row["end"])
         end_fmt = "%H:%M:%S" if end.date() == start.date() else "%Y-%m-%d %H:%M:%S"
         partners = sum(
@@ -416,8 +606,9 @@ class InstanceWindow(QMainWindow):
         )
         return (
             f'<span style="font-size:10pt;"><b>{instance_title(row)}</b></span>{badge}'
-            f'&nbsp;&nbsp;<span style="font-size:9pt; color:{color};">&#9632;</span>'
-            f'<span style="font-size:9pt; color:{colors.muted};"> {fault}{reach} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · '
+            f"&nbsp;&nbsp;{squares}"
+            f'<span style="font-size:9pt; color:{colors.muted};"> {what} · {joined}'
+            f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · "
             f"{row['hours']:.1f} h · {int(row['n_samples']):,} samples · level {int(row['lane']) + 1} · "
             f"overlaps {partners} shown</span>"
         )
@@ -429,9 +620,19 @@ class InstanceWindow(QMainWindow):
     # -- the grid
 
     def _rebuild(self, *args) -> None:
-        """Lay out header, bands and the selected feature plots of every instance."""
+        """Lay the stack out again, keeping the stretch of time on screen.
+
+        What the feature checkboxes are connected to, so ticking a feature does
+        not throw away a zoom. A switch of view calls ``_relayout`` instead,
+        having cleared the range: the blocks then span a different stretch of
+        time and the old window would hide most of it.
+        """
         if self._master is not None:
             self._x_range = tuple(self._master.getViewBox().viewRange()[0])
+        self._relayout()
+
+    def _relayout(self) -> None:
+        """Lay out header, bands and the selected feature plots of every block."""
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         try:
             self._lay_out_stack()
@@ -441,7 +642,7 @@ class InstanceWindow(QMainWindow):
         self._apply_ranges()
 
     def _lay_out_stack(self) -> None:
-        """Fill the stack: the shared-coverage band, then one block per instance."""
+        """Fill the stack: the shared-coverage band, then one block per bar."""
         layout = self._layout_widget
         layout.clear()
         self._plots = {}
@@ -465,8 +666,9 @@ class InstanceWindow(QMainWindow):
             layout.addItem(label, row=row, col=0)
             heights.append(header_px)
             row += 1
-            self._add_band(row, self._state_band_segments(position), "state")
-            self._add_band(row + 1, self._class_band_segments(position), "class")
+            seams = self._seams[position]
+            self._add_band(row, self._state_band_segments(position), "state", seams)
+            self._add_band(row + 1, self._class_band_segments(position), "class", seams)
             heights += [BAND_PX, BAND_PX]
             row += 2
             for k, feature in enumerate(features):
@@ -475,24 +677,42 @@ class InstanceWindow(QMainWindow):
                 heights.append(PLOT_MIN_PX + (AXIS_PX if last else 0))
                 row += 1
             if not features:
-                self._plots_last_axis_placeholder(row)
+                self._plots_last_axis_placeholder(row, seams)
                 heights.append(AXIS_PX + 4)
                 row += 1
         layout.setMinimumHeight(self._stack_height(heights))
+        self._fill_widget()
 
     def _stack_height(self, heights: list[int]) -> int:
         """How tall the stack must be for every row to get the height it asked for.
 
-        The stack lives in a scroll area, which sizes it to its own minimum
-        height whenever that is the larger. An underestimate therefore does not
-        merely stop the scrollbar early: the grid inside squeezes its rows to
-        fit, and the plots at the bottom come out clipped. The layout's own
-        minimum is the authority on the total, with the sum of the rows as a
-        floor for the moment before that minimum has been computed.
+        The stack lives in a scroll area, which sizes it to whichever is the
+        larger of this figure and the viewport, and hands any surplus to the
+        feature plots, they being the only rows that stretch. An underestimate
+        therefore does not merely stop the scrollbar early: the grid inside
+        squeezes its rows to fit and the plots at the bottom come out clipped.
+        The layout's own minimum is the authority on the total, with the sum of
+        the rows as a floor.
+
         """
         estimate = sum(heights) + ROW_SPACING * max(len(heights) - 1, 0) + 4
         minimum = self._layout_widget.ci.layout.effectiveSizeHint(Qt.SizeHint.MinimumSize).height()
         return int(max(estimate, minimum))
+
+    def _fill_widget(self) -> None:
+        """Give the stack back the whole widget after its rows have been rebuilt.
+
+        The view sizes its central item from its own resize events. Building
+        the rows again makes that item resize itself to what the new rows
+        prefer, which is their floor; and when the widget itself does not
+        change size — which is whenever the stack fits, the scroll area then
+        holding it at the viewport — no resize follows to put the item back.
+        The stack would be drawn into the top of the window with every plot at
+        its minimum and the room below it left empty, so the view's own resize
+        handler is called to restore the item to the widget it sits in. It
+        reads nothing from the event, and a later resize simply does it again.
+        """
+        self._layout_widget.resizeEvent(None)
 
     def _new_plot(self, row: int, with_axis: bool) -> pg.PlotItem:
         axis_items = {"bottom": TimeAxisItem(self.timemap)} if with_axis else None
@@ -524,7 +744,17 @@ class InstanceWindow(QMainWindow):
         self._crosshairs.append(crosshair)
         return plot
 
-    def _add_band(self, row: int, segments: BandSegments, name: str) -> pg.PlotItem:
+    def _add_seams(self, plot: pg.PlotItem, seams: Sequence[float]) -> None:
+        """Mark, inside a merged block, where each instance after the first begins."""
+        if not len(seams):
+            return
+        item = SeamsItem()  # above the trace, below the crosshair
+        item.set_seams(seams)
+        plot.addItem(item, ignoreBounds=True)
+
+    def _add_band(
+        self, row: int, segments: BandSegments, name: str, seams: Sequence[float] = ()
+    ) -> pg.PlotItem:
         plot = self._new_plot(row, with_axis=False)
         plot.setFixedHeight(BAND_PX)
         plot.setMenuEnabled(False)
@@ -539,15 +769,17 @@ class InstanceWindow(QMainWindow):
             segments.x0, segments.x1, segments.colors, segments.labels, hatched=segments.hatched
         )
         plot.addItem(item, ignoreBounds=True)
+        self._add_seams(plot, seams)
         return plot
 
-    def _plots_last_axis_placeholder(self, row: int) -> None:
+    def _plots_last_axis_placeholder(self, row: int, seams: Sequence[float] = ()) -> None:
         """With no feature selected, a bare time axis still closes each block."""
         plot = self._new_plot(row, with_axis=True)
         plot.setFixedHeight(AXIS_PX + 4)
         plot.setMenuEnabled(False)
         plot.getViewBox().setMouseEnabled(x=True, y=False)
         plot.getAxis("left").setStyle(showValues=False)
+        self._add_seams(plot, seams)
 
     def _add_feature_plot(self, row: int, position: int, feature: str, show_axis: bool) -> None:
         plot = self._new_plot(row, with_axis=show_axis)
@@ -571,6 +803,7 @@ class InstanceWindow(QMainWindow):
             background.x0, background.x1, background.colors, hatched=background.hatched
         )
         plot.addItem(shading, ignoreBounds=True)
+        self._add_seams(plot, self._seams[position])
 
         colors = theme.current()
         stats = feature_stats(frame, feature)
@@ -605,16 +838,37 @@ class InstanceWindow(QMainWindow):
 
     # -- segments
 
+    def _class_runs(self, position: int) -> list[tuple[Segment, int | None]]:
+        """The label runs of one block, with the fault folder each stretch came from.
+
+        A block of one instance is read from its frame, as it always was. A
+        merged one is read from the label runs the catalogue already holds for
+        its instances, which say the same as the merged ``class`` column and
+        also say which file supplied each stretch — so a normal period labeled
+        by a Normal Operation file keeps that file's color even where the
+        merged recording goes on to develop a fault.
+        """
+        members = self.members[position]
+        rows = self.well.rows.iloc[members]
+        if len(members) == 1:
+            folder = int(rows["fault_class"].iloc[0])
+            return [(run, folder) for run in label_segments(self.frames[position], "class")]
+        return merge_label_runs(
+            [segments_from_json(text) for text in rows["class_runs"]],
+            [int(folder) for folder in rows["fault_class"]],
+        )
+
     def _class_band_segments(self, position: int, background: bool = False) -> BandSegments:
-        frame = self.frames[position]
         fault_class = self._fault_of(position)
         offset = self.info.transient_offset
         segments = BandSegments([], [], [], [], [])
-        for segment in label_segments(frame, "class"):
+        for segment, source in self._class_runs(position):
             a, b = self.timemap.to_x([segment.start, segment.end])
             kind = label_kind(segment.value, offset)
             fault = label_fault(segment.value, offset)
-            hue_class = fault if fault is not None else fault_class
+            # A normal stretch takes the hue of the file that labeled it normal;
+            # a faulty one names its own event, whatever file it came from.
+            hue_class = fault if fault is not None else (fault_class if source is None else source)
             unknown = kind == "unknown"
             if unknown:
                 color = tint(unknown_background(), 0.7) if background else unknown_background()

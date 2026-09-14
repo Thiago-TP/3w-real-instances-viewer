@@ -9,6 +9,7 @@ Every color is a ``#rrggbb`` string so the backend and its tests stay free of
 Qt; the widgets turn them into ``QColor`` at draw time.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from overlap_viewer import theme
@@ -90,6 +91,12 @@ def text_color(background: str) -> str:
     """Black or white, whichever reads better on ``background``."""
     r, g, b = to_rgb(background)
     return "#ffffff" if 0.299 * r + 0.587 * g + 0.114 * b < 0.55 else "#1a1a1a"
+
+
+def blend(colors: Sequence[str]) -> str:
+    """The plain average of several colors: what a bar striped with them reads as overall."""
+    parts = [to_rgb(color) for color in colors]
+    return to_hex(tuple(sum(part[k] for part in parts) / len(parts) for k in range(3)))
 
 
 def legend_label(fault_class: int, reach: str, fault_names: dict[int, str]) -> str:

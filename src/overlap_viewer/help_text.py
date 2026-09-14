@@ -30,6 +30,24 @@ class Figure:
     credit: str
 
 
+# The example figures of the 2.0.0 article are screenshots of the Petrobras
+# labeling tool, whose colors and units are not this viewer's; every caption of
+# one says so, since the reader has just been told what the viewer's colors mean.
+TOOL_COLORS = (
+    "The colors are the labeling tool's, not this viewer's: the lower half of each panel is the "
+    "class label — light green normal operation, yellow the transient, red the steady state of "
+    "the event — and the upper half the well status, dark green for Open."
+)
+TOOL_UNITS = (
+    "Pressures are in the tool's own units (bar, kPa, kgf/cm²) rather than the pascal of the "
+    "dataset."
+)
+
+
+def _paper_figure(number: int) -> str:
+    return f"Figure {number} of the 3W Dataset 2.0.0 paper (Vargas et al., 2025), CC BY 4.0"
+
+
 FIGURES: dict[str, Figure] = {
     "platform-overview": Figure(
         file="platform-v1.jpg",
@@ -54,7 +72,90 @@ FIGURES: dict[str, Figure] = {
             "service pump and the gas compressor feed the service and gas-lift lines. The numbers "
             "are the positions the variable table of the paper refers to."
         ),
-        credit="Figure 1 of the 3W Dataset 2.0.0 paper (Vargas et al., 2025), CC BY 4.0",
+        credit=_paper_figure(1),
+    ),
+    # The five events the 2.0.0 article illustrates, one real instance each, in
+    # the variables this viewer's Signature box ticks. Shown at their own size,
+    # so the axis figures stay readable.
+    "signature-normal": Figure(
+        file="signature-normal.png",
+        width=863,
+        caption=(
+            "A real Normal Operation instance (2015-03-16 10:15 to 2015-03-17 03:00) in which the "
+            "well was shut in and its line depressurized, so the class label stays 0 throughout "
+            "and the state label tells the story. At 16:00 the production choke (ABER-CKP) closes "
+            "from 100 %, the shutdown valve (ESTADO-SDV-P) and the wing valve (ESTADO-W1) both go "
+            "to 0, and the tree temperature (T-TPT) collapses from 32 °C to about 5 °C as the flow "
+            "stops: Shut-In, grey. The shutdown valve reopens at about 18:10 and the choke partly "
+            "with it; the line is depressurized between about 21:00 and 22:00 (salmon); at about "
+            "23:00 the wing valve reopens, the temperature recovers at once, and the well is in "
+            "Restart (magenta) until the window ends. The lower half of every panel stays light "
+            "green: normal operation from end to end, which is what this viewer's state band is "
+            "for. " + TOOL_COLORS
+        ),
+        credit=_paper_figure(7),
+    ),
+    "signature-dhsv": Figure(
+        file="signature-dhsv.png",
+        width=865,
+        caption=(
+            "A real Spurious Closure of DHSV (2017-07-28, 14:00 to 17:30). Until about 15:40 "
+            "nothing moves; then the four readings part on either side of the closed valve. Below "
+            "it the downhole pressure (P-PDG) climbs by some 30 bar over the rest of the window; "
+            "above it the tree pressure (P-TPT), the pressure upstream of the production choke "
+            "(P-MON-CKP) and the tree temperature (T-TPT) fall away as the flow stops, the "
+            "temperature from 111 °C toward that of the seabed. The experts labeled the transient "
+            "from the divergence to about 16:55 and the steady state after it. "
+            + TOOL_COLORS
+            + " "
+            + TOOL_UNITS
+        ),
+        credit=_paper_figure(3),
+    ),
+    "signature-severe-slugging": Figure(
+        file="signature-severe-slugging.png",
+        width=866,
+        caption=(
+            "A real Severe Slugging instance (2016-08-04, 06:24 to 13:30), labeled in the steady "
+            "state from end to end: there is no transient to this event. Every reading cycles "
+            "with the same period of about 35 minutes, twelve slugs in seven hours. The downhole "
+            "pressure (P-PDG) and the tree pressure (P-TPT) swing by some 12 bar each, the pressure "
+            "upstream of the choke (P-MON-CKP) by 2 to 3 bar with a sharp spike as each slug "
+            "arrives, and the temperature downstream of the choke (T-JUS-CKP) by about 4 °C in a "
+            "sawtooth. " + TOOL_COLORS + " " + TOOL_UNITS
+        ),
+        credit=_paper_figure(6),
+    ),
+    "signature-quick-restriction": Figure(
+        file="signature-quick-restriction.png",
+        width=864,
+        caption=(
+            "A real Quick Restriction in PCK (2015-06-10, 03:30 to 16:15). The choke opening "
+            "(ABER-CKP) holds 100 % until about 11:50, then steps down to some 10 % within an "
+            "hour, and every pressure behind the choke rises in answer: upstream of it (P-MON-CKP) "
+            "from 9 to about 60 bar, at the tree (P-TPT) from 49 to about 110 bar, downhole (P-PDG) "
+            "from 87 to about 170 bar. The pressures keep rising for four hours, and the experts "
+            "kept the label in the transient for as long, calling the steady state only in the "
+            "last minutes of the window. " + TOOL_COLORS + " " + TOOL_UNITS
+        ),
+        credit=_paper_figure(4),
+    ),
+    "signature-hydrate-production": Figure(
+        file="signature-hydrate-production.png",
+        width=866,
+        caption=(
+            "A real Hydrate in Production Line (2019-05-03 20:15 to 2019-05-06 08:00, two and a "
+            "half days). Upstream of the forming plug the pressures drift up — downhole (P-PDG) "
+            "from 167 to about 197 kgf/cm², at the tree (P-TPT) from 12.2 to about 15 MPa — while "
+            "downstream of it the pressure upstream of the choke (P-MON-CKP) sags from 5.3 to "
+            "about 2.5 MPa and the tree temperature (T-TPT) cools from 25.5 to about 21.5 °C. "
+            "Nothing steps: the labels leave normal operation early on 4 May and stay in the "
+            "transient for two days, the steady state being called only in the last hour. "
+            + TOOL_COLORS
+            + " "
+            + TOOL_UNITS
+        ),
+        credit=_paper_figure(5),
     ),
 }
 
@@ -64,13 +165,15 @@ class FaultHelp:
     """What one class label means, and how the literature says it shows in the data.
 
     ``source`` names the documents each entry leans on, since the three differ
-    in what they cover.
+    in what they cover; ``illustration`` names the entry of ``FIGURES`` that
+    shows the event, for the five the 2.0.0 article illustrates.
     """
 
     name: str
     what: str
     signature: str
     figure: str = ""  # the example figure of the 2.0.0 article, when it has one
+    illustration: str = ""  # the ``FIGURES`` entry reproducing that figure
     notes: str = ""
     source: str = ""
 
@@ -118,6 +221,7 @@ FAULTS: dict[int, FaultHelp] = {
             "from end to end."
         ),
         figure="figure 7",
+        illustration="signature-normal",
         notes=(
             "The most numerous class of the dataset, and the only one with no simulated and no "
             "hand-drawn instances: normal operation was never synthesized."
@@ -168,6 +272,7 @@ FAULTS: dict[int, FaultHelp] = {
             "thesis's example production had stopped entirely about 35 minutes after the onset."
         ),
         figure="figure 3",
+        illustration="signature-dhsv",
         source="2.0.0 article, figure 3; thesis, section 2.3.2 and figure 4",
     ),
     3: FaultHelp(
@@ -189,6 +294,7 @@ FAULTS: dict[int, FaultHelp] = {
             "about every 67 minutes."
         ),
         figure="figure 6",
+        illustration="signature-severe-slugging",
         notes=(
             "Has no transient period: an instance is already in the established oscillating regime "
             "where it is labeled at all."
@@ -259,6 +365,7 @@ FAULTS: dict[int, FaultHelp] = {
             "minutes: about eleven, in the thesis's example."
         ),
         figure="figure 4",
+        illustration="signature-quick-restriction",
         notes=(
             "Among the rarest events in the field: the dataset holds only a handful of real "
             "instances."
@@ -307,6 +414,7 @@ FAULTS: dict[int, FaultHelp] = {
             "tree temperature is what says the flow had stopped completely."
         ),
         figure="figure 5",
+        illustration="signature-hydrate-production",
         notes=(
             "The 2.0.0 example spends most of its length in the transient and reaches the steady "
             "state only at the very end, which is why so many instances of the hydrate classes "
@@ -337,10 +445,18 @@ FAULTS: dict[int, FaultHelp] = {
 
 @dataclass(frozen=True)
 class VariableHelp:
-    """Where one variable is measured, and what is worth knowing about it."""
+    """Where one variable is measured, and what is worth knowing about it.
+
+    ``position`` is the number that marks the sensor in figure 1 of the 2.0.0
+    article (the ``platform`` figure above the table), from its table 2: the
+    figure before the point names a spot in the production system — 2 is the
+    production choke, 14 the downhole gauge, 15 the tree transducer — and the
+    figure after it tells the measurements taken at that spot apart.
+    """
 
     where: str
     note: str = ""
+    position: str = ""
     signature_of: tuple[int, ...] = field(default_factory=tuple)
 
 
@@ -353,45 +469,67 @@ GAS_LIFT = "Topside, gas-lift line"
 SERVICE = "Topside, service line"
 
 VARIABLES: dict[str, VariableHelp] = {
-    "ABER-CKGL": VariableHelp(GAS_LIFT, "How far the gas-lift choke is open, in percent."),
+    "ABER-CKGL": VariableHelp(
+        GAS_LIFT, "How far the gas-lift choke is open, in percent.", position="1.1"
+    ),
     "ABER-CKP": VariableHelp(
         TOPSIDE,
         "How far the production choke is open, in percent. It sets how much the well may flow, so "
         "it is the variable to read first when the pressures behind it move.",
+        position="2.1",
     ),
     "ESTADO-DHSV": VariableHelp(
         DOWNHOLE,
         "State of the downhole safety valve, the valve whose spurious closure is fault class 2. "
         "That closure usually leaves no trace at the surface, which is what makes the event hard.",
+        position="3.1",
     ),
-    "ESTADO-M1": VariableHelp(TREE, "State of the production master valve."),
-    "ESTADO-M2": VariableHelp(TREE, "State of the annulus master valve."),
+    "ESTADO-M1": VariableHelp(TREE, "State of the production master valve.", position="4.1"),
+    "ESTADO-M2": VariableHelp(TREE, "State of the annulus master valve.", position="5.1"),
     "ESTADO-PXO": VariableHelp(
-        TREE, "State of the pig-crossover valve, opened to circulate between the two lines."
+        TREE,
+        "State of the pig-crossover valve, opened to circulate between the two lines.",
+        position="6.1",
     ),
-    "ESTADO-SDV-GL": VariableHelp(GAS_LIFT, "State of the gas-lift shutdown valve."),
-    "ESTADO-SDV-P": VariableHelp(TOPSIDE, "State of the production shutdown valve."),
-    "ESTADO-W1": VariableHelp(TREE, "State of the production wing valve."),
-    "ESTADO-W2": VariableHelp(TREE, "State of the annulus wing valve."),
-    "ESTADO-XO": VariableHelp(TREE, "State of the crossover valve."),
+    "ESTADO-SDV-GL": VariableHelp(
+        GAS_LIFT, "State of the gas-lift shutdown valve.", position="7.1"
+    ),
+    "ESTADO-SDV-P": VariableHelp(
+        TOPSIDE, "State of the production shutdown valve.", position="8.1"
+    ),
+    "ESTADO-W1": VariableHelp(TREE, "State of the production wing valve.", position="9.1"),
+    "ESTADO-W2": VariableHelp(TREE, "State of the annulus wing valve.", position="10.1"),
+    "ESTADO-XO": VariableHelp(TREE, "State of the crossover valve.", position="11.1"),
     "P-ANULAR": VariableHelp(
-        TREE, "Pressure in the annulus, the space around the production tubing."
+        TREE,
+        "Pressure in the annulus, the space around the production tubing.",
+        position="12.1",
     ),
     "P-JUS-BS": VariableHelp(
         SERVICE,
         "Pressure downstream of the service pump. With the pump's flow rate, it is the only "
         "instrumentation on the line where fault class 9 forms.",
+        position="13.1",
     ),
-    "P-JUS-CKGL": VariableHelp(GAS_LIFT, "Pressure downstream of the gas-lift choke."),
-    "P-JUS-CKP": VariableHelp(TOPSIDE, "Pressure downstream of the production choke."),
-    "P-MON-CKGL": VariableHelp(GAS_LIFT, "Pressure upstream of the gas-lift choke."),
+    "P-JUS-CKGL": VariableHelp(
+        GAS_LIFT, "Pressure downstream of the gas-lift choke.", position="1.2"
+    ),
+    "P-JUS-CKP": VariableHelp(
+        TOPSIDE, "Pressure downstream of the production choke.", position="2.2"
+    ),
+    "P-MON-CKGL": VariableHelp(
+        GAS_LIFT, "Pressure upstream of the gas-lift choke.", position="1.3"
+    ),
     "P-MON-CKP": VariableHelp(
         TOPSIDE,
         "Pressure upstream of the production choke, the last pressure before the platform, and one "
         "the thesis counts as reliable when it is there. It is downstream of everything in the "
         "well, so it falls when the line blocks and rises when the choke itself closes.",
+        position="2.3",
     ),
-    "P-MON-SDV-P": VariableHelp(TOPSIDE, "Pressure upstream of the production shutdown valve."),
+    "P-MON-SDV-P": VariableHelp(
+        TOPSIDE, "Pressure upstream of the production shutdown valve.", position="8.2"
+    ),
     "P-PDG": VariableHelp(
         DOWNHOLE,
         "Pressure at the permanent downhole gauge, the deepest measurement there is, next to the "
@@ -399,33 +537,44 @@ VARIABLES: dict[str, VariableHelp] = {
         "pressure it is the most relevant reading for flow analysis — and, the thesis notes, also "
         "the one that most often fails or is missing, since the gauge is screwed to the production "
         "tubing and replacing it means pulling the tubing.",
+        position="14.1",
     ),
-    "PT-P": VariableHelp(TREE, "Tree pressure downstream of the production wing valve."),
+    "PT-P": VariableHelp(
+        TREE, "Tree pressure downstream of the production wing valve.", position="4.2"
+    ),
     "P-TPT": VariableHelp(
         TREE,
         "Pressure at the tree transducer, between the well and the flowline, inside the christmas "
         "tree and considered reliable. It takes part in the signature of every event the "
         "literature illustrates.",
+        position="15.1",
     ),
-    "QBS": VariableHelp(SERVICE, "Flow rate at the service pump."),
+    "QBS": VariableHelp(SERVICE, "Flow rate at the service pump.", position="13.2"),
     "QGL": VariableHelp(
         GAS_LIFT,
         "Gas-lift flow rate: the gas injected to lighten the produced column when the reservoir "
         "can no longer lift it on its own.",
+        position="13.3",
     ),
     "T-JUS-CKP": VariableHelp(
         TOPSIDE,
         "Temperature downstream of the production choke, which swings with each slug. The fluid "
         "here can come from several wells at once, but the reading is kept because there is "
         "usually no temperature sensor upstream of the choke.",
+        position="2.4",
     ),
-    "T-MON-CKP": VariableHelp(TOPSIDE, "Temperature upstream of the production choke."),
-    "T-PDG": VariableHelp(DOWNHOLE, "Temperature at the permanent downhole gauge."),
+    "T-MON-CKP": VariableHelp(
+        TOPSIDE, "Temperature upstream of the production choke.", position="2.5"
+    ),
+    "T-PDG": VariableHelp(
+        DOWNHOLE, "Temperature at the permanent downhole gauge.", position="14.2"
+    ),
     "T-TPT": VariableHelp(
         TREE,
         "Temperature at the tree transducer, also considered reliable. Flowing fluid keeps the "
         "tree warm, so this reading collapses whenever production stops and is the quickest "
         "confirmation that it did.",
+        position="15.2",
     ),
 }
 
@@ -588,12 +737,40 @@ USAGE = {
             "length is duration, and two bars overlap on screen exactly when the instances overlap "
             "in time. Untick 'Compress silences' for a true calendar axis."
         ),
+        (
+            "Tick 'Join overlapping instances' to merge the instances of a well that overlap in "
+            "time into one bar wherever their labels agree on the shared stretch (an unlabeled "
+            "sample agrees with anything). Instances whose labels disagree there stay apart, so "
+            "the overlaps left are exactly the labeling conflicts. A bar joined from instances of "
+            "several fault folders is striped with every folder's color and says how many more "
+            "instances it joins after its timestamp; clicking it opens them as the single "
+            "continuous recording they were cut from."
+        ),
     ],
     "Instance window": [
         (
-            "One block per instance, stacked in chronological order on one shared time axis, so "
-            "the stretches the instances share line up vertically. The band at the very top marks "
+            "One block per bar of the overview, stacked in chronological order on one shared time "
+            "axis, so the stretches they share line up vertically. The band at the very top marks "
             "those stretches."
+        ),
+        (
+            "A bar the overview has joined opens as one block: its instances are read as the "
+            "single continuous recording they were cut from, drawn as one series over one set of "
+            "bands, with a dashed line where each further instance begins. Every instant appears "
+            "once, and what one window says nothing about the others fill in — so the label band "
+            "of a merged recording carries far less Unknown than its instances did apart, which "
+            "is what a model trained on it would see, unlabeled samples being dropped. Each "
+            "stretch keeps the color of the file that labeled it, so a normal period labeled by a "
+            "Normal Operation file stays that file's color inside a recording that goes on to "
+            "develop a fault."
+        ),
+        (
+            "'Join overlapping instances' is in this window's toolbar too, and merges exactly the "
+            "instances on screen: the group the window opened on is all it is about, so two of "
+            "them that overlap only through an instance outside the window stay apart, and what "
+            "the well as a whole would join is not brought in. It changes this window alone, and "
+            "turning it off lands where it started. A window opened from a bar the overview had "
+            "already merged is showing that merge, so its box is ticked and disabled."
         ),
         (
             "Tick features on the left to add a plot of them to every instance. The plots of one "

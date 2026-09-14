@@ -28,6 +28,13 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
   instance it overlaps.
 - **Click a color in the key**: the grid shows only the wells that recorded that fault. Clicking it
   again, or the button that appears at the right of the toolbar, brings every well back.
+- **Join overlapping instances** (toolbar checkbox) merges the instances of a well that overlap in
+  time into one bar wherever their labels agree on the shared stretch; an unlabeled sample agrees
+  with anything. Instances whose labels disagree there stay apart, so what still overlaps after the
+  join is exactly the labeling conflicts, and *Wells with overlaps* then lists the wells that have
+  one. A bar joined from several fault folders is striped with every folder's color and says how
+  many more instances it joins after its timestamp (`+2`); clicking it opens its instances as the
+  single continuous recording they were cut from.
 - **Retract the key** by clicking its title (or `Ctrl+L`) to give the grid the room. Retracted it
   still answers hovering: the entries of the instance under the pointer, and of the instances it
   overlaps, pop into the title row.
@@ -35,15 +42,36 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
   pyqtgraph's menu (view all, export).
 - The toolbar sets the number of columns, filters the grid to the wells that have overlaps, sorts
   wells by number, overlapping instances, instances or deepest pile-up, switches between the light
-  and dark modes, rescans the dataset, and opens the help (**F1**).
+  and dark modes, rescans the dataset, and opens the help (**F1**). The right end of the status bar
+  counts the instances, wells and overlaps on show.
 
-**Instance window** — one block per instance, stacked chronologically on a shared time axis, so the
-overlapping stretches line up vertically. Each block has a header line, the well operational status
-(`state`) and the label (`class`) as thin bands, then one plot per selected feature. A band at the
-top marks the stretches recorded by two or more of the instances shown.
+**Instance window** — one block per bar of the overview, stacked chronologically on a shared time
+axis, so the overlapping stretches line up vertically. Each block has a header line, the well
+operational status (`state`) and the label (`class`) as thin bands, then one plot per selected
+feature. A band at the top marks the stretches recorded by two or more of the bars shown.
 
 ![Instance window](docs/assets/instance_window.png)
 
+- A **joined bar opens as one block**: its instances are read as the single continuous recording
+  they were cut from, drawn as one series over one set of bands, with a dashed line where each
+  further instance begins. Every instant appears once, and what one window says nothing about the
+  others fill in — a sensor it did not record, or a sample its experts left unlabeled. The `class`
+  band of a merged recording therefore carries far less *Unknown* than its instances did apart: on
+  the largest join of 3W 2.0.0, seventy-one windows over six days, 1.6 % of the samples against a
+  third of the samples the windows carried separately. That matters because unlabeled samples are
+  dropped, so the merged recording is what a model would actually be trained on. Each stretch keeps
+  the color of the file that labeled it, so a normal period labeled by a *Normal Operation* file
+  stays green inside a recording that goes on to develop a fault. Stacked slices also become
+  unreadably thin long before seventy of them; one block does not.
+- **Join overlapping instances** is also a checkbox in this window's own toolbar, and **the group a
+  window opens on is all it is ever about**: the box merges exactly the instances on screen, so it
+  answers what this group alone amounts to rather than what the whole well does. Two of them that
+  overlap only through an instance outside the window therefore stay apart, and nothing is ever
+  brought in. It changes this window and nothing else, neither the grid nor any other instance
+  window, and turning it off lands exactly where it started, feature selection included. A window
+  opened from a bar the overview had already merged is showing that merge and has nothing of its
+  own left to do, so its box is ticked and disabled; a group with nothing to merge disables it too,
+  and says which case it is.
 - **Features** are chosen with the checkboxes on the left (features none of the instances recorded
   are greyed out). By default only the first feature in alphabetical order among the recorded ones
   is plotted.
@@ -66,9 +94,12 @@ Both windows are interactive counterparts of the stage-0 figures of the `flowml`
 
 **Help** (`F1` in either window) explains what is on screen, from the 3W papers in
 [`docs/papers/`](docs/papers): every class label and what the literature says it does to the
-readings, every variable and where in the production system it is measured, every well operational
-status, and how to work the two windows. Two schematics of the production system illustrate it.
-Where the papers describe no signature for an event, the help says so rather than inventing one.
+readings, with the example figure of the 2.0.0 paper reproduced and commented for each of the five
+events it illustrates; every variable, where in the production system it is measured and the
+position number that marks its sensor in the paper's schematic; every well operational status, the
+unknown one hatched as the bands hatch it; and how to work the two windows. Two schematics of the
+production system illustrate it. Where the papers describe no signature for an event, the help says
+so rather than inventing one.
 
 ![Help window](docs/assets/help.png)
 
@@ -94,6 +125,11 @@ the remaining rows, on a fixed column pitch so that entries line up down the row
 Stretches the experts left unlabeled are hatched rather than merely grey: two of the fault hues are
 themselves grey, and a texture says *nothing is known here* where one more shade would just read as
 one more class.
+
+With *Join overlapping instances* ticked a bar may stand for several instances. When they come from
+different folders the bar is striped with every color they had, top to bottom in the order of the
+key, so each stripe is still a color the key names; its outline is the hue of the event the joined
+labels develop furthest, and hovering it lights up every one of its entries in the key.
 
 ## Light and dark
 
@@ -138,7 +174,9 @@ The first launch reads the time span and labels of every real instance (about 5 
 instances of 3W 2.0.0, behind a progress dialog) and caches the result under the platform cache
 directory (`~/.cache/overlap-viewer/` on Linux). Later launches validate the cache against the
 files' sizes and modification times and start instantly; any changed, added or removed file
-triggers a fresh scan, as does the *Rescan dataset* button.
+triggers a fresh scan, as does the *Rescan dataset* button, and so does a version of the viewer
+that records more about each instance than the cache holds (the label runs the join reads were
+added this way).
 
 Only real instances (`WELL-*` files) are shown: simulated and hand-drawn instances have no well to
 overlap on.
@@ -155,9 +193,9 @@ app/
 ├── tests/test_backend.py     backend tests on a synthetic miniature of the 3W layout
 └── src/overlap_viewer/
     ├── config.py             dataset fallbacks · the tint ladder · signatures · layout · cache
-    ├── dataset.py            dataset.ini · instance catalogue and its cache · overlaps per well
+    ├── dataset.py            dataset.ini · instance catalogue and its cache · overlaps and joins per well
     ├── timemap.py            gap-compressed (or calendar) time axis in hours
-    ├── labels.py             label kinds and names · runs · feature statistics · coverage counts
+    ├── labels.py             label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts
     ├── theme.py              every color of the light and of the dark mode
     ├── palette.py            fault hues tinted by reach · legend entries
     ├── help_text.py          what the help says: classes, variables, statuses, usage
@@ -180,7 +218,9 @@ higher is exactly what the pipeline removes by default.
 
 The help text and the signature variables come from the 3W Dataset 2.0.0 data article
 ([doi:10.1038/s41597-026-07225-z](https://doi.org/10.1038/s41597-026-07225-z)); its figures 3 to 7
-are the source of the five published signatures.
+are the source of the five published signatures and are reproduced in the help
+(`docs/assets/signature-*.png`), and its table 2 gives the position of every sensor in its
+figure 1.
 
 ## Development
 

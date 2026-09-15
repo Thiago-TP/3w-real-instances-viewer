@@ -20,7 +20,16 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPen, QWheelEvent
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QPainter,
+    QPen,
+    QPolygonF,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QSizePolicy
 
 from overlap_viewer import theme
@@ -77,6 +86,24 @@ LABEL_FONT_PX = 10
 
 # Two seams of a merged recording closer than this are drawn as one (see ``SeamsItem``).
 MIN_SEAM_PX = 8
+
+# The corner mark of a reading outside the plausible range: a small triangle in
+# the warning color, on a timeline bar and on a cell of the availability page.
+MARK_PX = 6
+
+
+def draw_mark(p: QPainter, right: float, top: float, color: QColor) -> None:
+    """Paint the mark of an implausible reading into the top-right corner ending at ``right``, ``top``."""
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    p.drawPolygon(
+        QPolygonF(
+            [QPointF(right, top), QPointF(right - MARK_PX, top), QPointF(right, top + MARK_PX)]
+        )
+    )
+    p.restore()
 
 
 class ScrollFriendlyViewBox(pg.ViewBox):
@@ -346,9 +373,11 @@ class InstanceBarsItem(pg.GraphicsObject):
     tinted by reach and outlined with the full hue, and carries the timestamp
     of its filename in the longest format that fits. A bar that stands for
     several instances joined into one carries every color they had, as
-    stripes from top to bottom, and a suffix after its timestamp. While one
-    bar is hovered it gets a heavy outline, the bars it overlaps a lighter one
-    and, over the stretch they share, a hatch; every other bar fades.
+    stripes from top to bottom, and a suffix after its timestamp. A bar with a
+    reading no instrument could have produced wears the mark of it in its
+    corner. While one bar is hovered it gets a heavy outline, the bars it
+    overlaps a lighter one and, over the stretch they share, a hatch; every
+    other bar fades.
     """
 
     def __init__(self, z: float = 5.0, label_px: int = 9):
@@ -362,6 +391,7 @@ class InstanceBarsItem(pg.GraphicsObject):
         self._edges: list[str] = []
         self._stamps: list[pd.Timestamp] = []
         self._suffixes: list[str] = []
+        self._marks: list[bool] = []
         self._hover = -1
         self._partners: set[int] = set()
         self._hatches: list[tuple[float, float, float]] = []
@@ -375,6 +405,7 @@ class InstanceBarsItem(pg.GraphicsObject):
         edges: Sequence[str],
         stamps: Iterable[pd.Timestamp],
         suffixes: Sequence[str] | None = None,
+        marks: Sequence[bool] | None = None,
     ) -> None:
         """Place the bars; a bar's fill is one color or the list of colors it is striped with."""
         self._x0 = np.asarray(x0, dtype=float)
@@ -384,6 +415,7 @@ class InstanceBarsItem(pg.GraphicsObject):
         self._edges = list(edges)
         self._stamps = [pd.Timestamp(s) for s in stamps]
         self._suffixes = list(suffixes) if suffixes is not None else [""] * len(self._fills)
+        self._marks = list(marks) if marks is not None else [False] * len(self._fills)
         self.prepareGeometryChange()
         self.update()
 
@@ -467,6 +499,11 @@ class InstanceBarsItem(pg.GraphicsObject):
             p.setPen(QPen(edge, width))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
+            if self._marks[i] and rect.width() >= 2 * MARK_PX:
+                mark = QColor(colors.warning)
+                if faded:
+                    mark.setAlphaF(0.35)
+                draw_mark(p, rect.right(), rect.top(), mark)
 
             if rect.width() >= 28 and not faded:
                 label_color = QColor(text_color(blend(self._fills[i])))

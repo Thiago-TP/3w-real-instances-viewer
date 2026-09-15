@@ -6,18 +6,42 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from overlap_viewer import dataset as ds
 from overlap_viewer import help_text, theme
+from overlap_viewer.availability import (
+    ABSENT,
+    FROZEN,
+    LIVE,
+    Availability,
+    PairCoverage,
+    PairTable,
+    implausible_sensors,
+    outside_range,
+    sensor_state,
+)
 from overlap_viewer.config import (
     DEFAULT_FAULT_NAMES,
     DEFAULT_SENSOR_UNITS,
+    DEFAULT_TRANSIENT_CAPABLE,
+    EXTREME_VALUE_LIMIT,
     FAULT_SIGNATURES,
     REACH_TINTS,
     WELL_STATES,
     asset_path,
     cache_dir,
+    plausible_range,
+)
+from overlap_viewer.faults import (
+    onset,
+    onset_from_runs,
+    plausible_extent,
+    relative_hours,
+    window_mask,
+    zscore,
 )
 from overlap_viewer.labels import (
     Segment,
@@ -34,6 +58,8 @@ from overlap_viewer.labels import (
     runs,
     segments_from_json,
     segments_to_json,
+    sensor_stats_from_json,
+    sensor_stats_to_json,
 )
 from overlap_viewer.legend import row_breaks
 from overlap_viewer.palette import (
@@ -98,14 +124,36 @@ def instance_row(well: int, fault_class: int, start: pd.Timestamp, labels) -> di
     }
 
 
-def write_instance(folder: Path, well: int, start: pd.Timestamp, n: int, classes) -> Path:
-    """One parquet file shaped like a 3W instance: timestamp index, sensors, nullable labels."""
+def write_instance(
+    folder: Path,
+    well: int,
+    start: pd.Timestamp,
+    n: int,
+    classes,
+    pdg_offset: float = 0.0,
+    pdg_missing: float = 0.0,
+    statistics: bool = True,
+) -> Path:
+    """One parquet file shaped like a 3W instance: timestamp index, sensors, nullable labels.
+
+    The sensors cover the states the availability analysis tells apart: a
+    pressure that moves (``P-PDG``, shifted by ``pdg_offset`` so a file can
+    carry a negative pressure, and missing for the leading ``pdg_missing``
+    share of the samples so a file can carry a partly recorded sensor), a
+    frozen temperature (``T-TPT``), an absent flow rate (``QGL``) and a valve
+    held open throughout (``ESTADO-W1``). ``statistics=False`` writes the file
+    without the footer figures the scan reads first, so the fallback that
+    reads the columns gets exercised.
+    """
     index = pd.date_range(start, periods=n, freq="1s", name="timestamp")
+    pdg = np.linspace(1.0e7, 1.1e7, n) + pdg_offset
+    pdg[: round(pdg_missing * n)] = np.nan
     frame = pd.DataFrame(
         {
-            "P-PDG": np.linspace(1.0e7, 1.1e7, n),
+            "P-PDG": pdg,
             "T-TPT": np.full(n, 118.5),
             "QGL": np.full(n, np.nan),
+            "ESTADO-W1": np.full(n, 1.0),
             "class": pd.array(classes, dtype="Int16"),
             "state": pd.array([0] * n, dtype="Int16"),
         },
@@ -113,7 +161,10 @@ def write_instance(folder: Path, well: int, start: pd.Timestamp, n: int, classes
     )
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"WELL-{well:05d}_{start:%Y%m%d%H%M%S}.parquet"
-    frame.to_parquet(path)
+    if statistics:
+        frame.to_parquet(path)
+    else:
+        pq.write_table(pa.Table.from_pandas(frame), path, write_statistics=False)
     return path
 
 
@@ -136,9 +187,14 @@ def raw_dir(tmp_path: Path) -> Path:
     write_instance(root / "0", 1, hours(0), 2 * n, [0] * (2 * n))
     write_instance(root / "0", 1, hours(1), 2 * n, [0] * (2 * n))
     write_instance(root / "0", 1, hours(2), 2 * n, [0] * (2 * n))
-    # Well 2: one hydrate instance that reaches the transient only, and one that never leaves normal.
-    write_instance(root / "9", 2, hours(0), n, [pd.NA] * 600 + [0] * 1800 + [109] * 1200)
-    write_instance(root / "9", 2, hours(48), n, [0] * n)
+    # Well 2: one hydrate instance that reaches the transient only, its downhole
+    # pressure missing for the first 60 % of the recording, and one that never
+    # leaves normal and reports a negative downhole pressure, written without
+    # footer statistics.
+    write_instance(
+        root / "9", 2, hours(0), n, [pd.NA] * 600 + [0] * 1800 + [109] * 1200, pdg_missing=0.6
+    )
+    write_instance(root / "9", 2, hours(48), n, [0] * n, pdg_offset=-2.0e7, statistics=False)
     # A simulated file must be ignored.
     (root / "9" / "SIMULATED_00001.parquet").write_bytes(b"not parquet")
     return root
@@ -163,13 +219,19 @@ def test_dataset_info_reads_ini(raw_dir: Path):
     assert info.unit("T-TPT") == "°C"
     assert info.unit("QGL") == "m³/s"
     assert info.unit("ESTADO-W1") == ""  # enumerated states have no unit
+    assert info.is_enumerated("ESTADO-W1") and not info.is_enumerated("P-PDG")
     assert info.fault_classes == [0, 9]
+    # Only the events the ini marks as having a transient do.
+    assert info.transient_faults == frozenset({9})
+    assert info.has_transient(9) and not info.has_transient(0)
 
 
 def test_dataset_info_falls_back_without_ini(tmp_path: Path):
     info = ds.DatasetInfo.load(tmp_path)
     assert info.fault_name(3) == "Severe Slugging"
     assert "P-TPT" in info.sensor_names
+    assert info.transient_faults == DEFAULT_TRANSIENT_CAPABLE
+    assert not info.has_transient(3) and info.has_transient(8)
 
 
 def test_pack_lanes_alternates_along_a_chain():
@@ -403,6 +465,11 @@ def test_merging_instances_keeps_each_instant_once_and_fills_what_one_window_mis
     assert ds.merge_instances([early]) is early
     apart = ds.merge_instances([early, late.set_index(late.index + pd.Timedelta(hours=1))])
     assert len(apart) == 7 and apart.index.is_monotonic_increasing
+    # The figures of the merged frame count each instant once and skip what is missing.
+    stats = ds.merged_sensor_stats(merged)
+    assert stats["P-PDG"] == (5, 1.0, 5.0)
+    assert stats["T-TPT"] == (3, 10.0, 12.0)
+    assert "class" not in stats
 
 
 def test_timemap_compressed_roundtrip_and_gaps():
@@ -484,6 +551,9 @@ def test_every_theme_colors_everything_the_viewer_can_draw():
         assert set(colors.states) == set(WELL_STATES) | {None}
         assert set(colors.swatches) == {"plain", "highlight", "selected", "dimmed"}
         assert colors.name in theme.MODES
+        # The wells of the faults page get a dozen colors before any repeats.
+        assert len(colors.series) >= 12 and len(set(colors.series)) == len(colors.series)
+        assert len({colors.live, colors.frozen, colors.warning, colors.block_fill}) == 4
 
 
 def test_a_mode_changes_every_color_the_plots_carry():
@@ -599,6 +669,10 @@ def test_help_text_covers_the_dataset():
     # Every event but normal operation and the one added in 2.0.0 has a published
     # confirmation window; normal operation is not an occurrence to confirm.
     assert set(help_text.CONFIRMATION_WINDOWS) == set(DEFAULT_FAULT_NAMES) - {0, 9}
+    # The usage help knows every page of the viewer.
+    assert {"Timelines page", "Availability page", "Faults page", "Instance window"} <= set(
+        help_text.USAGE
+    )
 
 
 def test_cache_dir_sits_under_the_platform_cache_home(tmp_path: Path, monkeypatch):
@@ -679,3 +753,412 @@ def test_cancelling_the_scan(raw_dir: Path):
     assert len(entries) == 5
     with pytest.raises(ds.ScanCancelled):
         ds.scan_instances(entries, progress=lambda i, n, name: False)
+
+
+def test_sensor_stats_come_from_the_footer_or_from_the_data(raw_dir: Path):
+    """What each sensor recorded is read from the footer, and from the columns when it lacks it."""
+    info = ds.DatasetInfo.load(raw_dir)
+    entries = ds.list_real_instances(raw_dir, info.fault_classes)
+    with_footer, without_footer = entries[0][1], entries[-1][1]
+    assert pq.ParquetFile(with_footer).metadata.row_group(0).column(0).statistics is not None
+    assert pq.ParquetFile(without_footer).metadata.row_group(0).column(0).statistics is None
+    for path, offset in ((with_footer, 0.0), (without_footer, -2.0e7)):
+        with pq.ParquetFile(path) as parquet:
+            stats = ds.read_sensor_stats(parquet)
+        n = pq.ParquetFile(path).metadata.num_rows
+        assert list(stats) == ["P-PDG", "T-TPT", "QGL", "ESTADO-W1"]  # labels and index left out
+        assert stats["P-PDG"] == (n, pytest.approx(1.0e7 + offset), pytest.approx(1.1e7 + offset))
+        assert stats["T-TPT"] == (n, 118.5, 118.5)
+        assert stats["QGL"][0] == 0 and np.isnan(stats["QGL"][1]) and np.isnan(stats["QGL"][2])
+        assert stats["ESTADO-W1"] == (n, 1.0, 1.0)
+    # A partly recorded sensor counts its readings only.
+    with pq.ParquetFile(entries[3][1]) as parquet:
+        partial = ds.read_sensor_stats(parquet)
+    assert partial["P-PDG"][0] == 1440 and partial["P-PDG"][1] == pytest.approx(1.06e7, rel=1e-3)
+    # And they survive the catalogue cache as text.
+    catalogue = ds.scan_instances(entries)
+    back = sensor_stats_from_json(catalogue["sensor_stats"].iloc[-1])
+    assert back["P-PDG"] == (3600, pytest.approx(-1.0e7), pytest.approx(-0.9e7))
+    assert back["QGL"][0] == 0 and np.isnan(back["QGL"][1])
+    assert sensor_stats_from_json(sensor_stats_to_json({})) == {}
+
+
+def test_sensor_states_and_plausible_ranges():
+    """Absent, frozen or live; a valve state is never frozen; a threshold; ranges follow the unit."""
+    assert sensor_state(0, 10, np.nan, np.nan) == ABSENT
+    assert sensor_state(10, 10, 5.0, 5.0) == FROZEN
+    assert sensor_state(10, 10, 0.0, 0.0) == FROZEN  # frozen at zero, the usual case
+    assert sensor_state(10, 10, 1.0e7, 1.0e7 + 1.0) == FROZEN  # moving less than the flat span
+    assert sensor_state(10, 10, 1.0e7, 1.1e7) == LIVE
+    assert sensor_state(10, 10, 1.0, 1.0, enumerated=True) == LIVE
+    assert sensor_state(0, 10, np.nan, np.nan, enumerated=True) == ABSENT
+    # Below the threshold a sensor is not available, whatever its readings say.
+    assert sensor_state(4, 10, 1.0e7, 1.1e7, threshold=0.5) == ABSENT
+    assert sensor_state(5, 10, 1.0e7, 1.1e7, threshold=0.5) == LIVE
+    assert sensor_state(4, 10, 5.0, 5.0, threshold=0.5) == ABSENT
+    assert sensor_state(4, 10, 1.0, 1.0, enumerated=True, threshold=0.5) == ABSENT
+
+    assert plausible_range("Pa") == (0.0, EXTREME_VALUE_LIMIT)
+    assert plausible_range("°C") == (-50.0, 250.0)
+    assert plausible_range("%") == (0.0, EXTREME_VALUE_LIMIT)
+    assert (
+        plausible_range("m³/s")
+        == plausible_range("")
+        == (-EXTREME_VALUE_LIMIT, EXTREME_VALUE_LIMIT)
+    )
+    assert outside_range(-1.0, 5.0, plausible_range("Pa"))  # a negative absolute pressure
+    assert outside_range(1.0, 1.3e8, plausible_range("Pa"))  # 1,300 bar
+    assert not outside_range(0.0, 4.9e7, plausible_range("Pa"))  # zero is left alone
+    assert outside_range(-999.0, 20.0, plausible_range("°C"))  # a sentinel
+    assert not outside_range(-33.8, 127.7, plausible_range("°C"))  # the real extremes of 3W
+    assert not outside_range(np.nan, np.nan, plausible_range("Pa"))  # nothing recorded
+    info = ds.DatasetInfo(Path("."))
+    stats = {"P-PDG": (5, -1.2e42, 0.0), "T-TPT": (5, 20.0, 30.0), "QGL": (0, np.nan, np.nan)}
+    assert implausible_sensors(stats, info) == ["P-PDG"]
+
+
+def test_availability_folds_bars_into_groups(raw_dir: Path, tmp_path: Path, monkeypatch):
+    """The table a page draws: shares of samples and of bars per state, counts, bounds, marks."""
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
+    info = ds.DatasetInfo.load(raw_dir)
+    catalogue = ds.load_catalogue(info)
+    availability = Availability.from_catalogue(catalogue, info)
+    assert availability.sensors == ["P-PDG", "T-TPT", "QGL", "ESTADO-W1"]  # dataset order
+    assert availability.n_bars == 5 and not availability.joined
+    # One row per bar, well after well, remembering which instance it is.
+    bars = availability.bars
+    assert bars["well"].tolist() == [1, 1, 1, 2, 2] and bars["bar"].tolist() == [0, 1, 2, 0, 1]
+    assert bars["members"].tolist() == [[0], [1], [2], [0], [1]]
+    assert bars["title"].iloc[3] == "WELL-00002_20170201010000"
+    assert bars["n_samples"].tolist() == catalogue["n_samples"].tolist()
+    assert availability.index_of(2, 1) == 4
+    # Per bar: the pressure moves, the temperature is frozen, the flow rate is
+    # absent, and the valve state, constant as it is, is live.
+    assert availability.state.tolist() == [[LIVE, FROZEN, ABSENT, LIVE]] * 5
+    # Only the last bar, the one with the negative pressure, is implausible.
+    assert availability.implausible[:, 0].tolist() == [False] * 4 + [True]
+    assert not availability.implausible[:, 1:].any()
+    assert availability.implausible_any([4]) and not availability.implausible_any([0, 1, 2])
+
+    by_class = availability.grouped([int(k) for k in bars["fault_class"]])
+    assert by_class.keys == [0, 9] and len(by_class) == 2
+    assert by_class.n_instances.tolist() == [3, 2]
+    assert by_class.n_samples.tolist() == [3 * 7200, 2 * 3600]
+    # Every sample is in exactly one state, so the three shares of a cell sum to one.
+    assert np.allclose(by_class.shares.sum(axis=2), 1.0)
+    assert np.allclose(by_class.instance_shares.sum(axis=2), 1.0)
+    # P-PDG: live throughout the normal windows; live in 70 % of the hydrate class's
+    # samples, since one of its two instances misses the first 60 % of it.
+    assert np.allclose(by_class.shares[:, 0], [[0.0, 0.0, 1.0], [0.3, 0.0, 0.7]])
+    assert by_class.shares[:, 1].tolist() == [[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]]  # T-TPT frozen
+    assert by_class.shares[:, 2].tolist() == [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]  # QGL absent
+    assert by_class.instances[1, :, LIVE].tolist() == [2, 0, 0, 2]
+    assert by_class.instances[1, :, FROZEN].tolist() == [0, 2, 0, 0]
+    assert by_class.instances[1, :, ABSENT].tolist() == [0, 0, 2, 0]
+    assert by_class.instance_shares[1, 0].tolist() == [0.0, 0.0, 1.0]  # both instances live
+    assert by_class.implausible.tolist() == [[0, 0, 0, 0], [1, 0, 0, 0]]
+    assert by_class.low[1, 0] == pytest.approx(-1.0e7) and by_class.high[1, 0] == pytest.approx(
+        1.1e7
+    )
+    assert np.isnan(by_class.low[0, 2]) and np.isnan(by_class.high[0, 2])  # nothing recorded
+    # The shares behind one bar, or behind several read together.
+    shares, flagged = availability.shares_of([3], 0)
+    assert np.allclose(shares, [0.6, 0.0, 0.4]) and not flagged
+    shares, flagged = availability.shares_of([3, 4], 0)
+    assert np.allclose(shares, [0.3, 0.0, 0.7]) and flagged
+
+    # One row per bar of a well, in catalogue order, and a total over them.
+    mask = (bars["well"] == 2).to_numpy()
+    positions = np.flatnonzero(mask).tolist()
+    per_bar = availability.grouped(range(5), positions, mask)
+    assert per_bar.keys == positions and per_bar.n_instances.tolist() == [1, 1]
+    total = availability.total("all", mask=mask)
+    assert total.keys == ["all"] and total.n_instances.tolist() == [2]
+    stacked = per_bar.stacked(total)
+    assert len(stacked) == 3 and stacked.n_samples.tolist() == [3600, 3600, 7200]
+    with pytest.raises(ValueError):
+        per_bar.stacked(total.with_columns([0]))
+
+    # Columns by coverage: the live sensors first, ties in dataset order, the absent one last.
+    everything = availability.total()
+    assert everything.coverage_order() == [3, 0, 1, 2]  # the valve state is live in every sample
+    assert everything.coverage_order(by_instances=True) == [0, 3, 1, 2]  # by bars they tie
+    reordered = everything.with_columns(everything.coverage_order())
+    assert reordered.sensors == ["ESTADO-W1", "P-PDG", "T-TPT", "QGL"]
+    assert reordered.shares[0, -1, ABSENT] == 1.0
+    # An empty group is all zeros rather than a division by zero.
+    empty = availability.grouped([int(k) for k in bars["fault_class"]], order=[3])
+    assert empty.n_instances.tolist() == [0] and not empty.shares.any()
+
+    # With a threshold, the partly recorded pressure is not available at all in
+    # its instance, readings and all.
+    strict = Availability.from_catalogue(catalogue, info, threshold=0.5)
+    assert strict.threshold == 0.5
+    assert strict.state[3, 0] == ABSENT and strict.state[4, 0] == LIVE
+    by_class = strict.grouped([int(k) for k in bars["fault_class"]])
+    assert np.allclose(by_class.shares[1, 0], [0.5, 0.0, 0.5])
+    assert by_class.instances[1, 0].tolist() == [1, 0, 1]
+    assert strict.implausible[4, 0]  # the threshold does not hide garbage
+
+
+def same_stats(a, b) -> bool:
+    """Whether two merged-figure tables agree, NaN bounds included."""
+    if a.keys() != b.keys():
+        return False
+    for key in a:
+        first, second = a[key], b[key]
+        if first.n_samples != second.n_samples or first.sensors.keys() != second.sensors.keys():
+            return False
+        if first.pairs.tolist() != second.pairs.tolist():
+            return False
+        for name in first.sensors:
+            va, vb = first.sensors[name], second.sensors[name]
+            if va[0] != vb[0]:
+                return False
+            for x, y in zip(va[1:], vb[1:]):
+                if not ((np.isnan(x) and np.isnan(y)) or x == pytest.approx(y)):
+                    return False
+    return True
+
+
+def test_joined_sensor_figures_count_shared_instants_once(
+    raw_dir: Path, tmp_path: Path, monkeypatch
+):
+    """The bars of the joined view read as merged recordings, from the data, and are cached."""
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
+    info = ds.DatasetInfo.load(raw_dir)
+    catalogue = ds.load_catalogue(info)
+    wells = ds.split_wells(catalogue)
+    sensors = info.sensor_names
+    seen = []
+    stats = ds.scan_joined_stats(wells, sensors, lambda i, n, t: seen.append((i, n)) or True)
+    assert seen[-1] == (5, 5)
+    assert set(stats) == {(1, 0), (2, 0), (2, 1)}
+    # The chain of three windows is one four-hour recording: its shared hours count once.
+    chain = stats[(1, 0)]
+    assert chain.n_samples == 4 * 3600
+    assert chain.sensors["P-PDG"] == (4 * 3600, pytest.approx(1.0e7), pytest.approx(1.1e7))
+    assert chain.sensors["T-TPT"] == (4 * 3600, 118.5, 118.5)
+    assert chain.sensors["QGL"][0] == 0 and np.isnan(chain.sensors["QGL"][1])
+    assert chain.sensors["ESTADO-W1"] == (4 * 3600, 1.0, 1.0)
+    # The same pass counts the pairs of the merged recording.
+    rows, cols = ds.pair_positions(len(sensors))
+    pairs = {(sensors[a], sensors[b]): int(c) for a, b, c in zip(rows, cols, chain.pairs)}
+    assert pairs[("P-PDG", "T-TPT")] == 4 * 3600 and pairs[("P-PDG", "QGL")] == 0
+    # A bar of one instance is the instance itself.
+    single = stats[(2, 0)]
+    assert single.n_samples == 3600 and single.sensors["P-PDG"][0] == 1440
+
+    joined = Availability.from_wells([well.joined() for well in wells], info, joined_stats=stats)
+    assert joined.joined and joined.n_bars == 3
+    assert joined.bars["title"].tolist() == [
+        "WELL-00001_20170201010000 +2",
+        "WELL-00002_20170201010000",
+        "WELL-00002_20170203010000",
+    ]
+    assert joined.bars["members"].tolist() == [[0, 1, 2], [0], [1]]
+    assert joined.n_total.tolist() == [4 * 3600, 3600, 3600]
+    assert joined.state[0].tolist() == [LIVE, FROZEN, ABSENT, LIVE]
+    with pytest.raises(ValueError):
+        Availability.from_wells([wells[0].joined()], info)  # the merged figures are required
+
+    # The pair map of the merged recordings: each shared instant counted once.
+    coverage = PairCoverage.from_joined(joined, stats)
+    table = coverage.table(joined, live_only=False)
+    pdg, tpt = joined.sensors.index("P-PDG"), joined.sensors.index("T-TPT")
+    assert table.n_bars == 3 and table.n_samples == 4 * 3600 + 2 * 3600
+    assert table.samples[pdg, tpt] == 4 * 3600 + 1440 + 3600
+    assert table.shares[pdg, tpt] == pytest.approx(19440 / 21600)
+
+    # Cached under the platform cache home, and served from there while the files stand.
+    loaded = ds.load_joined_stats(info, wells, sensors)
+    assert same_stats(loaded, stats)
+    assert ds.joined_cache_path(raw_dir).is_relative_to(tmp_path)
+    assert ds.joined_cache_path(raw_dir).exists()
+
+    def no_scan(*args, **kwargs):
+        raise AssertionError("the cache should have been used")
+
+    monkeypatch.setattr(ds, "scan_joined_stats", no_scan)
+    assert same_stats(ds.load_joined_stats(info, wells, sensors), stats)
+    # A touched file changes the listing, and the data is read again.
+    monkeypatch.undo()
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
+    catalogue["path"].iloc[0].touch()
+    calls = []
+    original = ds.scan_joined_stats
+    monkeypatch.setattr(
+        ds, "scan_joined_stats", lambda *a, **k: calls.append(1) or original(*a, **k)
+    )
+    assert same_stats(ds.load_joined_stats(info, wells, sensors), stats)
+    assert calls == [1]
+    with pytest.raises(ds.ScanCancelled):
+        ds.scan_joined_stats(wells, sensors, progress=lambda i, n, t: False)
+
+
+def test_pair_counts_say_which_sensors_are_recorded_at_the_same_instant(
+    raw_dir: Path, tmp_path: Path, monkeypatch
+):
+    """Two sensors can each cover half a recording and never overlap: the data has to say."""
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
+    info = ds.DatasetInfo.load(raw_dir)
+    sensors = info.sensor_names  # P-PDG, T-TPT, QGL, ESTADO-W1
+    entries = ds.list_real_instances(raw_dir, info.fault_classes)
+    rows, cols = ds.pair_positions(len(sensors))
+    assert len(rows) == 10  # the upper triangle of four sensors, diagonal included
+    assert (rows[0], cols[0]) == (0, 0) and (rows[-1], cols[-1]) == (3, 3)
+
+    # The hydrate instance records its pressure over the last 40 % of its samples
+    # only, so that is all it can share with the sensors that cover the whole of it.
+    with pq.ParquetFile(entries[3][1]) as parquet:
+        counts = ds.read_pair_counts(parquet, sensors)
+    pairs = {(sensors[a], sensors[b]): int(c) for a, b, c in zip(rows, cols, counts)}
+    assert pairs[("P-PDG", "P-PDG")] == 1440
+    assert pairs[("P-PDG", "T-TPT")] == 1440
+    assert pairs[("T-TPT", "T-TPT")] == 3600
+    assert pairs[("T-TPT", "ESTADO-W1")] == 3600
+    assert pairs[("P-PDG", "QGL")] == 0 and pairs[("QGL", "QGL")] == 0
+
+    seen = []
+    scanned = ds.scan_pair_counts(entries, sensors, lambda i, n, name: seen.append((i, n)) or True)
+    assert seen[-1] == (5, 5) and len(scanned) == 5
+    assert scanned[(9, entries[3][1].name)].tolist() == counts.tolist()
+    with pytest.raises(ds.ScanCancelled):
+        ds.scan_pair_counts(entries, sensors, progress=lambda i, n, name: False)
+
+    # Cached under the platform cache home, and served from there while the files stand.
+    loaded = ds.load_pair_counts(info, sensors)
+    assert {k: v.tolist() for k, v in loaded.items()} == {k: v.tolist() for k, v in scanned.items()}
+    assert ds.pair_cache_path(raw_dir).is_relative_to(tmp_path)
+
+    def no_scan(*args, **kwargs):
+        raise AssertionError("the cache should have been used")
+
+    monkeypatch.setattr(ds, "scan_pair_counts", no_scan)
+    assert len(ds.load_pair_counts(info, sensors)) == 5
+    # Asked for the sensors in another order, the cache cannot answer: the
+    # counts are stored in the order they were taken in.
+    with pytest.raises(AssertionError):
+        ds.load_pair_counts(info, list(reversed(sensors)))
+
+
+def test_pair_coverage_folds_the_counts_over_a_scope(raw_dir: Path, tmp_path: Path, monkeypatch):
+    """The share of the samples of a scope in which both sensors of a pair carry a reading."""
+    monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))
+    info = ds.DatasetInfo.load(raw_dir)
+    catalogue = ds.load_catalogue(info)
+    availability = Availability.from_catalogue(catalogue, info)
+    # Every bar of the plain view names the instance behind it, which is how the
+    # counts, keyed by folder and file, find their bar.
+    assert availability.bars["file"].tolist() == catalogue["file"].tolist()
+
+    entries = ds.list_real_instances(raw_dir, info.fault_classes)
+    counts = ds.scan_pair_counts(entries, availability.sensors)
+    coverage = PairCoverage.from_counts(availability, counts)
+    assert coverage.counts.shape == (5, 10)
+
+    live = coverage.table(availability)
+    assert live.live_only and live.n_bars == 5
+    assert live.n_samples == 3 * 7200 + 2 * 3600
+    order = live.sensors
+    pdg, tpt, qgl, valve = (order.index(name) for name in ("P-PDG", "T-TPT", "QGL", "ESTADO-W1"))
+    # 26,640 samples carry the pressure: three whole windows, one whole instance
+    # and the last 40 % of another.
+    assert live.samples[pdg, pdg] == 26640
+    assert live.shares[pdg, pdg] == pytest.approx(26640 / 28800)
+    assert live.samples[pdg, valve] == 26640 and live.samples[valve, pdg] == 26640
+    assert live.samples[valve, valve] == 28800 and live.shares[valve, valve] == 1.0
+    # The temperature is frozen in every instance, so no pair of it is *live*.
+    assert live.samples[tpt, tpt] == 0 and live.samples[pdg, tpt] == 0
+    assert live.samples[qgl].sum() == 0  # and nothing ever records the flow rate
+    assert live.bars[pdg, valve] == 5
+
+    # Counted as Rabelo counts, a frozen reading is still a reading.
+    recorded = coverage.table(availability, live_only=False)
+    assert not recorded.live_only
+    assert recorded.samples[tpt, tpt] == 28800
+    assert recorded.samples[pdg, tpt] == 26640
+    assert recorded.samples[qgl].sum() == 0
+
+    # One fault class alone, and the order the page can put the sensors in.
+    mask = (availability.bars["fault_class"] == 9).to_numpy()
+    hydrate = coverage.table(availability, mask, live_only=False)
+    assert hydrate.n_bars == 2 and hydrate.n_samples == 7200
+    assert hydrate.samples[pdg, tpt] == 1440 + 3600
+    assert hydrate.shares[pdg, tpt] == pytest.approx(5040 / 7200)
+    ordered = hydrate.with_order(hydrate.coverage_order())
+    assert ordered.sensors[-1] == "QGL"  # nothing recorded it, so it sorts last
+    assert ordered.samples[0, 0] >= ordered.samples[-1, -1]
+    # An empty scope is all zeros rather than a division by zero.
+    empty = coverage.table(availability, np.zeros(5, dtype=bool))
+    assert empty.n_bars == 0 and empty.n_samples == 0 and not empty.shares.any()
+
+
+def test_the_pair_map_can_be_ordered_so_that_what_goes_together_sits_together():
+    """Spectral seriation: two groups of sensors, weakly bridged, come out contiguous."""
+    sensors = ["a1", "b1", "a2", "b2", "dead"]  # the groups interleaved in dataset order
+    samples = np.array(
+        [
+            # a1   b1   a2   b2  dead
+            [100, 0, 100, 0, 0],
+            [0, 100, 10, 100, 0],
+            [100, 10, 100, 0, 0],
+            [0, 100, 0, 100, 0],
+            [0, 0, 0, 0, 0],  # nothing ever recorded it
+        ]
+    )
+    table = PairTable(sensors, 1, 100, samples, (samples > 0).astype(int), live_only=True)
+    order = [sensors[j] for j in table.grouped_order()]
+    assert order == ["a1", "a2", "b1", "b2", "dead"]
+    # Ordered by coverage instead, the groups stay interleaved: every sensor but
+    # the dead one covers the same, so the ranking keeps them in dataset order.
+    assert [sensors[j] for j in table.coverage_order()] == sensors
+    # Too little to seriate is not an error; the sensors keep their order.
+    tiny = np.array([[10, 10], [10, 10]])
+    small = PairTable(["x", "y"], 1, 10, tiny, tiny, live_only=True)
+    assert small.grouped_order() == [0, 1]
+    empty = np.zeros((3, 3), dtype=int)
+    assert PairTable(["x", "y", "z"], 0, 0, empty, empty, True).grouped_order() == [0, 1, 2]
+
+
+def test_faults_are_aligned_where_the_event_begins_and_scaled_to_their_level():
+    """The onset of an instance by its labels, from the frame or from the catalogue's runs."""
+    index = pd.date_range(T0, periods=5, freq="1s", name="timestamp")
+    frame = pd.DataFrame(
+        {
+            "class": pd.array([pd.NA, 0, 0, 109, 9], dtype="Int16"),
+            "P-PDG": [1.0, 2.0, 3.0, 4.0, 5.0],
+        },
+        index=index,
+    )
+    assert onset(frame, 9, align="transient") == index[3]
+    assert onset(frame, 9, align="steady") == index[4]
+    assert onset(frame, 9, align="start") == index[0]
+    assert onset(frame, 4, align="transient") is None  # another fault's labels
+    assert onset(frame.iloc[:0], 9) is None
+    with pytest.raises(ValueError):
+        onset(frame, 9, align="middle")
+    runs_of = label_segments(frame, "class")
+    for align in ("transient", "steady", "start"):
+        assert onset_from_runs(runs_of, 9, align=align) == onset(frame, 9, align=align)
+    assert onset_from_runs(runs_of, 4) is None and onset_from_runs([], 9) is None
+
+    hours_from = relative_hours(index, index[3])
+    assert hours_from.tolist() == pytest.approx([-3 / 3600, -2 / 3600, -1 / 3600, 0.0, 1 / 3600])
+    assert window_mask(np.array([-2.0, -0.5, 0.0, 3.0]), 1.0, 2.0).tolist() == [
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert window_mask(np.array([-2.0, 3.0]), 0.0, 0.0).tolist() == [True, True]
+
+    scaled = zscore(np.array([1.0, 2.0, 3.0, np.nan]))
+    assert scaled[:3] == pytest.approx([-1.2247, 0.0, 1.2247], abs=1e-4) and np.isnan(scaled[3])
+    assert zscore(np.array([5.0, 5.0, np.nan])).tolist()[:2] == [0.0, 0.0]  # a flat series
+    assert np.isnan(zscore(np.array([np.nan, np.nan]))).all()
+
+    bounds = plausible_range("Pa")
+    assert plausible_extent(np.array([-1.2e42, 1.0e7, 2.0e7, np.nan]), bounds) == (1.0e7, 2.0e7)
+    assert plausible_extent(np.array([-1.0, -2.0]), bounds) == (-2.0, -1.0)  # nothing plausible
+    assert all(np.isnan(plausible_extent(np.array([np.nan]), bounds)))

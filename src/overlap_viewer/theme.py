@@ -60,6 +60,18 @@ class Theme:
     note_border: str
     shared_fills: tuple[str, ...]  # a stretch recorded by two, three, more instances
 
+    # -- what a sensor recorded: the three states of the availability page.
+    # Absent is the plain ``block_fill``, a cell with nothing in it; the live
+    # color is a slate blue that none of the fault hues below comes close to,
+    # so a cell can never be read as a class.
+    live: str  # samples carrying a reading that moves
+    frozen: str  # samples carrying one constant reading, drawn under a flat line
+    warning: str  # the mark of a reading no instrument could have produced
+
+    # -- the wells of the faults page, where every line is an instance and its
+    # color says which well recorded it; cycled when a fault spans more wells.
+    series: tuple[str, ...]
+
     # -- the data
     faults: dict[int, str]
     fallback_fault: str  # a folder the palette does not know
@@ -110,6 +122,23 @@ LIGHT = Theme(
     note_fill="#ffffff",
     note_border="#666666",
     shared_fills=("#9a9a9a", "#6f6f6f", "#444444"),
+    live="#4f6d8f",
+    frozen="#c2c2c2",
+    warning="#d4871a",
+    series=(
+        "#1f77b4",
+        "#d62728",
+        "#2ca02c",
+        "#9467bd",
+        "#e6771d",
+        "#17a2b8",
+        "#8c564b",
+        "#c2399a",
+        "#6b8e23",
+        "#4d4d4d",
+        "#0b5394",
+        "#b8860b",
+    ),
     # One hue per fault-class folder. Normal is green; the faults get distinct
     # categorical colors.
     faults={
@@ -183,6 +212,23 @@ DARK = Theme(
     note_fill="#1a1c1f",
     note_border="#5a5f66",
     shared_fills=("#6a6f77", "#8f959d", "#b0b6be"),
+    live="#7f9fc4",
+    frozen="#4a4f57",
+    warning="#e8a838",
+    series=(
+        "#6baed6",
+        "#f4736f",
+        "#74c476",
+        "#c3a5e6",
+        "#ffa14f",
+        "#5fd0e0",
+        "#d2a58e",
+        "#f18ccd",
+        "#b5cf5c",
+        "#c0c4ca",
+        "#7fa7e8",
+        "#e6c05a",
+    ),
     faults={
         0: "#5cb85c",
         1: "#5b9bd5",

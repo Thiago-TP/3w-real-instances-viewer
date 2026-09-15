@@ -19,6 +19,8 @@ entry names the document it leans on.
 
 from dataclasses import dataclass, field
 
+from overlap_viewer.config import DEFAULT_TRANSIENT_CAPABLE
+
 
 @dataclass(frozen=True)
 class Figure:
@@ -180,7 +182,7 @@ class FaultHelp:
 
 # The transient code of an event is its class plus the transient offset; the
 # events missing from this set have no transient period in the dataset at all.
-TRANSIENT_CAPABLE = {1, 2, 5, 6, 7, 8, 9}
+TRANSIENT_CAPABLE = set(DEFAULT_TRANSIENT_CAPABLE)
 
 # How long a window the well-monitoring analysts at Petrobras look at before
 # they will confirm an occurrence (table 1 of both articles and of the thesis).
@@ -660,7 +662,8 @@ DATASET_NOTES = [
             "fault, but a symptom of a sensor, configuration or network problem, and a variable "
             "that cannot show the pattern of an event. About two thirds of the variable-instance "
             "pairs of version 2.0.0 are missing and about a tenth frozen, which is why so many "
-            "panels in this viewer read <i>not recorded</i> or <i>flat</i>."
+            "panels in this viewer read <i>not recorded</i> or <i>flat</i>. The Availability page "
+            "counts them, sensor by sensor."
         ),
     ),
     (
@@ -708,9 +711,187 @@ DATASET_NOTES = [
     ),
 ]
 
+# What the availability page shows, for the help tab of the same name.
+AVAILABILITY_INTRO = (
+    "Every real instance carries every column the dataset declares, whether or not the well had "
+    "the sensor, so what was actually recorded is a question of its own, and the "
+    "<b>Availability</b> page answers it. Its rows are groups of instances (the fault classes, "
+    "the wells, or the instances of one well or of one fault class, one by one) and its columns "
+    "the sensors; every cell splits the samples of its row into three states, side by side from "
+    "the left, so that the fuller the cell, the more of the sensor there is:"
+)
+
+# The kinds of cell of the availability page, in the order of the key: the
+# swatch name (``heatmap.SWATCH_KINDS``), what to call it, what it means.
+AVAILABILITY_STATES: list[tuple[str, str, str]] = [
+    ("live", "Live", "Samples carrying a reading that moves over the instance."),
+    (
+        "frozen",
+        "Frozen",
+        (
+            "Samples carrying a reading, but one single value from end to end: a dead or "
+            "disconnected instrument, which a count of readings alone would pass off as "
+            "available. The rule is the one the instance window marks a plot <i>flat</i> by, so "
+            "the two never disagree about a sensor. A valve state (the ESTADO variables) is never "
+            "frozen: a valve that holds one position for a whole recording is a fact about the "
+            "well, so those variables are only ever absent or live."
+        ),
+    ),
+    (
+        "absent",
+        "Absent",
+        "Samples carrying no reading: the well does not have the sensor, or lost it.",
+    ),
+    (
+        "implausible",
+        "Implausible",
+        (
+            "The mark of a reading no instrument could have produced, in at least one instance "
+            "of the row: a negative absolute pressure, a temperature outside the band below, a "
+            "magnitude beyond 1e8. Such a sensor is still live, since its readings are there and "
+            "move, but what they say is not a measurement. Hover the cell for how many "
+            "instances, and the plots of the instance window call the readings out in the same "
+            "amber."
+        ),
+    ),
+]
+
+# Why each plausible range is what it is, per unit of ``config.PLAUSIBLE_RANGES``:
+# the quantity, and the reasoning of the ``flowml`` survey of 3W 2.0.0.
+PLAUSIBLE_RANGE_NOTES: dict[str, tuple[str, str]] = {
+    "Pa": (
+        "Pressures",
+        (
+            "Absolute pressures (table 3 of the paper), so a negative reading is impossible; 106 "
+            "files of 3W 2.0.0 carry one, usually for the whole recording, a broken or mis-mapped "
+            "tag the paper itself warns about. Zero is left alone: a sensor frozen at zero is "
+            "another defect, and shows as frozen."
+        ),
+    ),
+    "°C": (
+        "Temperatures",
+        (
+            "The floor is below every genuine reading of the dataset (T-TPT reaches -33.8 °C "
+            "during a blowdown, which is real: the cooling of a gas expanding is exactly the "
+            "condition hydrates form in) and the ceiling twice the hottest one (127.7 °C). The "
+            "band catches the sentinels -999 and -99.99 the plant's information system leaks "
+            "into the data, and T-PDG readings of 30,000 °C."
+        ),
+    ),
+    "%": (
+        "Choke openings",
+        (
+            "Percentages, so a negative reading is impossible; one well reports an opening of "
+            "-99.99 %, a sentinel."
+        ),
+    ),
+}
+MAGNITUDE_NOTE = (
+    "Every variable, these included, must also stay below <b>1e8</b> in magnitude: some sensors "
+    "are frozen at absurd levels (one well reports P-PDG = -1.2e42 Pa for whole instances) or "
+    "off by orders of magnitude (P-JUS-CKP around 1.4e9 Pa, that is 14,000 bar), and a survey of "
+    "every instance of 3W 2.0.0 found a clean gap around this limit, the largest varying reading "
+    "below it being 4.9e7 Pa and the smallest value above it 1.3e8, so the limit removes no real "
+    "signal, which matters because genuine spikes are fault signatures. Valve states and flow "
+    "rates are held to this rule only."
+)
+
+AVAILABILITY_NOTES = [
+    (
+        "Sensor pairs",
+        (
+            "The <b>Sensor pairs</b> matrix puts the sensors on both axes and asks what no column "
+            "of the first matrix answers: how often two sensors carry a reading <i>at the same "
+            "instant</i>. Two sensors can each cover half a recording and never overlap, so a pair "
+            "can be empty however well covered each of its sensors is, and a pair with little "
+            "coverage is one no model can train on and a correlation nobody should trust — the "
+            "point of Rabelo's figure 2.10. The diagonal is each sensor's own coverage, the "
+            "<i>Over</i> box counts the pairs over every real instance or over those of one fault "
+            "class or one well, and <i>Count</i> asks either that both sensors be live in an "
+            "instance for it to count, or merely that both be recorded, frozen readings included, "
+            "which is how Rabelo counts. Of the 351 pairs of 3W 2.0.0, 102 never carry a reading "
+            "at the same instant. The footers cannot answer this one — a count of missing values "
+            "says how much of a column is there, not which samples — so the first look reads the "
+            "data, behind a progress dialog, and keeps the result in the cache.<br><br>"
+            "<i>Join overlapping instances</i> changes the answer here rather than merely the "
+            "arithmetic: a sensor one window did not record may be there in the window it "
+            "overlaps, so two sensors that never share a sample inside one window can share "
+            "plenty inside the recording the windows were cut from. And <i>Sensors: grouped by "
+            "co-occurrence</i> lays the sensors out so that those recorded at the same instant "
+            "sit together — a spectral seriation, the sensors placed on a line by the second "
+            "eigenvector of the Laplacian of their overlap — which turns the blocks of the matrix "
+            "into the sets of sensors a well carries or lacks together, and those sets are what "
+            "say which subsets of the dataset a model could be built on at all."
+        ),
+    ),
+    (
+        "How the shares are counted",
+        (
+            "Shares are of samples: every sample of every instance in a row is absent, frozen or "
+            "live, so the three parts of a cell add up to the whole cell, and a sensor recorded "
+            "for part of an instance shows as partly absent. A sample two overlapping instances "
+            "share is counted in both, once per instance; joining the instances first is not "
+            "applied here yet. The last row folds every instance shown, and <i>Sensors: By "
+            "coverage</i> orders the columns by it, the sensor live in the largest share of the "
+            "samples first."
+        ),
+    ),
+    (
+        "Where the figures come from",
+        (
+            "The footer of every parquet file keeps, per column, a count of the missing values "
+            "and the smallest and the largest value, so what every sensor recorded is read "
+            "without reading the data, in the same pass that reads the labels, and cached with "
+            "the catalogue. A file written without those figures is read in full instead."
+        ),
+    ),
+    (
+        "What 3W 2.0.0 shows",
+        (
+            "Four variables are recorded by no real instance at all: the service line's pressure "
+            "and flow rate (P-JUS-BS, QBS), the pressure upstream of the production shutdown "
+            "valve (P-MON-SDV-P) and the tree pressure downstream of the wing valve (PT-P). The "
+            "downhole gauge is the cruel case the papers describe: its pressure (P-PDG) is frozen "
+            "in more than half of the real instances and its temperature (T-PDG) in over a third. "
+            "The pressure downstream of the production choke and the temperature upstream of it "
+            "(P-JUS-CKP, T-MON-CKP) hardly exist outside the Hydrate in Production Line folder. "
+            "And 113 instances on 18 wells carry a reading outside the plausible range, most often "
+            "a negative pressure downstream of the gas-lift choke or a downhole gauge frozen at an "
+            "absurd level."
+        ),
+    ),
+    (
+        "Why it matters for a model",
+        (
+            "Rabelo finds that the three sensors with the least coverage in the dataset (T-PDG, "
+            "QGL, P-JUS-CKGL) are also the three his models lean on least, and the five with the "
+            "most (P-TPT, P-PDG, P-MON-CKP, T-TPT, T-JUS-CKP) the ones they lean on most: a "
+            "sensor has to be there to be learned from. His pipeline drops the columns that are "
+            "entirely missing, forward-fills gaps of up to a minute, and drops an instance when "
+            "more than half of its P-TPT samples are missing, which is what the absent share of "
+            "a cell says such a rule would cost."
+        ),
+    ),
+]
+
+AVAILABILITY_SOURCES = (
+    "Sources: the availability map of <b>G. Rozo</b> (the <i>main.ipynb</i> notebook of his "
+    'fork of the 3W repository, <a href="https://github.com/GabrielRozo123/3W/blob/'
+    'new_3w_datasets_overviews/dataset/demos/GabrielRozo/main.ipynb">github.com/GabrielRozo123/3W'
+    "</a>, 2026), which measures the share of missing readings per sensor and event class on a "
+    "sample of twenty events per class; the <b>final graduation project of G. Rabelo de "
+    "Oliveira</b>, <i>Análise e modelagem integrada de dados de garantia de escoamento</i> "
+    "(Universidade de Brasília, 2026, in <code>docs/papers</code>), whose section 2.3.2 measures "
+    "the missing data per sensor and class (figure 2.8), the coverage of every sensor (figure 2.9) "
+    "and of every pair of sensors (figure 2.10), and whose section 5.3.1 relates coverage to what "
+    "the models learn; and the <b>flowml</b> pipeline, whose cleaning rules the plausible ranges "
+    "are. This page counts the real instances only, and every one of them, where both studies "
+    "count every kind of instance and Rozo a sample of them."
+)
+
 # How to work the viewer, shown in both windows.
 USAGE = {
-    "Overview window": [
+    "Timelines page": [
         (
             "Every plot is one well; every bar is one real instance, from its first to its last "
             "sample. Bars that overlap in time are stacked, so the stack level is how many "
@@ -745,6 +926,124 @@ USAGE = {
             "several fault folders is striped with every folder's color and says how many more "
             "instances it joins after its timestamp; clicking it opens them as the single "
             "continuous recording they were cut from."
+        ),
+        (
+            "'Bar color: Availability of a sensor' tints every bar by the share of its samples in "
+            "which the chosen sensor is live, faint for a few and full for all, grey under the "
+            "frozen key for a sensor that never moved, empty for one never recorded, so the grid "
+            "becomes the history of that sensor on every well: an era of absence, or a scattering "
+            "of it. The key above the grid changes with it."
+        ),
+        (
+            "A small amber triangle in the corner of a bar marks an instance in which a sensor "
+            "reads outside its plausible range; the status bar names the sensors. Tinted by one "
+            "sensor, the mark is for that sensor alone."
+        ),
+    ],
+    "Availability page": [
+        (
+            "Every column is a sensor and every row a group of instances: choose the fault "
+            "classes, the wells, or the instances of one well or of one fault class in the Rows "
+            "box. The last row folds every instance shown."
+        ),
+        (
+            "A cell splits the samples of its row into live, frozen and absent, left to right, in "
+            "the colors of the key at the right of the toolbar; the fuller the cell, the more of "
+            "the sensor there is. A small triangle in its corner marks a reading outside the "
+            "plausible range."
+        ),
+        (
+            "Hover a cell for the shares, the instance counts, the extreme readings and the "
+            "implausible ones; hover a sensor's name for what it is and its plausible range; "
+            "hover a row's label for what the row holds. A tooltip carries the figure the cell "
+            "draws, where the pointer is, as a printed availability map writes it inside the "
+            "cell; the status bar carries that and the rest."
+        ),
+        (
+            "The 'Matrix' box switches to 'Sensor pairs': the sensors on both axes, every cell "
+            "the share of the samples in which both carry a reading at the same instant. The "
+            "'Over' box counts them over every real instance or over one fault class or one well, "
+            "and 'Count' asks either that both sensors be live or merely that both be recorded."
+        ),
+        (
+            "In the pair map 'Sensors' offers a third order, 'Grouped by co-occurrence', which "
+            "puts the sensors recorded at the same instant next to one another, so that the "
+            "blocks of the matrix read as the sets of sensors a well carries or lacks together "
+            "rather than as a ranking. 'Join overlapping instances' applies here too, and changes "
+            "what the map says: a sensor one window missed is filled in by the window it overlaps."
+        ),
+        (
+            "Click a fault class or a well, on its label or on any of its cells, to see its "
+            "instances one by one; the Rows box takes you back. Click an instance, on its label "
+            "or on a cell, to open its time series with that sensor drawn."
+        ),
+        (
+            "'Sensors: By coverage' orders the columns by the share of what is on show in which "
+            "each sensor is live, largest first."
+        ),
+        (
+            "'Cells' splits each cell by samples, so that a six-day instance weighs more than a "
+            "six-hour one (as Rabelo counts), or by instances, each weighing the same (as Rozo "
+            "counts); the two disagree because instances range from hours to days."
+        ),
+        (
+            "'Available from' sets the share of its samples a sensor needs readings in to count "
+            "as available in an instance at all; below it the instance counts as absent for that "
+            "sensor, readings and all. Rabelo's pipeline drops an instance whose P-TPT is more "
+            "than half missing: 50 % shows what that rule keeps."
+        ),
+        (
+            "'Join overlapping instances' counts the bars the timelines draw when joined: "
+            "overlapping instances whose labels agree, read as the single recording they were cut "
+            "from, in which a sample two windows share is counted once and a sensor one window "
+            "missed is filled in by another. The footers of the files cannot say which instants "
+            "two windows share, so the first tick reads the data, behind a progress dialog, and "
+            "keeps the result in the cache."
+        ),
+    ],
+    "Faults page": [
+        (
+            "Pick a fault: every real instance of it, from every well, is drawn in the color of "
+            "its well on a time axis that starts where the event begins in it, so the shapes line "
+            "up whatever the clock said; 'Align at' chooses that moment, the onset of the "
+            "transient, of the steady state, or the start of the recording."
+        ),
+        (
+            "'Layout' chooses between the two. <b>Small multiples</b>, the default, give every "
+            "instance a plot of its own in a grid under a heading per feature, each with its own "
+            "value axis and its label periods shaded behind the trace — hatched where nobody "
+            "labeled it, as everywhere else in the viewer — so that two dozen shapes can be read "
+            "one against the next; 'Columns' sets the width of the grid and 'Axis' "
+            "puts every plot on its own value axis or all of them on one, which says how far "
+            "apart the levels are and flattens most of the plots saying it. <b>Overlaid</b> draws "
+            "them all on one set of axes. The grid opens on the stretch of time most of the "
+            "instances cover, so that one instance recorded for days does not leave every other "
+            "plot a sliver; Ctrl + wheel zooms out to the rest."
+        ),
+        (
+            "An instance whose labels never reach the moment chosen cannot be aligned on it and "
+            "is greyed out in the list on the right. Beyond two dozen instances the earliest are "
+            "ticked to start with, and the grid draws at most four dozen of them; tick and untick "
+            "to choose, All and None do it at once."
+        ),
+        (
+            "'Normalize per instance' scales every series to its own level, each reading as "
+            "standard deviations from the mean of that sensor over the whole instance, which is "
+            "how Rabelo's pipeline normalizes: wells run at different levels, and the shape of "
+            "the change is what the instances share. 'Show … h before/after' narrows the plots "
+            "to the hours around the onset; at zero, everything recorded is drawn."
+        ),
+        (
+            "Hover a line to bring it forward and name it, with the label, the well status and the "
+            "readings of that instance at that moment in the status bar; pointing at an instance "
+            "in the list does the same. Readings outside the plausible range are left out of the "
+            "value axis, so one broken gauge does not flatten every other line; the instance "
+            "carrying them wears the ⚠ in the list."
+        ),
+        (
+            "'Signature' ticks the variables whose joint behavior identifies the event, for the "
+            "events the 2.0.0 article illustrates; features no instance of the fault recorded are "
+            "greyed out."
         ),
     ],
     "Instance window": [
@@ -795,12 +1094,18 @@ USAGE = {
             "sensor actually recorded. A sensor that never moves is marked flat and drawn on a "
             "padded axis instead of being magnified into noise."
         ),
+        (
+            "A reading outside the plausible range is drawn in amber over the trace, sample by "
+            "sample, so the stretch that is garbage is seen for what it is; the panel's figures "
+            "call it out, the header of the block names the sensors, and the feature's checkbox "
+            "wears a ⚠."
+        ),
     ],
     "Everywhere": [
         "Drag a plot to pan it. Ctrl with the mouse wheel zooms; the wheel alone scrolls the page.",
         "Ctrl+R resets the views of the window, F1 opens this help.",
         (
-            "The Theme box of the overview toolbar switches the windows and the plots inside them "
+            "The Theme box of the main toolbar switches the windows and the plots inside them "
             "together, so the two never disagree; System follows the desktop. The dark mode lifts "
             "the fault hues and shades toward its own dark ground, so the ladder of tints keeps "
             "meaning the same thing. The choice is remembered."

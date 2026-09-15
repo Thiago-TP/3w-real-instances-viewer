@@ -29,6 +29,11 @@ DEFAULT_FAULT_NAMES: dict[int, str] = {
 # A transient label is the fault label plus this offset (``[EVENTS]`` section).
 DEFAULT_TRANSIENT_OFFSET = 100
 
+# The events that have a transient period at all (``TRANSIENT`` in the event
+# sections of the ini file): Severe Slugging and Flow Instability are labeled in
+# their steady state from the first sample, and normal operation installs nothing.
+DEFAULT_TRANSIENT_CAPABLE = frozenset({1, 2, 5, 6, 7, 8, 9})
+
 # Variables an instance file may carry, in dataset order, with their units.
 DEFAULT_SENSOR_UNITS: dict[str, str] = {
     "ABER-CKGL": "%",
@@ -95,6 +100,44 @@ FAULT_SIGNATURES: dict[int, tuple[str, ...]] = {
 # hand-drawn instances have no well to overlap on and are ignored.
 REAL_PREFIX = "WELL-"
 
+# -- Plausible readings -----------------------------------------------------------
+
+# What a reading must satisfy to be a measurement rather than instrument
+# garbage, by physical quantity, which the viewer tells from the unit the
+# dataset declares for the variable. The limits are the ones the ``flowml``
+# pipeline masks readings by (its ``config.py``), found by surveying every
+# instance of 3W 2.0.0:
+#
+# - Magnitude. Some sensors are frozen at absurd levels (one well reports
+#   P-PDG = -1.2e42 Pa for whole instances) or off by orders of magnitude
+#   (P-JUS-CKP around 1.4e9 Pa, i.e. 14,000 bar). The survey found a clean gap
+#   around 1e8: the largest varying reading below it is 4.9e7 Pa and the
+#   smallest value above it 1.3e8, so the limit removes no real signal, which
+#   matters because genuine spikes are fault signatures.
+# - Sign. Pressures are absolute and choke openings are percentages, so a
+#   negative reading of either is impossible; 106 files carry a negative
+#   pressure, usually for the whole recording, and one well a choke opening of
+#   -99.99 %, a sentinel. Zero is left alone: frozen at zero is another defect.
+# - Temperature band. The floor is below every genuine reading (T-TPT reaches
+#   -33.8 °C during a blowdown, which is real) and the ceiling twice the hottest
+#   one (127.7 °C); the band catches the sentinels -999 and -99.99 and T-PDG
+#   readings of 30,000 °C.
+#
+# Everything else, valve states and flow rates, is held to the magnitude rule only.
+EXTREME_VALUE_LIMIT = 1e8
+PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
+    "Pa": (0.0, EXTREME_VALUE_LIMIT),
+    "°C": (-50.0, 250.0),
+    "%": (0.0, EXTREME_VALUE_LIMIT),
+}
+PLAUSIBLE_RANGE_DEFAULT = (-EXTREME_VALUE_LIMIT, EXTREME_VALUE_LIMIT)
+
+
+def plausible_range(unit: str) -> tuple[float, float]:
+    """The readings a variable measured in ``unit`` may take and still be measurements."""
+    return PLAUSIBLE_RANGES.get(unit, PLAUSIBLE_RANGE_DEFAULT)
+
+
 # -- The color ladder -----------------------------------------------------------
 
 # The hues themselves are a property of the light or dark mode in force and live
@@ -142,6 +185,15 @@ FLAT_SPAN = 1e-4
 
 # Loaded instances kept in memory across windows, in samples.
 FRAME_CACHE_ROWS = 6_000_000
+
+# The faults page draws every instance of a fault over the others; beyond this
+# many it starts with the earliest ones ticked and leaves the rest to the user,
+# since a hundred lines on one plot say nothing.
+MAX_OVERLAID_INSTANCES = 24
+
+# Laid out as small multiples instead, one plot per instance, the page draws at
+# most this many: past it the plots are too small to read and too many to build.
+MAX_SMALL_MULTIPLES = 48
 
 # -- Locating the dataset ---------------------------------------------------------
 

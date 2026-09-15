@@ -1,4 +1,4 @@
-"""Entry point: locate the dataset, catalogue it, open the overview.
+"""Entry point: locate the dataset, catalogue it, open the main window.
 
 Usage
 -----
@@ -23,7 +23,7 @@ from overlap_viewer import __version__, styling, theme
 from overlap_viewer.config import DEFAULT_GAP_HOURS, RAW_DIR_CANDIDATES, RAW_DIR_ENV
 from overlap_viewer.dataset import DatasetInfo, ScanCancelled
 from overlap_viewer.loading import catalogue_with_progress
-from overlap_viewer.overview import OverviewWindow
+from overlap_viewer.window import MainWindow
 
 
 def looks_like_dataset(path: Path) -> bool:
@@ -91,8 +91,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_window(args: argparse.Namespace) -> OverviewWindow | None:
-    """Everything up to the overview window, for ``main`` and for scripted runs.
+def build_window(args: argparse.Namespace) -> MainWindow | None:
+    """Everything up to the main window, for ``main`` and for scripted runs.
 
     The theme goes in first: pyqtgraph fixes the colors of an item when it is
     built, and the dialogs of the scan are on screen before that.
@@ -110,7 +110,7 @@ def build_window(args: argparse.Namespace) -> OverviewWindow | None:
     except FileNotFoundError as error:
         QMessageBox.critical(None, "3W Overlap Viewer", str(error))
         return None
-    return OverviewWindow(
+    return MainWindow(
         info, catalogue, gap_hours=args.gap_hours, columns=args.columns, theme_mode=mode
     )
 

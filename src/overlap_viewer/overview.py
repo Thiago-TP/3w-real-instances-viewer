@@ -1,10 +1,13 @@
-"""The main window: a grid of well timelines, one interactive per-well plot each.
+"""The timelines page: a grid of well timelines, one interactive per-well plot each.
 
 Every plot is one well. Each real instance recorded on it is a bar from its
 first to its last timestamp, stacked on the instances it overlaps in time, so a
 well recorded twice shows at a glance. Hovering a bar highlights the instances
-it overlaps and hatches the stretch they share; clicking it opens an
-``InstanceWindow`` with their time series.
+it overlaps and hatches the stretch they share; clicking it asks the main
+window for an ``InstanceWindow`` with their time series. The bars are colored
+by their fault folder, or, at the user's choice, by how much of one sensor
+each instance recorded, which turns the grid into the history of that sensor
+on every well.
 """
 
 from functools import partial
@@ -15,13 +18,10 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QFontMetrics
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QGridLayout,
     QLabel,
-    QMainWindow,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import styling, theme
+from overlap_viewer import theme
+from overlap_viewer.availability import ABSENT, FROZEN, LIVE, Availability
 from overlap_viewer.config import (
     BAR_HEIGHT,
     DEFAULT_GAP_HOURS,
@@ -42,13 +43,11 @@ from overlap_viewer.config import (
 )
 from overlap_viewer.dataset import (
     DatasetInfo,
-    ScanCancelled,
     WellData,
     instance_title,
     lane_slots,
-    split_wells,
 )
-from overlap_viewer.help import HelpWindow, real_instance_counts
+from overlap_viewer.heatmap import StateKey, ramp_color
 from overlap_viewer.items import (
     InstanceBarsItem,
     ScrollFriendlyViewBox,
@@ -57,7 +56,6 @@ from overlap_viewer.items import (
     WheelToParent,
 )
 from overlap_viewer.legend import LegendBar
-from overlap_viewer.loading import FrameCache, catalogue_with_progress
 from overlap_viewer.palette import (
     bar_color,
     fault_color,
@@ -83,6 +81,9 @@ SORT_KEYS = {
     "Deepest pile-up": lambda w: (-w.n_lanes, -w.n_overlapping, w.well),
 }
 
+# What a bar's fill can say.
+COLORINGS = ("Fault folder", "Availability of a sensor")
+
 
 def faults_of(data: WellData, index: int, info: DatasetInfo) -> str:
     """The fault behind one bar — or every fault, ``+``-joined, when a joined bar mixes folders."""
@@ -92,8 +93,24 @@ def faults_of(data: WellData, index: int, info: DatasetInfo) -> str:
     )
 
 
-def describe_instance(data: WellData, index: int, info: DatasetInfo) -> str:
-    """One line about a bar: name, fault, reach, span, size, level, partners.
+def bar_rows(availability: Availability, data: WellData, index: int) -> list[int]:
+    """The rows of ``availability`` behind one bar: the instances it stands for."""
+    return [availability.index_of(data.well, member) for member in data.members[index]]
+
+
+def implausible_of(availability: Availability | None, data: WellData, index: int) -> list[str]:
+    """The sensors with a reading outside the plausible range in any instance behind one bar."""
+    if availability is None:
+        return []
+    rows = bar_rows(availability, data, index)
+    flagged = availability.implausible[rows].any(axis=0)
+    return [name for name, flag in zip(availability.sensors, flagged) if flag]
+
+
+def describe_instance(
+    data: WellData, index: int, info: DatasetInfo, availability: Availability | None = None
+) -> str:
+    """One line about a bar: name, fault, reach, span, size, level, partners, implausible readings.
 
     A bar joined from several instances names them, and every color it
     carries, in place of a single fault and reach.
@@ -133,10 +150,28 @@ def describe_instance(data: WellData, index: int, info: DatasetInfo) -> str:
         )
     else:
         overlap = f"overlaps no other {noun}"
+    flagged = implausible_of(availability, data, index)
+    warning = f" · ⚠ readings outside the plausible range: {', '.join(flagged)}" if flagged else ""
     return (
         f"{instance_title(row)} · {what} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} "
         f"({row['hours']:.1f} h, {int(row['n_samples']):,} samples) · stack level {int(row['lane']) + 1} · {overlap}"
+        f"{warning}"
     )
+
+
+def describe_sensor_in_bar(
+    availability: Availability, data: WellData, index: int, sensor: str
+) -> str:
+    """How much of one sensor the instances behind a bar recorded: the sentence behind its tint."""
+    shares, flagged = availability.shares_of(
+        bar_rows(availability, data, index), availability.sensors.index(sensor)
+    )
+    parts = [f"{sensor}: live in {shares[LIVE]:.0%} of the samples"]
+    if shares[FROZEN] > 0:
+        parts.append(f"frozen in {shares[FROZEN]:.0%}")
+    if shares[ABSENT] > 0:
+        parts.append(f"absent from {shares[ABSENT]:.0%}")
+    return ", ".join(parts) + (" · ⚠ readings outside the plausible range" if flagged else "")
 
 
 class ElidedLabel(QLabel):
@@ -200,6 +235,10 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         self._x0 = np.empty(0)
         self._x1 = np.empty(0)
         self._gap_lines: list[pg.InfiniteLine] = []
+        # What the bars are filled with and which wear the mark; the fault
+        # colors until a page says otherwise.
+        self._fills: list[list[str]] | None = None
+        self._marks: list[bool] | None = None
         # The summary of the title counts bursts, which only the compressed map knows.
         self._bursts = TimeMap.build(data.starts, data.ends, gap_hours=gap_hours, compressed=True)
 
@@ -241,6 +280,35 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
     def timemap(self) -> TimeMap:
         return self._timemap
 
+    def default_fills(self) -> list[list[str]]:
+        """The fault colors of the bars: one color per distinct legend entry behind each."""
+        return [
+            list(dict.fromkeys(bar_color(fault_class, reach) for fault_class, reach in keys))
+            for keys in self.data.colors
+        ]
+
+    def set_coloring(self, fills: list[list[str]] | None, marks: list[bool] | None) -> None:
+        """Fill the bars with ``fills`` (``None`` for the fault colors) and mark those in ``marks``."""
+        self._fills = fills
+        self._marks = marks
+        self._draw_bars()
+
+    def _draw_bars(self) -> None:
+        data = self.data
+        rows = data.rows
+        edges = [fault_color(int(fc)) for fc in rows["fault_class"]]
+        suffixes = [f" +{len(members) - 1}" if len(members) > 1 else "" for members in data.members]
+        self._bars.set_bars(
+            self._x0,
+            self._x1,
+            rows["lane"].to_numpy(dtype=float),
+            self._fills if self._fills is not None else self.default_fills(),
+            edges,
+            rows["stamp"],
+            suffixes,
+            self._marks,
+        )
+
     def set_compressed(self, compressed: bool) -> None:
         """Lay the bars on a gap-compressed axis (``True``) or on the calendar."""
         data = self.data
@@ -250,23 +318,7 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         self._timemap = timemap
         self._x0 = timemap.to_x(data.starts)
         self._x1 = timemap.to_x(data.ends)
-        rows = data.rows
-        # One color per distinct legend entry behind the bar: a joined bar is striped with them.
-        fills = [
-            list(dict.fromkeys(bar_color(fault_class, reach) for fault_class, reach in keys))
-            for keys in data.colors
-        ]
-        edges = [fault_color(int(fc)) for fc in rows["fault_class"]]
-        suffixes = [f" +{len(members) - 1}" if len(members) > 1 else "" for members in data.members]
-        self._bars.set_bars(
-            self._x0,
-            self._x1,
-            rows["lane"].to_numpy(dtype=float),
-            fills,
-            edges,
-            rows["stamp"],
-            suffixes,
-        )
+        self._draw_bars()
 
         colors = theme.current()
         spans = timemap.block_spans()
@@ -425,40 +477,63 @@ class WellCell(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
 
-class OverviewWindow(QMainWindow):
-    """Grid of well timelines with filtering, sorting and the legend of the colors drawn."""
+class TimelinesPage(QWidget):
+    """Grid of well timelines with filtering, sorting and the legend of the colors drawn.
+
+    Signals
+    -------
+    status(str)
+        What the main window's status bar should say: the instance under the
+        pointer, or the page's hint.
+    summary_changed()
+        The one-line count of what is on show has changed.
+    open_requested(WellData, int)
+        A bar was clicked: the well as drawn, and the bar's row position.
+    """
+
+    status = Signal(str)
+    summary_changed = Signal()
+    open_requested = Signal(object, int)
+
+    def hint(self) -> str:
+        """What the status bar says when the pointer is over nothing in particular."""
+        return HINT
 
     def __init__(
         self,
         info: DatasetInfo,
-        catalogue: pd.DataFrame,
         gap_hours: float = DEFAULT_GAP_HOURS,
         columns: int = 2,
-        frames: FrameCache | None = None,
-        theme_mode: str = "system",
         parent=None,
     ):
         super().__init__(parent)
         self.info = info
         self._gap_hours = gap_hours
-        self._frames = frames or FrameCache()
-        self._windows: list[QMainWindow] = []
         self._plots: dict[int, WellTimelinePlot] = {}
         self._cells: dict[int, WellCell] = {}
+        self.wells: list[WellData] = []
         self._joined_wells: list[WellData] = []
+        self._availability: Availability | None = None
         self._fault_filter: int | None = None
-        self._help: HelpWindow | None = None
-        self._theme_mode = theme_mode
-        self.setWindowTitle(f"3W Overlap Viewer — {info.raw_dir}")
+        self._catalogue = None
+        self._summary = ""
 
-        self._build_toolbar(columns)
-        central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+        layout.addWidget(self._build_toolbar(columns))
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 0, 8, 4)
+        body_layout.setSpacing(6)
+        # The key of the bars when they say how much of a sensor was recorded;
+        # the color key of the faults takes its place otherwise.
+        self._state_key = StateKey(("ramp", "frozen", "absent", "implausible"))
+        self._state_key.hide()
+        body_layout.addWidget(self._state_key, 0, Qt.AlignmentFlag.AlignLeft)
         self._legend = LegendBar()
         self._legend.fault_clicked.connect(self.toggle_fault_filter)
-        layout.addWidget(self._legend)
+        body_layout.addWidget(self._legend)
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -471,33 +546,16 @@ class OverviewWindow(QMainWindow):
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.hide()
         self._scroll.setWidget(self._container)
-        layout.addWidget(self._scroll, 1)
-        layout.addWidget(self._empty)
-        self.setCentralWidget(central)
-
-        self._status = ElidedLabel(HINT)
-        self.statusBar().addWidget(self._status, 1)
-        # The count of what is on show sits at the right end of the status bar, where
-        # it does not crowd the toolbar's controls off a window of ordinary width.
-        self._dataset_label = QLabel()
-        self.statusBar().addPermanentWidget(self._dataset_label)
-
+        body_layout.addWidget(self._scroll, 1)
+        body_layout.addWidget(self._empty)
+        layout.addWidget(body, 1)
         self._restyle()
-        self.set_catalogue(catalogue)
-
-        # A ``system`` mode has to keep up with the desktop changing its mind.
-        # Queued, because installing a theme sets the color scheme itself and
-        # would otherwise re-enter this window in the middle of a rebuild.
-        QApplication.instance().styleHints().colorSchemeChanged.connect(
-            self._on_system_scheme, Qt.ConnectionType.QueuedConnection
-        )
 
     # -- construction
 
-    def _build_toolbar(self, columns: int) -> None:
-        bar = QToolBar("View")
+    def _build_toolbar(self, columns: int) -> QToolBar:
+        bar = QToolBar("Timelines")
         bar.setMovable(False)
-        self.addToolBar(bar)
 
         bar.addWidget(QLabel(" Columns "))
         self._columns = QSpinBox()
@@ -540,33 +598,22 @@ class OverviewWindow(QMainWindow):
         bar.addWidget(self._join)
 
         bar.addSeparator()
-        bar.addWidget(QLabel(" Theme "))
-        self._theme = QComboBox()
-        self._theme.addItems([mode.capitalize() for mode in theme.MODES])
-        self._theme.setCurrentIndex(theme.MODES.index(self._theme_mode))
-        self._theme.setToolTip(
-            "Light or dark for both the windows and the plots inside them; System follows the "
-            "desktop. The choice is remembered."
+        bar.addWidget(QLabel(" Bar color "))
+        self._coloring = QComboBox()
+        self._coloring.addItems(list(COLORINGS))
+        self._coloring.setToolTip(
+            "What fills a bar: the fault folder of its instance, tinted by how far the fault "
+            "developed; or how much of one sensor the instance recorded, so that the grid shows "
+            "the history of that sensor on every well, an era of absence or a scattering of it."
         )
-        self._theme.currentIndexChanged.connect(
-            lambda index: self.set_theme_mode(theme.MODES[index])
-        )
-        bar.addWidget(self._theme)
+        self._coloring.currentIndexChanged.connect(self._recolor)
+        bar.addWidget(self._coloring)
+        self._sensor = QComboBox()
+        self._sensor.setToolTip("The sensor the bars are tinted by")
+        self._sensor.currentIndexChanged.connect(self._recolor)
+        self._sensor_action = bar.addWidget(self._sensor)
+        self._sensor_action.setVisible(False)
 
-        bar.addSeparator()
-        reset = QAction("Reset views", self)
-        reset.setShortcut("Ctrl+R")
-        reset.triggered.connect(self.reset_views)
-        bar.addAction(reset)
-        rescan = QAction("Rescan dataset", self)
-        rescan.setToolTip("Read every instance again, ignoring the cached catalogue")
-        rescan.triggered.connect(self._rescan)
-        bar.addAction(rescan)
-        help_action = QAction("Help", self)
-        help_action.setShortcut("F1")
-        help_action.setToolTip("What every fault class and every variable means (F1)")
-        help_action.triggered.connect(self.show_help)
-        bar.addAction(help_action)
         # No button of its own: the key's own title bar is how it is retracted.
         key_action = QAction("Color key", self)
         key_action.setShortcut("Ctrl+L")
@@ -582,16 +629,21 @@ class OverviewWindow(QMainWindow):
         # A widget in a toolbar is shown through its action, which overrides hide().
         self._fault_action = bar.addWidget(self._fault_button)
         self._fault_action.setVisible(False)
+        return bar
 
-    def set_catalogue(self, catalogue: pd.DataFrame) -> None:
-        """Take a new catalogue: split it into wells, join each, and rebuild the grid."""
+    def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
+        """Take a new catalogue and its wells: join each, read what they recorded, rebuild the grid."""
         self._catalogue = catalogue
-        if self._help is not None:  # its instance counts describe the old catalogue
-            self._help.close()
-            self._help.deleteLater()
-            self._help = None
-        self.wells = split_wells(catalogue)
+        self.wells = list(wells)
         self._joined_wells = [well.joined() for well in self.wells]
+        self._availability = Availability.from_wells(self.wells, self.info)
+        wanted = self._sensor.currentText()
+        self._sensor.blockSignals(True)
+        self._sensor.clear()
+        self._sensor.addItems(self._availability.sensors)
+        index = self._sensor.findText(wanted)
+        self._sensor.setCurrentIndex(max(index, 0))
+        self._sensor.blockSignals(False)
         self._build_grid()
 
     def _shown_wells(self) -> list[WellData]:
@@ -615,6 +667,7 @@ class OverviewWindow(QMainWindow):
             )
             plot.setFixedHeight(height + LANE_PX * max(0, well.n_lanes - self.slots))
             plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            plot.set_coloring(*self._coloring_of(well))
             plot.hovered.connect(partial(self._on_hover, plot))
             plot.clicked.connect(partial(self._on_click, plot))
             self._plots[well.well] = plot
@@ -630,49 +683,87 @@ class OverviewWindow(QMainWindow):
         instances = f"{version}{len(self._catalogue)} real instances on {len(shown)} wells"
         if self._join.isChecked():
             bars = sum(well.n_instances for well in shown)
-            self._dataset_label.setText(
+            self._summary = (
                 f"{instances}, joined into {bars} bars, "
                 f"{n_overlapping} still overlapping on {n_over} wells "
             )
         else:
-            self._dataset_label.setText(
-                f"{instances}, {n_overlapping} overlapping on {n_over} wells "
-            )
+            self._summary = f"{instances}, {n_overlapping} overlapping on {n_over} wells "
+        self.summary_changed.emit()
+        self._show_key()
         self._relayout()
+
+    def summary(self) -> str:
+        """One line for the status bar: what the grid is showing."""
+        return self._summary
+
+    # -- coloring
+
+    @property
+    def sensor_coloring(self) -> str | None:
+        """The sensor the bars are tinted by, or ``None`` while they carry their fault colors."""
+        if self._coloring.currentIndex() == 0 or self._availability is None:
+            return None
+        return self._sensor.currentText() or None
+
+    def _coloring_of(self, data: WellData) -> tuple[list[list[str]] | None, list[bool]]:
+        """What fills the bars of one well and which wear the mark, under the current choice.
+
+        In the fault coloring a bar is marked when any sensor of any instance
+        behind it reads outside its plausible range; tinted by one sensor, it
+        is marked for that sensor alone, the bar being about that sensor.
+        """
+        availability = self._availability
+        if availability is None:
+            return None, [False] * data.n_instances
+        sensor = self.sensor_coloring
+        if sensor is None:
+            marks = [
+                availability.implausible_any(bar_rows(availability, data, index))
+                for index in range(data.n_instances)
+            ]
+            return None, marks
+        colors = theme.current()
+        column = availability.sensors.index(sensor)
+        fills, marks = [], []
+        for index in range(data.n_instances):
+            shares, flagged = availability.shares_of(bar_rows(availability, data, index), column)
+            if shares[LIVE] > 0:
+                fills.append([ramp_color(shares[LIVE])])
+            elif shares[FROZEN] > 0:
+                fills.append([colors.frozen])
+            else:
+                fills.append([colors.block_fill])
+            marks.append(flagged)
+        return fills, marks
+
+    def _recolor(self, *args) -> None:
+        """Fill the bars again under the choice of the Bar color box, without rebuilding the grid."""
+        for plot in self._plots.values():
+            plot.set_coloring(*self._coloring_of(plot.data))
+        self._show_key()
+        self.status.emit(HINT)
+
+    def _show_key(self) -> None:
+        """Show the key that names the bars' fills: the faults', or the sensor's."""
+        sensor = self.sensor_coloring
+        self._sensor_action.setVisible(self._coloring.currentIndex() == 1)
+        self._legend.setVisible(sensor is None)
+        self._state_key.setVisible(sensor is not None)
+        if sensor is not None:
+            self._state_key.set_text("ramp", f"{sensor}: share of samples live, from a few to all")
 
     # -- appearance
 
     def _restyle(self) -> None:
-        """Take the colors of the theme now in force, for the chrome this window owns."""
-        colors = theme.current()
-        self._empty.setStyleSheet(f"color: {colors.faint}; padding: 40px;")
-        self._dataset_label.setStyleSheet(f"color: {colors.muted};")
+        """Take the colors of the theme now in force, for the chrome this page owns."""
+        self._empty.setStyleSheet(f"color: {theme.current().faint}; padding: 40px;")
 
-    def set_theme_mode(self, mode: str) -> None:
-        """Switch to ``light``, ``dark`` or ``system``, and repaint every open window.
-
-        The plots cannot be recolored in place: pyqtgraph reads its background
-        and its foreground when an item is built, so the grid is built again
-        from the same catalogue, which is the path a rescan already takes.
-        """
-        self._theme_mode = mode
-        styling.save_mode(mode)
-        if self._theme.currentIndex() != theme.MODES.index(mode):  # a mode set in code
-            self._theme.blockSignals(True)
-            self._theme.setCurrentIndex(theme.MODES.index(mode))
-            self._theme.blockSignals(False)
-        before = theme.current()
-        if styling.apply(mode) is before:
-            return  # e.g. System on a light desktop, chosen while already light
+    def apply_theme(self) -> None:
+        """Take the colors of the theme now in force; the grid itself is rebuilt by ``set_catalogue``."""
         self._restyle()
-        for window in list(self._windows):
-            window.apply_theme()
-        self.set_catalogue(self._catalogue)
-
-    def _on_system_scheme(self, *args) -> None:
-        """Follow the desktop switching between light and dark, while ``system`` is chosen."""
-        if self._theme_mode == "system":
-            self.set_theme_mode("system")
+        self._legend.apply_theme()
+        self._state_key.apply_theme()
 
     # -- behaviour
 
@@ -719,14 +810,6 @@ class OverviewWindow(QMainWindow):
         self._fault_action.setVisible(self._fault_filter is not None)
         self._relayout()
 
-    def show_help(self) -> None:
-        """Open (or raise) the help window, on the tab explaining the fault classes."""
-        if self._help is None:
-            self._help = HelpWindow(
-                self.info, counts=real_instance_counts(self._catalogue), parent=self
-            )
-        self._help.show_tab("Fault classes")
-
     def _set_compressed(self, compressed: bool) -> None:
         for plot in self._plots.values():
             plot.set_compressed(compressed)
@@ -739,10 +822,14 @@ class OverviewWindow(QMainWindow):
     def _on_hover(self, plot: WellTimelinePlot, index: int) -> None:
         """Describe the instance under the pointer and key its color in the legend."""
         if index < 0:
-            self._status.setText(HINT)
+            self.status.emit(HINT)
             self._legend.highlight(set())
             return
-        self._status.setText(describe_instance(plot.data, index, self.info))
+        text = describe_instance(plot.data, index, self.info, self._availability)
+        sensor = self.sensor_coloring
+        if sensor is not None:
+            text += " · " + describe_sensor_in_bar(self._availability, plot.data, index, sensor)
+        self.status.emit(text)
         data = plot.data
         self._legend.highlight(
             {
@@ -753,34 +840,4 @@ class OverviewWindow(QMainWindow):
         )
 
     def _on_click(self, plot: WellTimelinePlot, index: int) -> None:
-        from overlap_viewer.instance_window import (
-            InstanceWindow,
-        )
-
-        try:
-            window = InstanceWindow(plot.data, index, self.info, self._frames)
-        except Exception as error:  # noqa: BLE001 - one unreadable file must not take the app down
-            QMessageBox.warning(
-                self, "Could not open the instances", f"{type(error).__name__}: {error}"
-            )
-            return
-        window.destroyed.connect(
-            lambda *_: self._windows.remove(window) if window in self._windows else None
-        )
-        self._windows.append(window)
-        window.show()
-
-    def _rescan(self) -> None:
-        try:
-            catalogue = catalogue_with_progress(self.info, use_cache=False, parent=self)
-        except ScanCancelled:
-            return
-        except Exception as error:  # noqa: BLE001 - report, keep the current catalogue
-            QMessageBox.critical(self, "Rescan failed", f"{type(error).__name__}: {error}")
-            return
-        self.set_catalogue(catalogue)
-
-    def closeEvent(self, event) -> None:
-        for window in list(self._windows):
-            window.close()
-        super().closeEvent(event)
+        self.open_requested.emit(plot.data, index)

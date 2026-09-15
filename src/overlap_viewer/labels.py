@@ -157,6 +157,36 @@ def segments_from_json(text: str) -> list[Segment]:
     ]
 
 
+def sensor_stats_to_json(stats) -> str:
+    """Write the per-sensor figures of one instance as ``{"P-PDG": [n, low, high], ...}``.
+
+    ``stats`` maps a sensor to ``(readings, lowest, highest)``, as
+    ``dataset.read_sensor_stats`` returns them. A sensor with no reading has
+    ``null`` for its bounds; the text goes into the catalogue cache next to the
+    label runs.
+    """
+
+    def number(value: float) -> float | None:
+        return None if value is None or np.isnan(value) else float(value)
+
+    return json.dumps(
+        {name: [int(n), number(low), number(high)] for name, (n, low, high) in stats.items()},
+        separators=(",", ":"),
+    )
+
+
+def sensor_stats_from_json(text: str) -> dict[str, tuple[int, float, float]]:
+    """Read back what ``sensor_stats_to_json`` wrote."""
+    return {
+        name: (
+            int(n),
+            np.nan if low is None else float(low),
+            np.nan if high is None else float(high),
+        )
+        for name, (n, low, high) in json.loads(text).items()
+    }
+
+
 def merge_label_runs(
     tracks: list[list[Segment]], sources: list[int]
 ) -> list[tuple[Segment, int | None]]:

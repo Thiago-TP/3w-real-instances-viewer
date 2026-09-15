@@ -32,7 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from overlap_viewer import theme
-from overlap_viewer.config import FAULT_SIGNATURES, REACH_LABELS
+from overlap_viewer.availability import implausible_sensors, outside_range
+from overlap_viewer.config import FAULT_SIGNATURES, REACH_LABELS, plausible_range
 from overlap_viewer.dataset import DatasetInfo, WellData, instance_title, merge_instances
 from overlap_viewer.help import HelpWindow
 from overlap_viewer.items import (
@@ -58,6 +59,7 @@ from overlap_viewer.labels import (
     padded_range,
     segments_from_json,
     sensor_columns,
+    sensor_stats_from_json,
     state_name,
 )
 from overlap_viewer.loading import FrameCache
@@ -274,16 +276,30 @@ class InstanceWindow(QMainWindow):
         return [float(x) for x in self.timemap.to_x(starts)]
 
     def _feature_table(self) -> pd.DataFrame:
-        """Every sensor the dataset or the files declare, alphabetically, with how many blocks record it."""
+        """Every sensor the dataset or the files declare, alphabetically, with how many blocks record it.
+
+        ``implausible`` counts the blocks in which the sensor reads outside its
+        plausible range, from the figures the catalogue holds for their instances.
+        """
         names = set(self.info.sensor_names)
         for frame in self.frames:
             names.update(sensor_columns(frame))
+        flagged: dict[str, int] = {}
+        origin = self.well.rows
+        if "sensor_stats" in origin.columns:
+            for members in self.members:
+                in_block: set[str] = set()
+                for member in members:
+                    stats = sensor_stats_from_json(str(origin.iloc[member]["sensor_stats"]))
+                    in_block.update(implausible_sensors(stats, self.info))
+                for name in in_block:
+                    flagged[name] = flagged.get(name, 0) + 1
         rows = []
         for name in sorted(names):
             recorded = sum(
                 1 for frame in self.frames if name in frame.columns and frame[name].notna().any()
             )
-            rows.append({"sensor": name, "recorded": recorded})
+            rows.append({"sensor": name, "recorded": recorded, "implausible": flagged.get(name, 0)})
         return pd.DataFrame(rows)
 
     def _default_feature(self) -> str | None:
@@ -292,6 +308,26 @@ class InstanceWindow(QMainWindow):
 
     def selected_features(self) -> list[str]:
         return [name for name, check in self._checks.items() if check.isChecked()]
+
+    def select_features(self, names: Sequence[str]) -> None:
+        """Tick exactly ``names`` (those recorded here) and draw them; what another page asked for."""
+        wanted = set(names)
+        for name, check in self._checks.items():
+            check.blockSignals(True)
+            check.setChecked(name in wanted and check.isEnabled())
+            check.blockSignals(False)
+        self._rebuild()
+
+    def _flagged_sensors(self, position: int) -> list[str]:
+        """The sensors reading outside their plausible range in any instance behind one block."""
+        origin = self.well.rows
+        if "sensor_stats" not in origin.columns:
+            return []
+        names: list[str] = []
+        for member in self.members[position]:
+            stats = sensor_stats_from_json(str(origin.iloc[member]["sensor_stats"]))
+            names += [name for name in implausible_sensors(stats, self.info) if name not in names]
+        return names
 
     def _fault_of(self, position: int) -> int:
         return int(self.rows.iloc[position]["fault_class"])
@@ -467,9 +503,18 @@ class InstanceWindow(QMainWindow):
         n = len(self.frames)
         for row in self._features.itertuples():
             unit = self.info.unit(row.sensor)
-            check = QCheckBox(f"{row.sensor} [{unit}]" if unit else row.sensor)
+            text = f"{row.sensor} [{unit}]" if unit else row.sensor
+            # The mark of a reading no instrument could have produced, on the
+            # name itself: the tooltip says how many blocks and what range.
+            check = QCheckBox(f"{text} ⚠" if row.implausible else text)
             description = self.info.sensor_descriptions.get(row.sensor, "")
             recorded = f"recorded in {row.recorded} of {n} {self._noun}{'s' if n > 1 else ''}"
+            if row.implausible:
+                low, high = plausible_range(unit)
+                recorded += (
+                    f"\n⚠ readings outside the plausible range ({low:g} to {high:g} {unit}) "
+                    f"in {row.implausible} of them"
+                ).replace(" )", ")")
             check.setToolTip(f"{description}\n{recorded}" if description else recorded)
             check.setEnabled(row.recorded > 0)
             check.setChecked(row.sensor in wanted and row.recorded > 0)
@@ -604,9 +649,18 @@ class InstanceWindow(QMainWindow):
             if position == self.clicked
             else ""
         )
+        flagged = self._flagged_sensors(position)
+        # The warning comes before the long run of details, which a narrow
+        # window clips at the right; a warning clipped away is no warning.
+        warning = (
+            f'<span style="font-size:9pt; color:{colors.warning};">&nbsp;⚠ outside the '
+            f"plausible range: {', '.join(flagged)} ·</span>"
+            if flagged
+            else ""
+        )
         return (
             f'<span style="font-size:10pt;"><b>{instance_title(row)}</b></span>{badge}'
-            f"&nbsp;&nbsp;{squares}"
+            f"&nbsp;&nbsp;{squares}{warning}"
             f'<span style="font-size:9pt; color:{colors.muted};"> {what} · {joined}'
             f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · "
             f"{row['hours']:.1f} h · {int(row['n_samples']):,} samples · level {int(row['lane']) + 1} · "
@@ -817,9 +871,21 @@ class InstanceWindow(QMainWindow):
             curve.setDownsampling(auto=True, method="peak")
             curve.setClipToView(True)
             note = format_delta(stats.delta, unit) + (" (flat)" if stats.flat else "")
+            # A reading no instrument could have produced is drawn in the
+            # warning color over the trace, sample by sample, so that the
+            # stretch that is garbage is seen for what it is, and called out
+            # beside the figures of the panel.
+            bounds = plausible_range(unit)
+            warning = ""
+            if outside_range(stats.low, stats.high, bounds):
+                self._mark_implausible(plot, x, y, bounds)
+                warning = (
+                    f' · <span style="color:{colors.warning};">⚠ readings outside '
+                    f"{bounds[0]:g} to {bounds[1]:g} {unit}</span>"
+                ).replace("  ", " ")
             AnchoredText(
                 f'<span style="font-size:8pt; color:{colors.text};">'
-                f"{note} · coverage {stats.coverage:.1f} %</span>"
+                f"{note} · coverage {stats.coverage:.1f} %{warning}</span>"
             ).attach(plot)
         else:
             AnchoredText(
@@ -835,6 +901,35 @@ class InstanceWindow(QMainWindow):
             plot.setYLink(self._feature_masters[feature])
         else:
             self._feature_masters[feature] = plot
+
+    @staticmethod
+    def _mark_implausible(plot: pg.PlotItem, x: np.ndarray, y: np.ndarray, bounds) -> None:
+        """Draw the samples outside ``bounds`` in the warning color, over the trace.
+
+        A stretch of them is a line; isolated ones (a sentinel leaked into a
+        few samples) would not join into one, so up to a few thousand of them
+        are also dotted, past which the line alone says enough.
+        """
+        colors = theme.current()
+        bad = (y < bounds[0]) | (y > bounds[1])
+        if not bad.any():
+            return
+        garbage = pg.PlotDataItem(
+            x,
+            np.where(bad, y, np.nan),
+            pen=pg.mkPen(colors.warning, width=1.8),
+            connect="finite",
+        )
+        garbage.setZValue(15)
+        plot.addItem(garbage)
+        garbage.setDownsampling(auto=True, method="peak")
+        garbage.setClipToView(True)
+        if bad.sum() <= 2000:
+            dots = pg.ScatterPlotItem(
+                x[bad], y[bad], size=4, pen=None, brush=pg.mkBrush(colors.warning)
+            )
+            dots.setZValue(15)
+            plot.addItem(dots)
 
     # -- segments
 

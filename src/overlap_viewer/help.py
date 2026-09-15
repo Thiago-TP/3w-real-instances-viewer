@@ -18,13 +18,26 @@ from PySide6.QtWidgets import (
 )
 
 from overlap_viewer import theme
-from overlap_viewer.config import FAULT_SIGNATURES, WELL_STATES, asset_path
+from overlap_viewer.config import (
+    EXTREME_VALUE_LIMIT,
+    FAULT_SIGNATURES,
+    PLAUSIBLE_RANGES,
+    WELL_STATES,
+    asset_path,
+)
 from overlap_viewer.dataset import DatasetInfo
+from overlap_viewer.heatmap import SWATCH_KINDS, swatch_image
 from overlap_viewer.help_text import (
+    AVAILABILITY_INTRO,
+    AVAILABILITY_NOTES,
+    AVAILABILITY_SOURCES,
+    AVAILABILITY_STATES,
     CONFIRMATION_WINDOWS,
     DATASET_NOTES,
     FAULTS,
     FIGURES,
+    MAGNITUDE_NOTE,
+    PLAUSIBLE_RANGE_NOTES,
     STATES,
     TRANSIENT_CAPABLE,
     USAGE,
@@ -33,9 +46,11 @@ from overlap_viewer.help_text import (
 from overlap_viewer.items import hatch_brush
 from overlap_viewer.palette import bar_color, fault_color, state_color
 
-# The one swatch of the help that is a texture rather than a color: the status
-# of a stretch nobody labeled, painted as an image because rich text has no hatch.
+# The swatches of the help that are drawings rather than colors, painted as
+# images because rich text has no hatch: the status of a stretch nobody labeled,
+# and the four kinds of cell of the availability page.
 UNKNOWN_SWATCH = "swatch-unknown-status"
+AVAILABILITY_SWATCH = "swatch-availability-{}"
 SWATCH_SIZE = (22, 16)
 
 PAPER = (
@@ -136,6 +151,8 @@ class Figures:
             if not image.isNull():
                 self.images[name] = image
         self.images[UNKNOWN_SWATCH] = hatched_swatch(state_color(None))
+        for kind in SWATCH_KINDS:
+            self.images[AVAILABILITY_SWATCH.format(kind)] = swatch_image(kind, SWATCH_SIZE)
 
     def html(self, name: str) -> str:
         """The figure and its caption, or nothing when it is not available."""
@@ -326,8 +343,58 @@ def state_page(figures: "Figures | None" = None) -> str:
     return _document("".join(parts))
 
 
+def availability_help_page(figures: "Figures | None" = None) -> str:
+    """The availability page: the three states of a cell, the plausible ranges, the findings."""
+    colors = theme.current()
+    parts = [
+        "<h2>Data availability</h2>",
+        f"<p>{AVAILABILITY_INTRO}</p>",
+        '<table cellspacing="0" cellpadding="4">',
+    ]
+    for kind, name, meaning in AVAILABILITY_STATES:
+        # An image rather than a cell background, which would tile the mark down a tall cell.
+        if figures is not None:
+            swatch = (
+                f'<td valign="top" width="{SWATCH_SIZE[0] + 4}">'
+                f'<img src="{AVAILABILITY_SWATCH.format(kind)}"></td>'
+            )
+        else:
+            swatch = _swatch(colors.block_fill, SWATCH_SIZE[0])
+        parts.append(
+            f"<tr>{swatch}"
+            f'<td valign="top" width="90"><b>{name}</b></td>'
+            f'<td valign="top">{meaning}</td></tr>'
+        )
+    parts += [
+        "</table>",
+        "<h3>Plausible ranges</h3>",
+        (
+            "<p>What a reading must satisfy to be a measurement rather than instrument garbage, "
+            "by physical quantity, which the viewer tells from the unit the dataset declares for "
+            "the variable:</p>"
+        ),
+        '<table cellspacing="0" cellpadding="5">',
+        "<tr><th>Quantity</th><th>Range</th><th>Why</th></tr>",
+    ]
+    for unit, (low, high) in PLAUSIBLE_RANGES.items():
+        quantity, why = PLAUSIBLE_RANGE_NOTES.get(unit, (unit, ""))
+        parts.append(
+            f'<tr><td valign="top"><b>{quantity}</b> <span class="sub">[{unit}]</span></td>'
+            f'<td valign="top">{low:g} to {high:g}</td><td valign="top" class="sub">{why}</td></tr>'
+        )
+    parts.append(
+        f'<tr><td valign="top"><b>Everything</b></td><td valign="top">|reading| below '
+        f'{EXTREME_VALUE_LIMIT:g}</td><td valign="top" class="sub">{MAGNITUDE_NOTE}</td></tr>'
+    )
+    parts.append("</table>")
+    for title, text in AVAILABILITY_NOTES:
+        parts.append(f"<h3>{title}</h3><p>{text}</p>")
+    parts.append(f'<hr><p class="sub">{AVAILABILITY_SOURCES}</p>')
+    return _document("".join(parts))
+
+
 def usage_page() -> str:
-    """How to work the two windows, and what the dataset underneath them is."""
+    """How to work the pages and the windows, and what the dataset underneath them is."""
     parts = ["<h2>Using the viewer</h2>"]
     for section, lines in USAGE.items():
         parts.append(f"<h3>{section}</h3><ul>")
@@ -343,7 +410,7 @@ def usage_page() -> str:
 class HelpWindow(QDialog):
     """Tabbed help on the dataset and on the viewer, shared by both windows."""
 
-    TABS = ("Fault classes", "Variables", "Well status", "Using the viewer")
+    TABS = ("Fault classes", "Variables", "Well status", "Data availability", "Using the viewer")
 
     def __init__(self, info: DatasetInfo, counts: dict[int, int] | None = None, parent=None):
         super().__init__(parent)
@@ -359,6 +426,7 @@ class HelpWindow(QDialog):
                 fault_page(info, counts, figures),
                 variable_page(info, figures),
                 state_page(figures),
+                availability_help_page(figures),
                 usage_page(),
             ),
         ):

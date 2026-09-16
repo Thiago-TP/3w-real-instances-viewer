@@ -74,3 +74,24 @@ Still open:
 - [ ] cosmetic: rename the project, whose name no longer describes it; awaiting a name. The focus on real instances stays.
 
 ---
+
+**2026-09-16 Batch — signal views** (from *More analysis domains* in [IDEAS.md](IDEAS.md), greenlit with three amendments: no phase spectrum of a single signal, every parameter a widget, a joined recording transformed as one signal)
+
+- [x] feature: the transforms, numpy only, no Qt — a series prepared for a transform (implausible readings masked, missing samples interpolated inside the stretch, mean and linear trend removed; a frozen sensor or a stretch with fewer than half its readings declines); Welch's power spectral density with a choice of window function and a segment length (zero meaning the whole stretch, a periodogram); the short-time transform of a spectrogram, its power resampled onto a logarithmic grid of periods; the dominant period and its share of the power; a histogram stacked by label period.
+    > [!CAUTION]
+    > The axis is the **period**, not the frequency: severe slugging cycles every 50 to 90 minutes and flow instability every 45, which in hertz read 0.0002 and 0.0004. A segment shorter than the stretch sees nothing longer than itself, and the plot must say so rather than leave the long periods silently empty.
+- [x] feature: the shared pieces — one toolbar widget for the parameters (segment length in minutes, overlap in percent, window function, number of bins), used by both windows; an axis item that labels a logarithmic period axis in seconds, minutes, hours and days; a single-hue color ramp for the spectrogram, from the plotting ground to the trace color of the theme in force.
+- [x] feature: the instance window — three checkboxes in the toolbar, *Distribution*, *Spectrum*, *Spectrogram*, the time series always on; the distribution a marginal histogram to the right of the trace sharing its value axis, its bars stacked by label period in the class colors; the spectrogram under the trace on the shared time axis, with the seams of a merged recording; the spectrum beside the spectrogram sharing its period axis, or in the spectrogram's place on its own when the spectrogram is off; the histogram and the spectrum counted over the stretch of time visible, so zooming is brushing; a joined recording transformed as the single series it is.
+- [x] feature: the Faults page — a *Domain* box, *Time series*, *Distribution*, *Spectrum*, changing what every plot shows, in either layout; the stretch transformed is the one the hours before and after the onset select; *Normalize per instance* puts histograms on one z-score axis and spectra in units of variance; hover names the instance and reads the bin or the period under the pointer.
+- [x] documentational: a *Signal views* section of *Using the viewer*, a dataset note on what the measured periods are, tooltips on every new control, and the README.
+
+Raised on exploring the first cut, then acted on:
+
+- [x] cosmetic: a faint grid on every spectrum plot, a decade of power and a named period per line.
+- [x] cosmetic: the mean (solid) and the median (dashed) as lines across every histogram, in the marginal of the instance window and in the grid of the Faults page, and in the marginal's caption.
+- [x] cosmetic: one cycle of the dominant period laid as a bar against the trace whenever the spectrum is on, so the spectrum's claim can be checked against the waves.
+- [x] feature: a *whole stretch* tick beside the *Segment* box; a spin box whose zero meant "whole" could not be brought back to it once changed.
+- [x] feature: an *Instances* toggle at the right end of the Faults toolbar that hides the list of instances.
+- [x] bugfix: the transform widgets fell behind the toolbar's overflow chevron on any window narrower than a screen; both windows now give them a second toolbar row, and on the Faults page the hours around the onset and the normalization move there too, so the first row holds only what chooses the question.
+
+---

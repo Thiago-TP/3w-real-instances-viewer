@@ -709,6 +709,22 @@ DATASET_NOTES = [
             "here is what these documents say it means."
         ),
     ),
+    (
+        "How slow the events are",
+        (
+            "The 2.0.0 article shows a severe slugging instance with pressure oscillations above "
+            "10 bar and says nothing of their period. Measured on the real instances with the "
+            "spectrum view, severe slugging on WELL-00014 cycles every 50 to 90 minutes, the "
+            "period drifting from 90 minutes on 18 September 2017 to 51 by 28 October; flow "
+            "instability on WELL-00001 cycles every 45 minutes, with up to 95 % of the power in "
+            "that one line; the pressures of a spurious DHSV closure oscillate every 45 to 80 "
+            "minutes; a normal instance has no line to speak of, 1 to 2 % of the power in its "
+            "strongest one. A six-hour instance therefore holds four to seven cycles of the "
+            "events, which is why the viewer's spectral axis is a period rather than a frequency, "
+            "why the default spectrum is taken over the whole stretch, and why the spectrogram of "
+            "a single instance says little at those periods."
+        ),
+    ),
 ]
 
 # What the availability page shows, for the help tab of the same name.
@@ -1099,6 +1115,77 @@ USAGE = {
             "sample, so the stretch that is garbage is seen for what it is; the panel's figures "
             "call it out, the header of the block names the sensors, and the feature's checkbox "
             "wears a ⚠."
+        ),
+    ],
+    "Signal views": [
+        (
+            "The 'Views' boxes of the instance window add, to every feature plot, up to three "
+            "views of the same signal, each placed where it shares an axis with the trace. "
+            "<b>Distribution</b> is a histogram turned on its side to the right of the trace, on "
+            "the trace's value axis, its bars stacked by label period in the class colors, so "
+            "that how the event moves the readings is seen inside one instance; a bimodal shape "
+            "is an oscillation. A solid line marks the mean and a dashed one the median. "
+            "<b>Spectrogram</b> sits under the trace on the shared time axis, the period up its "
+            "side and the power as a shade. <b>Spectrum</b> sits beside the spectrogram sharing "
+            "its period axis, or, on its own, in the spectrogram's place with the period along "
+            "the bottom; whenever it is on, one cycle of its dominant period is laid as a bar "
+            "against the trace, so the claim can be checked against the waves."
+        ),
+        (
+            "The histogram and the spectrum are counted over the stretch of time on screen, so "
+            "zooming the trace is brushing: narrow the view to a stretch and read its "
+            "distribution and its spectrum. The spectrogram covers the whole recording. A merged "
+            "recording is transformed as the single series it is, never stitched from its parts."
+        ),
+        (
+            "The spectral axis is the <b>period</b>, logarithmic, from two seconds up to the "
+            "length of the stretch, and not a frequency: the events are slow — severe slugging on "
+            "WELL-00014 cycles every 50 to 90 minutes, flow instability on WELL-00001 every 45 "
+            "— which in hertz reads 0.0002 and says nothing. The spectrum is Welch's estimate of "
+            "the power spectral density, the mean and the linear trend removed first (a trend "
+            "would otherwise own every long period), the missing samples interpolated (the grid "
+            "is a fixed 1 Hz and the holes are rare), readings outside the plausible range left "
+            "out. A frozen sensor, or a stretch with fewer than half its readings, gets a note "
+            "instead."
+        ),
+        (
+            "'Segment' sets the length of the segments the spectrum averages over and the "
+            "spectrogram is sliced into, once 'whole stretch' is unticked; 'Overlap' how much "
+            "each repeats of the last; 'Window' the taper. Nothing longer than a segment can be "
+            "resolved, and the plots grey the periods beyond it rather than leave them silently "
+            "empty. With 'whole stretch' ticked the "
+            "spectrum is the periodogram of everything on screen, which is the only way to see "
+            "the slugging line: a segment of five minutes, the size a pipeline windows by, holds "
+            "no cycle of it. The spectrogram then slices the recording into eighths, so on a "
+            "six-hour instance it resolves periods up to three quarters of an hour and says "
+            "something about the shorter ones only; over a merged recording of days it shows the "
+            "period drifting. 'Bins' is the number of bins of the histograms."
+        ),
+        (
+            "The caption of a spectrum gives its <b>dominant period</b> and the share of the power "
+            "in it: a few percent for a normal instance, whose power is spread thin, half or more "
+            "for an oscillating one. The period is looked for among those the stretch holds at "
+            "least four cycles of, so a trend is not mistaken for a line."
+        ),
+        (
+            "On the Faults page the 'Domain' box draws every instance of the fault in one of the "
+            "three domains — time series, distribution, spectrum — in either layout, over the "
+            "stretch the hours before and after the onset select, so '2 h after' gives the "
+            "spectrum of the fault alone. Overlaid spectra read together where overlaid traces "
+            "did not, since the question is whether their peaks line up; histograms are drawn as "
+            "a share of each instance's samples, so instances of different length compare, with "
+            "the mean and the median of each as lines in the grid, and 'Normalize per instance' "
+            "puts those of different wells on one z-score axis. The second row of the toolbar "
+            "holds the hours around the onset, the normalization and the parameters of the "
+            "domain chosen; 'Instances' at the right end of the first row hides the list of "
+            "instances to give the plots its width."
+        ),
+        (
+            "There is no phase spectrum of a single signal: the phase of a transform at a period "
+            "is the instant inside the record at which that cycle peaks, so it depends on where "
+            "the file happens to begin and tells nothing the trace does not. The phase "
+            "<i>difference</i> between two sensors over the same stretch is meaningful, and is "
+            "left for a later version."
         ),
     ],
     "Everywhere": [

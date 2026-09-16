@@ -670,9 +670,13 @@ def test_help_text_covers_the_dataset():
     # confirmation window; normal operation is not an occurrence to confirm.
     assert set(help_text.CONFIRMATION_WINDOWS) == set(DEFAULT_FAULT_NAMES) - {0, 9}
     # The usage help knows every page of the viewer.
-    assert {"Timelines page", "Availability page", "Faults page", "Instance window"} <= set(
-        help_text.USAGE
-    )
+    assert {
+        "Timelines page",
+        "Availability page",
+        "Faults page",
+        "Instance window",
+        "Signal views",
+    } <= set(help_text.USAGE)
 
 
 def test_cache_dir_sits_under_the_platform_cache_home(tmp_path: Path, monkeypatch):
@@ -1162,3 +1166,105 @@ def test_faults_are_aligned_where_the_event_begins_and_scaled_to_their_level():
     assert plausible_extent(np.array([-1.2e42, 1.0e7, 2.0e7, np.nan]), bounds) == (1.0e7, 2.0e7)
     assert plausible_extent(np.array([-1.0, -2.0]), bounds) == (-2.0, -1.0)  # nothing plausible
     assert all(np.isnan(plausible_extent(np.array([np.nan]), bounds)))
+
+
+def test_a_series_is_prepared_for_a_transform_or_declines():
+    """Implausible readings masked, holes interpolated, trend removed; too little or flat declines."""
+    from overlap_viewer.spectral import prepare
+
+    t = np.arange(600, dtype=float)
+    y = 5.0 + 0.01 * t + np.sin(2 * np.pi * t / 60)
+    y[100:110] = np.nan  # a hole
+    y[300] = -1.0e42  # a sentinel
+    prepared = prepare(y, plausible_range("Pa"))
+    assert prepared is not None and len(prepared) == 600 and not np.isnan(prepared).any()
+    assert abs(prepared.mean()) < 1e-6  # mean removed
+    assert abs(np.polyfit(t, prepared, 1)[0]) < 1e-9  # trend removed
+    assert np.allclose(
+        prepared[105], np.sin(2 * np.pi * 105 / 60), atol=0.2
+    )  # filled from neighbours
+    assert prepare(np.full(600, 3.0)) is None  # frozen
+    mostly_missing = np.where(np.arange(600) % 3 == 0, y, np.nan)
+    assert prepare(mostly_missing) is None  # a third of the readings
+    assert prepare(np.arange(5.0)) is None  # too short
+
+
+def test_welch_finds_the_period_of_a_sine_and_says_what_it_resolves():
+    from overlap_viewer.spectral import TransformParams, prepare, welch
+
+    t = np.arange(6 * 3600, dtype=float)
+    rng = np.random.default_rng(1)
+    y = 3.0 * np.sin(2 * np.pi * t / 5400) + 0.1 * rng.standard_normal(len(t))  # 90 min
+    whole = welch(prepare(y), TransformParams())
+    assert whole.n_segments == 1 and whole.segment_s == len(t)
+    assert np.all(np.diff(whole.periods) > 0) and whole.periods[-1] == pytest.approx(len(t))
+    period, share = whole.dominant()
+    assert period == pytest.approx(5400, rel=0.05) and share > 0.5
+    # Parseval, one-sided: the density integrates to the variance.
+    variance = float(np.var(prepare(y)))
+    df = 1.0 / len(t)
+    assert whole.power.sum() * df == pytest.approx(variance, rel=0.05)
+    # Shorter segments average more, and see nothing longer than themselves.
+    short = welch(prepare(y), TransformParams(segment_s=3600, overlap=0.5))
+    assert short.segment_s == 3600 and short.n_segments == 11
+    assert short.periods[-1] == pytest.approx(3600)
+    assert short.dominant()[0] <= 900  # the 90 min line is beyond what it can resolve
+    noise = welch(prepare(rng.standard_normal(len(t))), TransformParams(window="Rectangular"))
+    assert noise.dominant()[1] < 0.02  # power spread thin, as in a normal instance
+    with pytest.raises(ValueError):
+        TransformParams(window="Kaiser")
+    with pytest.raises(ValueError):
+        TransformParams(overlap=1.0)
+
+
+def test_spectrogram_is_a_grid_over_time_and_log_period():
+    from overlap_viewer.spectral import (
+        MIN_PERIOD_S,
+        TransformParams,
+        format_period,
+        prepare,
+        spectrogram,
+    )
+
+    t = np.arange(4 * 3600, dtype=float)
+    y = np.sin(2 * np.pi * t / 600)  # 10 min
+    image = spectrogram(prepare(y), TransformParams(segment_s=1800, overlap=0.5), n_periods=50)
+    assert image is not None
+    assert image.segment_s == 1800 and image.hop_s == 900
+    assert image.power.shape == (len(image.centers), 50)
+    assert image.log_periods[0] == pytest.approx(np.log10(MIN_PERIOD_S))
+    assert image.log_periods[-1] == pytest.approx(np.log10(1800))
+    assert image.centers[0] == pytest.approx(900) and np.all(np.diff(image.centers) == 900)
+    brightest = image.log_periods[image.power.mean(axis=0).argmax()]
+    assert 10**brightest == pytest.approx(600, rel=0.1)
+    # No segment given: an eighth of the series each.
+    default = spectrogram(prepare(y), TransformParams())
+    assert default is not None and default.segment_s == len(t) // 8
+    assert spectrogram(prepare(y), TransformParams(segment_s=len(t))) is None  # one segment
+    assert format_period(30) == "30 s" and format_period(5400) == "1.5 h"
+    assert format_period(300) == "5 min" and format_period(2 * 86400) == "2 d"
+
+
+def test_histogram_stacks_by_group_and_leaves_the_implausible_out():
+    from overlap_viewer.spectral import histogram
+
+    values = np.array([1.0, 1.5, 2.0, 2.5, 3.0, np.nan, 1.0e9, 3.5])
+    groups = np.array([0, 0, 1, 1, 1, 0, 0, 1])
+    result = histogram(values, groups, bins=5, bounds=plausible_range("Pa"), keys=["a", "b"])
+    assert result is not None
+    assert result.left_out == 1 and result.total == 6
+    assert result.mean == pytest.approx(2.25) and result.median == pytest.approx(2.25)
+    assert list(result.stacks) == ["a", "b"]
+    assert result.stacks["a"].sum() == 2 and result.stacks["b"].sum() == 4
+    assert len(result.edges) == 6 and result.edges[0] == 1.0 and result.edges[-1] == 3.5
+    assert result.counts.tolist() == (result.stacks["a"] + result.stacks["b"]).tolist()
+    fixed = histogram(values, None, bins=3, edges=np.array([0.0, 2.0, 4.0]))
+    assert fixed is not None and list(fixed.stacks) == [None]
+    assert fixed.stacks[None].tolist() == [2, 4]  # nothing masked: 1e9 falls beyond the edges
+    ordered = histogram(values, 1 - groups, bins=2, keys=["b", "a", "nobody"])
+    assert list(ordered.stacks) == ["b", "a"]  # the order of the keys; an empty stack left out
+    with pytest.raises(ValueError):
+        histogram(values, groups, bins=2)
+    flat = histogram(np.full(10, 7.0), None, bins=4)
+    assert flat is not None and flat.edges[0] < 7.0 < flat.edges[-1]
+    assert histogram(np.array([np.nan, np.nan]), None, bins=3) is None

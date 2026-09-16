@@ -11,12 +11,13 @@ pointer through all of them. An interactive counterpart of the
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -72,10 +73,42 @@ from overlap_viewer.palette import (
     tint,
     unknown_background,
 )
+from overlap_viewer.spectral import (
+    Histogram,
+    Spectrum,
+    TransformParams,
+    format_period,
+    histogram,
+    prepare,
+    spectrogram,
+    uniform_series,
+    welch,
+)
+from overlap_viewer.spectral_items import (
+    LogPeriodAxisItem,
+    PeriodMarker,
+    TransformControls,
+    add_center_lines,
+    add_spectrogram_image,
+    add_spectrum_curve,
+    add_stacked_bars,
+    caption_for,
+    format_width,
+    period_range,
+    power_axis,
+    power_label,
+    set_log_period_axis,
+    shade_unresolved,
+    spectrum_grid,
+    spectrum_xy,
+)
 from overlap_viewer.timemap import TimeMap
 
 AXIS_WIDTH = 84  # every left axis has this width, so all plots share the same x pixels
 PANEL_WIDTH = 200  # the feature panel: room for the longest variable name and its unit
+SIDE_PX = (
+    210  # the column beside the traces: a marginal histogram, or a spectrum turned on its side
+)
 BAND_PX = 18
 HEADER_PX = 24
 PLOT_MIN_PX = 150
@@ -83,6 +116,36 @@ AXIS_PX = 28
 ROW_SPACING = 2  # between two rows of one instance block
 BLOCK_SPACING = 16  # added above the header of every block but the first
 SI_UNITS = ("Pa",)  # units pyqtgraph may prefix (kPa, MPa); the others stay literal
+STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch views are recounted
+
+# The views of a signal beyond its time series, in the order of the toolbar.
+VIEWS = ("distribution", "spectrum", "spectrogram")
+VIEW_NAMES = {"distribution": "Distribution", "spectrum": "Spectrum", "spectrogram": "Spectrogram"}
+VIEW_TIPS = {
+    "distribution": (
+        "A histogram of the readings to the right of every trace, turned on its side so that it "
+        "shares the trace's value axis: a reading is at the same height in both. The bars are "
+        "stacked by label period in the class colors, so how the fault moves the distribution is "
+        "read inside one instance. Counted over the stretch of time on screen, so zooming is "
+        "brushing; readings outside the plausible range are left out and counted in the caption. "
+        "A bimodal shape is an oscillation."
+    ),
+    "spectrum": (
+        "The power spectral density of the trace against the period, both logarithmic, over the "
+        "stretch of time on screen: Welch's estimate with the window chosen, the mean and the "
+        "linear trend removed first, the missing samples interpolated. The caption gives the "
+        "dominant period and its share of the power — a few percent for a normal instance, half "
+        "or more for an oscillating one. Beside the spectrogram it shares its period axis; on its "
+        "own it takes the spectrogram's place, the period along the bottom."
+    ),
+    "spectrogram": (
+        "The same density per segment of the recording, under the trace on the shared time axis, "
+        "the period up the side and the power as a shade. It says something where the period "
+        "drifts along a recording, which a merged recording of several days shows and one of six "
+        "hours cannot: a segment must hold a few cycles of a period to resolve it, and the "
+        "slugging periods are close to an hour."
+    ),
+}
 
 HINT = (
     "Tick features to add their plots · drag to pan · Ctrl + wheel to zoom (the wheel alone "
@@ -113,6 +176,31 @@ class BandSegments(NamedTuple):
 
 class PlotStack(WheelToParent, pg.GraphicsLayoutWidget):
     """The stack of plots, scrolled by the plain wheel and zoomed by Ctrl + wheel."""
+
+
+@dataclass
+class StretchPanel:
+    """The views of one feature of one block that are counted over the stretch of time on screen.
+
+    The histogram and the spectrum answer for whatever the time axis shows, so
+    a pan or a zoom recounts them; the items they drew last time are kept so
+    that they can be taken down first.
+    """
+
+    position: int
+    feature: str
+    unit: str
+    bounds: tuple[float, float]
+    hist_plot: pg.PlotItem | None = None
+    spec_plot: pg.PlotItem | None = None
+    period_axis: str = "y"  # where the spectrum lays its period: beside the spectrogram, "y"
+    hist_items: list = field(default_factory=list)
+    spec_items: list = field(default_factory=list)
+    hist_note: AnchoredText | None = None
+    spec_note: AnchoredText | None = None
+    peak: PeriodMarker | None = None  # one dominant period laid against the trace
+    histogram: Histogram | None = None
+    spectrum: Spectrum | None = None
 
 
 class Blocks(NamedTuple):
@@ -194,12 +282,20 @@ class InstanceWindow(QMainWindow):
         self._joinable = self._plain is not None and len(self._merged.rows) < len(self._plain.rows)
 
         self._checks: dict[str, QCheckBox] = {}
+        self._views: dict[str, QCheckBox] = {}
         self._plots: dict[tuple[int, str], pg.PlotItem] = {}
+        self._time_plots: list[pg.PlotItem] = []  # every plot on the shared time axis
+        self._image_plots: list[tuple[int, str, pg.PlotItem]] = []  # the spectrograms
+        self._stretch_panels: list[StretchPanel] = []
         self._feature_masters: dict[str, pg.PlotItem] = {}
         self._crosshairs: list[pg.InfiniteLine] = []
         self._master: pg.PlotItem | None = None
         self._x_range: tuple[float, float] | None = None
         self._help: HelpWindow | None = None
+        self._stretch_timer = QTimer(self)
+        self._stretch_timer.setSingleShot(True)
+        self._stretch_timer.setInterval(STRETCH_DELAY_MS)
+        self._stretch_timer.timeout.connect(self._refresh_stretch)
 
         self._adopt(self._plain is None)
         self._build_ui()
@@ -229,6 +325,7 @@ class InstanceWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         self._seams = [self._seam_positions(members) for members in self.members]
+        self._groups_cache: dict[int, tuple[np.ndarray, list]] = {}
         self._features = self._feature_table()
         self._signature = self._signature_for_group()
 
@@ -378,6 +475,25 @@ class InstanceWindow(QMainWindow):
         toolbar.addAction(close)
         toolbar.addSeparator()
         toolbar.addWidget(self._build_join_check())
+        # The views and their parameters get a row of their own: on one row
+        # with the rest they fell behind the toolbar's overflow chevron as soon
+        # as the window was narrower than a screen.
+        self.addToolBarBreak()
+        views_bar = QToolBar("Views")
+        views_bar.setMovable(False)
+        self.addToolBar(views_bar)
+        views_bar.addWidget(QLabel(" Views "))
+        for view in VIEWS:
+            check = QCheckBox(VIEW_NAMES[view])
+            check.setToolTip(VIEW_TIPS[view])
+            check.toggled.connect(self._on_view_toggled)
+            self._views[view] = check
+            views_bar.addWidget(check)
+        views_bar.addSeparator()
+        self._controls = TransformControls()
+        self._controls.changed.connect(self._rebuild)
+        views_bar.addWidget(self._controls)
+        self._sync_controls()
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -430,6 +546,37 @@ class InstanceWindow(QMainWindow):
             self._help.deleteLater()
             self._help = None
         self._rebuild()
+
+    # -- the views
+
+    def view_on(self, view: str) -> bool:
+        check = self._views.get(view)
+        return check is not None and check.isChecked()
+
+    def set_views(self, views: Sequence[str]) -> None:
+        """Tick exactly ``views`` and draw them."""
+        wanted = set(views)
+        for view, check in self._views.items():
+            check.blockSignals(True)
+            check.setChecked(view in wanted)
+            check.blockSignals(False)
+        self._on_view_toggled()
+
+    def _on_view_toggled(self, *args) -> None:
+        self._sync_controls()
+        self._rebuild()
+
+    def _sync_controls(self) -> None:
+        """Offer the parameters only the views on screen have a use for."""
+        self._controls.show_spectral(self.view_on("spectrum") or self.view_on("spectrogram"))
+        self._controls.show_bins(self.view_on("distribution"))
+
+    @property
+    def _side_column(self) -> bool:
+        """Whether anything sits in the column beside the traces."""
+        return self.view_on("distribution") or (
+            self.view_on("spectrum") and self.view_on("spectrogram")
+        )
 
     def _build_join_check(self) -> QCheckBox:
         """The toolbar's local join, which changes what this window draws and nothing else."""
@@ -694,20 +841,42 @@ class InstanceWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         self._sync_signature()
         self._apply_ranges()
+        self._refresh_stretch()
 
     def _lay_out_stack(self) -> None:
-        """Fill the stack: the shared-coverage band, then one block per bar."""
+        """Fill the stack: the shared-coverage band, then one block per bar.
+
+        Everything on the time axis sits in the first column, and only there,
+        so that the same instant is at the same pixel in every row; the second
+        column, when a view asks for it, holds what shares an axis with the row
+        beside it but not the time: a marginal histogram, a spectrum beside a
+        spectrogram. A spectrum on its own takes the place a spectrogram would,
+        the period along the bottom, since nothing then has to line up with it.
+        """
         layout = self._layout_widget
         layout.clear()
         self._plots = {}
+        self._time_plots = []
+        self._image_plots = []
+        self._stretch_panels = []
         self._feature_masters = {}
         self._crosshairs = []
         self._master = None  # so the new master does not link itself to the removed one
         features = self.selected_features()
+        side = self._side_column
+        grid = layout.ci.layout
+        grid.setColumnFixedWidth(1, SIDE_PX if side else 0)
+        grid.setColumnStretchFactor(0, 1)
+        span = 2 if side else 1
+        spectral = self.view_on("spectrum") or self.view_on("spectrogram")
+        # The time axis closes the last row on the time axis of every block: the
+        # last trace, or the spectrogram under it.
+        axis_on_image = self.view_on("spectrogram")
 
         heights: list[int] = []
         row = 0
         self._master = self._add_band(row, self._coverage_band_segments(), "shared")
+        self._master.getViewBox().sigXRangeChanged.connect(self._schedule_stretch)
         heights.append(BAND_PX)
         row += 1
         for position in range(len(self.rows)):
@@ -717,7 +886,7 @@ class InstanceWindow(QMainWindow):
             label = HeaderLabel(justify="left")
             label.setText(self._instance_html(position))
             label.setFixedHeight(header_px)
-            layout.addItem(label, row=row, col=0)
+            layout.addItem(label, row=row, col=0, colspan=span)
             heights.append(header_px)
             row += 1
             seams = self._seams[position]
@@ -727,9 +896,24 @@ class InstanceWindow(QMainWindow):
             row += 2
             for k, feature in enumerate(features):
                 last = k == len(features) - 1
-                self._add_feature_plot(row, position, feature, show_axis=last)
-                heights.append(PLOT_MIN_PX + (AXIS_PX if last else 0))
+                trace_axis = last and not axis_on_image
+                panel = StretchPanel(
+                    position,
+                    feature,
+                    self.info.unit(feature),
+                    plausible_range(self.info.unit(feature)),
+                )
+                self._add_feature_plot(row, position, feature, show_axis=trace_axis)
+                if self.view_on("distribution"):
+                    self._add_histogram_panel(row, panel, show_axis=trace_axis)
+                heights.append(PLOT_MIN_PX + (AXIS_PX if trace_axis else 0))
                 row += 1
+                if spectral:
+                    self._add_spectral_row(row, panel, span, show_axis=last and axis_on_image)
+                    heights.append(PLOT_MIN_PX + AXIS_PX)
+                    row += 1
+                if panel.hist_plot is not None or panel.spec_plot is not None:
+                    self._stretch_panels.append(panel)
             if not features:
                 self._plots_last_axis_placeholder(row, seams)
                 heights.append(AXIS_PX + 4)
@@ -768,10 +952,13 @@ class InstanceWindow(QMainWindow):
         """
         self._layout_widget.resizeEvent(None)
 
-    def _new_plot(self, row: int, with_axis: bool) -> pg.PlotItem:
-        axis_items = {"bottom": TimeAxisItem(self.timemap)} if with_axis else None
+    def _new_plot(self, row: int, with_axis: bool, left_axis=None) -> pg.PlotItem:
+        """A plot on the shared time axis, in the first column, with a crosshair."""
+        axis_items = {"bottom": TimeAxisItem(self.timemap)} if with_axis else {}
+        if left_axis is not None:
+            axis_items["left"] = left_axis
         plot = self._layout_widget.addPlot(
-            row=row, col=0, viewBox=ScrollFriendlyViewBox(), axisItems=axis_items
+            row=row, col=0, viewBox=ScrollFriendlyViewBox(), axisItems=axis_items or None
         )
         plot.hideButtons()
         plot.getAxis("left").setWidth(AXIS_WIDTH)
@@ -796,6 +983,16 @@ class InstanceWindow(QMainWindow):
         crosshair.setVisible(False)
         plot.addItem(crosshair, ignoreBounds=True)
         self._crosshairs.append(crosshair)
+        self._time_plots.append(plot)
+        return plot
+
+    def _new_side_plot(self, row: int, col: int = 1, colspan: int = 1) -> pg.PlotItem:
+        """A plot off the time axis: no crosshair, no link, its own mouse."""
+        plot = self._layout_widget.addPlot(
+            row=row, col=col, colspan=colspan, viewBox=ScrollFriendlyViewBox()
+        )
+        plot.hideButtons()
+        plot.getViewBox().disableAutoRange()
         return plot
 
     def _add_seams(self, plot: pg.PlotItem, seams: Sequence[float]) -> None:
@@ -835,7 +1032,9 @@ class InstanceWindow(QMainWindow):
         plot.getAxis("left").setStyle(showValues=False)
         self._add_seams(plot, seams)
 
-    def _add_feature_plot(self, row: int, position: int, feature: str, show_axis: bool) -> None:
+    def _add_feature_plot(
+        self, row: int, position: int, feature: str, show_axis: bool
+    ) -> pg.PlotItem:
         plot = self._new_plot(row, with_axis=show_axis)
         plot.setMinimumHeight(PLOT_MIN_PX + (AXIS_PX if show_axis else 0))
         self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
@@ -901,6 +1100,287 @@ class InstanceWindow(QMainWindow):
             plot.setYLink(self._feature_masters[feature])
         else:
             self._feature_masters[feature] = plot
+        return plot
+
+    # -- the views beside and under a trace
+
+    def _add_histogram_panel(self, row: int, panel: StretchPanel, show_axis: bool) -> None:
+        """The marginal histogram of one trace, sharing its value axis, in the side column."""
+        plot = self._new_side_plot(row)
+        plot.setMinimumHeight(PLOT_MIN_PX + (AXIS_PX if show_axis else 0))
+        plot.hideAxis("left")
+        if show_axis:
+            plot.setLabel("bottom", "samples")
+        else:
+            plot.hideAxis("bottom")
+        vb = plot.getViewBox()
+        vb.setMouseEnabled(x=False, y=True)
+        vb.setLimits(xMin=0)
+        plot.setYLink(self._plots[(panel.position, panel.feature)])
+        panel.hist_plot = plot
+        # Bottom right: the bars reach right where the readings pile up, which
+        # for a pressure under a fault is the top of the range more often than not.
+        panel.hist_note = AnchoredText("", frac=(1.0, 0.0), anchor=(1.03, 1.25))
+        panel.hist_note.attach(plot)
+
+    def _add_spectral_row(self, row: int, panel: StretchPanel, span: int, show_axis: bool) -> None:
+        """The spectrogram under a trace, the spectrum beside it — or the spectrum alone in its place."""
+        colors = theme.current()
+        params = self._controls.params()
+        frame = self.frames[panel.position]
+        unit = panel.unit
+        image_plot = None
+        if self.view_on("spectrogram"):
+            image_plot = self._new_plot(
+                row, with_axis=show_axis, left_axis=LogPeriodAxisItem("left")
+            )
+            image_plot.setMinimumHeight(PLOT_MIN_PX + AXIS_PX)
+            self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
+            image_plot.setLabel("left", f"{panel.feature} · period")
+            image_plot.getViewBox().setMouseEnabled(x=True, y=False)
+            self._add_seams(image_plot, self._seams[panel.position])
+            self._image_plots.append((panel.position, panel.feature, image_plot))
+            note = self._draw_spectrogram(image_plot, frame, panel, params)
+            AnchoredText(f'<span style="font-size:8pt; color:{colors.text};">{note}</span>').attach(
+                image_plot
+            )
+        if self.view_on("spectrum"):
+            if image_plot is not None:
+                # Beside the spectrogram: the period up the side, shared with it.
+                plot = self._new_side_plot(row)
+                plot.hideAxis("left")
+                power_axis(plot, "bottom", power_label(unit))
+                plot.setYLink(image_plot)
+                plot.getViewBox().setMouseEnabled(x=True, y=False)
+                panel.period_axis = "y"
+            else:
+                plot = self._new_side_plot(row, col=0, colspan=span)
+                plot.getAxis("left").setWidth(AXIS_WIDTH)
+                set_log_period_axis(plot, "bottom", "period")
+                power_axis(plot, "left", f"{panel.feature} · {power_label(unit)}")
+                plot.getViewBox().setMouseEnabled(x=True, y=True)
+                panel.period_axis = "x"
+            plot.setMinimumHeight(PLOT_MIN_PX + AXIS_PX)
+            self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
+            spectrum_grid(plot)
+            panel.spec_plot = plot
+            panel.peak = PeriodMarker()
+            self._plots[(panel.position, panel.feature)].addItem(panel.peak, ignoreBounds=True)
+            # The power climbs with the period, so the peak sits where the
+            # period is long and the power high: top right beside the
+            # spectrogram, right on its own. The note goes where the curve is not.
+            if panel.period_axis == "y":
+                panel.spec_note = AnchoredText("", frac=(1.0, 0.0), anchor=(1.03, 1.25))
+            else:
+                panel.spec_note = AnchoredText("", frac=(0.0, 1.0), anchor=(-0.03, -0.25))
+            panel.spec_note.attach(plot)
+
+    def _series_on_grid(self, frame: pd.DataFrame, feature: str) -> tuple[np.ndarray, int]:
+        """The readings of one feature on the fixed 1 Hz grid, and how many seconds a sample spans."""
+        if feature not in frame.columns:
+            return np.full(len(frame), np.nan), 1
+        return uniform_series(frame.index, frame[feature].to_numpy(dtype=float))
+
+    def _draw_spectrogram(
+        self, plot: pg.PlotItem, frame: pd.DataFrame, panel: StretchPanel, params: TransformParams
+    ) -> str:
+        """Compute and draw the spectrogram of one block's feature; the caption is returned."""
+        values, step = self._series_on_grid(frame, panel.feature)
+        prepared = prepare(values, panel.bounds)
+        image = spectrogram(prepared, params) if prepared is not None else None
+        vb = plot.getViewBox()
+        if image is None:
+            vb.setYRange(0.0, 1.0, padding=0)
+            plot.getAxis("left").setStyle(showValues=False)
+            reason = (
+                "too few readings, or a flat signal, to transform"
+                if prepared is None
+                else "the recording holds fewer than two segments"
+            )
+            AnchoredText(
+                f'<span style="font-size:10pt; color:{theme.current().faint};">{reason}</span>',
+                frac=(0.5, 0.5),
+                anchor=(0.5, 0.5),
+                boxed=False,
+            ).attach(plot)
+            return "no spectrogram"
+        x_start = float(self.timemap.to_x([frame.index[0]])[0])
+        add_spectrogram_image(plot, image, lambda s: x_start + s * step / 3600.0)
+        low, high = period_range(image)
+        # The axis runs to the length of the recording, which is as far as the
+        # spectrum beside it can see; the periods beyond the segment, which the
+        # spectrogram itself cannot resolve, are shaded, as they are on a spectrum.
+        top = max(high, float(np.log10(max(len(values) * step, 10**high))))
+        # A little room at both ends keeps the end ticks off the neighbouring rows.
+        vb.setYRange(low, top, padding=0.04)
+        if top > high:
+            shade_unresolved(plot, high, "y")
+        return (
+            f"segments of {format_period(image.segment_s)}, {params.overlap * 100:.0f} % overlap, "
+            f"{params.window} · resolves periods up to {format_period(10**high)}"
+        )
+
+    def _schedule_stretch(self, *args) -> None:
+        self._stretch_timer.start()
+
+    def _visible_slice(self, position: int) -> slice:
+        """The samples of one block inside the stretch of time on screen."""
+        frame = self.frames[position]
+        if self._master is None or not len(frame):
+            return slice(0, len(frame))
+        x0, x1 = self._master.getViewBox().viewRange()[0]
+        t0, t1 = self.timemap.to_time(x0), self.timemap.to_time(x1)
+        start = 0 if t0 is None else int(frame.index.searchsorted(t0, side="left"))
+        stop = len(frame) if t1 is None else int(frame.index.searchsorted(t1, side="right"))
+        return slice(start, max(stop, start))
+
+    def _refresh_stretch(self) -> None:
+        """Count the histograms and the spectra again over the stretch of time on screen."""
+        if not self._stretch_panels:
+            return
+        params = self._controls.params()
+        for panel in self._stretch_panels:
+            window = self._visible_slice(panel.position)
+            frame = self.frames[panel.position]
+            if panel.hist_plot is not None:
+                self._refresh_histogram(panel, frame, window, params)
+            if panel.spec_plot is not None:
+                self._refresh_spectrum(panel, frame, window, params)
+
+    def _sample_groups(self, position: int) -> tuple[np.ndarray, list[tuple[str, int]]]:
+        """Per sample of one block, the label period it is in, as codes into a list of ``(kind, hue)`` keys.
+
+        The keys come in the order the stacks are laid: normal, transient,
+        steady, then the unlabeled, which is the ladder the bands climb.
+        """
+        cached = self._groups_cache.get(position)
+        if cached is not None:
+            return cached
+        frame = self.frames[position]
+        offset = self.info.transient_offset
+        fault_class = self._fault_of(position)
+        spans: list[tuple[int, int, tuple[str, int]]] = []
+        for segment, source in self._class_runs(position):
+            a = int(frame.index.searchsorted(segment.start, side="left"))
+            b = int(frame.index.searchsorted(segment.end, side="right"))
+            kind = label_kind(segment.value, offset)
+            fault = label_fault(segment.value, offset)
+            hue = fault if fault is not None else (fault_class if source is None else source)
+            spans.append((a, b, (kind, hue)))
+        rank = {"normal": 0, "transient": 1, "steady": 2, "unknown": 3}
+        keys = sorted({key for _, _, key in spans}, key=lambda k: (rank.get(k[0], 4), k[1] or -1))
+        codes = np.full(len(frame), -1, dtype=np.int64)
+        for a, b, key in spans:
+            codes[a:b] = keys.index(key)
+        self._groups_cache[position] = (codes, keys)
+        return codes, keys
+
+    def _refresh_histogram(self, panel: StretchPanel, frame, window: slice, params) -> None:
+        plot = panel.hist_plot
+        for item in panel.hist_items:
+            plot.removeItem(item)
+        panel.hist_items = []
+        colors = theme.current()
+        values = (
+            frame[panel.feature].to_numpy(dtype=float)[window]
+            if panel.feature in frame.columns
+            else np.array([])
+        )
+        result = None
+        if len(values):
+            codes, keys = self._sample_groups(panel.position)
+            result = histogram(values, codes[window], params.bins, panel.bounds, keys=keys)
+        panel.histogram = result
+        if result is None:
+            panel.hist_note.setHtml(
+                f'<span style="font-size:8pt; color:{colors.faint};">no readings on screen</span>'
+            )
+            plot.getViewBox().setXRange(0, 1, padding=0)
+            return
+        brushes = {}
+        for kind, hue in result.stacks:
+            if kind == "unknown":
+                brushes[(kind, hue)] = pg.mkBrush(tint(unknown_background(), 0.7))
+            else:
+                brushes[(kind, hue)] = pg.mkBrush(bar_color(hue, kind))
+        pen = pg.mkPen(colors.plot_background, width=0.5)
+        panel.hist_items = add_stacked_bars(plot, result, brushes, horizontal=True, pen=pen)
+        panel.hist_items += add_center_lines(plot, result.mean, result.median, horizontal=True)
+        top = float(result.counts.max())
+        plot.getViewBox().setXRange(0, top * 1.05 if top > 0 else 1, padding=0)
+        width = format_width(float(result.edges[1] - result.edges[0]), panel.unit)
+        left_out = (
+            f'<br><span style="color:{colors.warning};">⚠ {result.left_out:,} implausible left out</span>'
+            if result.left_out
+            else ""
+        )
+        panel.hist_note.setHtml(
+            f'<span style="font-size:8pt; color:{colors.text};">{result.total:,} samples<br>'
+            f"{len(result.edges) - 1} bins of {width}<br>"
+            f"mean {format_width(result.mean, panel.unit)} ―<br>"
+            f"median {format_width(result.median, panel.unit)} ╌{left_out}</span>"
+        )
+
+    def _mark_peak(self, panel: StretchPanel, spectrum: Spectrum) -> None:
+        """Lay one cycle of the dominant period against the trace, a little inside the stretch shown."""
+        period, _share = spectrum.dominant()
+        if not np.isfinite(period) or self._master is None:
+            panel.peak.clear()
+            return
+        x0, x1 = self._master.getViewBox().viewRange()[0]
+        panel.peak.set_period(
+            x0 + 0.04 * (x1 - x0), period / 3600.0, f"peak period {format_period(period)}"
+        )
+
+    def _refresh_spectrum(self, panel: StretchPanel, frame, window: slice, params) -> None:
+        plot = panel.spec_plot
+        for item in panel.spec_items:
+            plot.removeItem(item)
+        panel.spec_items = []
+        colors = theme.current()
+        sub = frame.iloc[window]
+        values, _step = self._series_on_grid(sub, panel.feature)
+        prepared = prepare(values, panel.bounds) if len(values) else None
+        vb = plot.getViewBox()
+        if prepared is None:
+            panel.spectrum = None
+            panel.peak.clear()
+            panel.spec_note.setHtml(
+                f'<span style="font-size:8pt; color:{colors.faint};">too few readings on screen, '
+                "or a flat signal, to transform</span>"
+            )
+            return
+        spectrum = welch(prepared, params)
+        panel.spectrum = spectrum
+        self._mark_peak(panel, spectrum)
+        curve = add_spectrum_curve(
+            plot, spectrum, pg.mkPen(colors.trace, width=1.2), panel.period_axis
+        )
+        panel.spec_items.append(curve)
+        x, y = spectrum_xy(spectrum, panel.period_axis)
+        log_power = x if panel.period_axis == "y" else y
+        finite = log_power[np.isfinite(log_power)]
+        lo, hi = (float(finite.min()), float(finite.max())) if len(finite) else (-1.0, 1.0)
+        if hi <= lo:
+            hi = lo + 1.0
+        pad = 0.05 * (hi - lo)
+        if panel.period_axis == "y":
+            vb.setXRange(lo - pad, hi + pad, padding=0)
+            # The period axis is the spectrogram's; the spectrum's own periods
+            # may stop short of it when the stretch on screen is shorter than
+            # a segment of the whole recording.
+        else:
+            vb.setYRange(lo - pad, hi + pad, padding=0)
+            low, high = period_range(spectrum)
+            vb.setXRange(low, high, padding=0.01)
+        if spectrum.segment_s < len(prepared) or panel.period_axis == "y":
+            panel.spec_items.append(
+                shade_unresolved(plot, float(np.log10(spectrum.segment_s)), panel.period_axis)
+            )
+        caption = caption_for(spectrum, panel.unit, compact=panel.period_axis == "y")
+        panel.spec_note.setHtml(
+            f'<span style="font-size:8pt; color:{colors.text};">{caption}</span>'
+        )
 
     @staticmethod
     def _mark_implausible(plot: pg.PlotItem, x: np.ndarray, y: np.ndarray, bounds) -> None:
@@ -1026,16 +1506,26 @@ class InstanceWindow(QMainWindow):
         x = vb.mapSceneToView(pos).x()
         stamp = self.timemap.to_time(x)
         inside = any(
-            plot.getViewBox().sceneBoundingRect().contains(pos)
-            for plot in [self._master, *self._plots.values()]
+            plot.getViewBox().sceneBoundingRect().contains(pos) for plot in self._time_plots
         )
         for line in self._crosshairs:
             line.setVisible(inside)
             line.setPos(x)
-        if not inside or stamp is None:
+        if not inside:
+            side = self._describe_side(pos)
+            self._status.setText(side if side else HINT)
+            return
+        if stamp is None:
             self._status.setText(HINT)
             return
         parts = [f"{stamp:%Y-%m-%d %H:%M:%S}"]
+        for position, feature, plot in self._image_plots:
+            if plot.getViewBox().sceneBoundingRect().contains(pos):
+                log_period = plot.getViewBox().mapSceneToView(pos).y()
+                parts.append(
+                    f"{instance_title(self.rows.iloc[position])} · {feature} · spectrogram at a "
+                    f"period of {format_period(10**log_period)}"
+                )
         offset = self.info.transient_offset
         for position, frame in enumerate(self.frames):
             title = instance_title(self.rows.iloc[position])
@@ -1057,3 +1547,54 @@ class InstanceWindow(QMainWindow):
                 f"{title}: {label_name(klass, self.info.fault_names, offset)} / {state_name(state)}{reading}"
             )
         self._status.setText("  ·  ".join(parts))
+
+    def _describe_side(self, pos) -> str:
+        """What the pointer is over in the side views: a bin and its count, or a period and its power."""
+        for panel in self._stretch_panels:
+            title = instance_title(self.rows.iloc[panel.position])
+            if (
+                panel.hist_plot is not None
+                and panel.hist_plot.getViewBox().sceneBoundingRect().contains(pos)
+            ):
+                result = panel.histogram
+                if result is None:
+                    return f"{title} · {panel.feature}: no readings on screen"
+                value = panel.hist_plot.getViewBox().mapSceneToView(pos).y()
+                k = int(np.searchsorted(result.edges, value, side="right")) - 1
+                if not 0 <= k < len(result.edges) - 1:
+                    return f"{title} · {panel.feature}: outside the bins"
+                counts = result.counts
+                share = 100.0 * counts[k] / result.total if result.total else 0.0
+                stacks = ", ".join(
+                    f"{label_kind_name(key)} {stack[k]:,}"
+                    for key, stack in result.stacks.items()
+                    if stack[k]
+                )
+                return (
+                    f"{title} · {panel.feature} from {result.edges[k]:.4g} to "
+                    f"{result.edges[k + 1]:.4g} {panel.unit}: {counts[k]:,} samples ({share:.1f} %)"
+                    + (f" · {stacks}" if stacks else "")
+                ).replace("  ", " ")
+            if (
+                panel.spec_plot is not None
+                and panel.spec_plot.getViewBox().sceneBoundingRect().contains(pos)
+            ):
+                spectrum = panel.spectrum
+                if spectrum is None:
+                    return f"{title} · {panel.feature}: no spectrum on screen"
+                point = panel.spec_plot.getViewBox().mapSceneToView(pos)
+                log_period = point.y() if panel.period_axis == "y" else point.x()
+                periods = np.log10(spectrum.periods)
+                k = int(np.clip(np.searchsorted(periods, log_period), 0, len(periods) - 1))
+                unit = f" {panel.unit}²/Hz" if panel.unit and panel.unit != "-" else ""
+                return (
+                    f"{title} · {panel.feature} · period {format_period(10**log_period)}: "
+                    f"power {spectrum.power[k]:.3g}{unit} at {format_period(spectrum.periods[k])}"
+                )
+        return ""
+
+
+def label_kind_name(key) -> str:
+    """``(kind, hue)`` of a histogram stack as a word: normal, transient, steady, unlabeled."""
+    kind = key[0] if isinstance(key, tuple) else str(key)
+    return "unlabeled" if kind == "unknown" else kind

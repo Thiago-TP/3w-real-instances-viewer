@@ -1,0 +1,408 @@
+"""The signal views beyond the time series: distribution, spectrum, spectrogram. No Qt here, numpy only.
+
+The 3W signals are sampled once a second and the events are slow: severe
+slugging cycles every 50 to 90 minutes, flow instability every 45, so a
+six-hour instance holds four to seven cycles. That fixes the conventions of
+this module. The frequency axis is a **period** in seconds, logarithmic,
+because a frequency of 0.0002 Hz says nothing to anyone and "every 90 minutes"
+does. The default spectrum is taken over the whole stretch shown (a
+periodogram), because any segment shorter than the stretch sees nothing longer
+than itself, and a segment of a few minutes, the size a pipeline windows by,
+holds no cycle of the events at all. Shorter segments are offered, averaged as
+Welch does, and every result carries the longest period it can resolve so that
+a plot can grey the axis beyond it rather than leave the long periods silently
+empty.
+
+A series is prepared before any transform: readings outside the plausible
+range are masked, the missing samples are interpolated inside the stretch (the
+grid is a fixed 1 Hz and the holes are rare), and the mean and the linear trend
+are removed, since the trend would otherwise own every long period. A stretch
+with fewer than half its readings, or a frozen sensor, declines: the caller
+writes a note in place of a plot.
+"""
+
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from overlap_viewer.labels import is_flat
+
+# The window functions offered, by the name a toolbar shows for them. Numpy's
+# own; a rectangular window is the plain segment.
+WINDOWS: dict[str, object] = {
+    "Hann": np.hanning,
+    "Hamming": np.hamming,
+    "Blackman": np.blackman,
+    "Rectangular": np.ones,
+}
+
+# Below this share of readings a stretch is not transformed: interpolating over
+# most of a series would draw the spectrum of the interpolation.
+MIN_COVERAGE = 0.5
+# And below this many readings there is nothing to estimate from.
+MIN_SAMPLES = 16
+# The shortest period a 1 Hz grid can carry (Nyquist), for the period axes.
+MIN_PERIOD_S = 2.0
+# A spectrogram given no segment takes this share of the recording per segment:
+# a six-hour instance gets segments of 45 minutes.
+DEFAULT_SPECTROGRAM_SHARE = 1 / 8
+# The dominant period is looked for among the periods the stretch holds at
+# least this many cycles of: a single half-cycle is a trend, not a line.
+MIN_CYCLES = 4.0
+
+
+@dataclass(frozen=True)
+class TransformParams:
+    """What the user sets in the toolbar, shared by every view that transforms.
+
+    ``segment_s`` is the segment length in samples (seconds); zero means the
+    whole stretch, one segment, a periodogram. ``overlap`` is the share of a
+    segment the next one repeats. ``bins`` is for the histograms.
+    """
+
+    segment_s: int = 0
+    overlap: float = 0.5
+    window: str = "Hann"
+    bins: int = 40
+
+    def __post_init__(self):
+        if self.window not in WINDOWS:
+            raise ValueError(f"unknown window {self.window!r}; expected one of {tuple(WINDOWS)}")
+        if not 0.0 <= self.overlap < 1.0:
+            raise ValueError("overlap must be in [0, 1)")
+        if self.bins < 1:
+            raise ValueError("at least one bin")
+
+
+@dataclass(frozen=True)
+class Spectrum:
+    """A power spectral density against period, and what it can resolve.
+
+    ``periods`` are ascending, in seconds, from the Nyquist period up to the
+    segment length; ``power`` is the density in the unit of the series squared
+    per hertz. ``segment_s`` is the segment the estimate averaged over, which is
+    also the longest period it can resolve; ``n_segments`` how many.
+    """
+
+    periods: np.ndarray
+    power: np.ndarray
+    segment_s: int
+    n_segments: int
+
+    def dominant(self) -> tuple[float, float]:
+        """The period carrying the most power, and that power's share of the total.
+
+        Only periods the segment holds ``MIN_CYCLES`` of are candidates; the
+        share is of the power over every period, so a normal instance, whose
+        power is spread thin, scores a few percent where an oscillating one
+        scores half or more.
+        """
+        total = float(self.power.sum())
+        if total <= 0 or not len(self.periods):
+            return (np.nan, 0.0)
+        candidates = self.periods <= self.segment_s / MIN_CYCLES
+        if not candidates.any():
+            return (np.nan, 0.0)
+        masked = np.where(candidates, self.power, -np.inf)
+        k = int(np.argmax(masked))
+        return (float(self.periods[k]), float(self.power[k] / total))
+
+    def binned(self, n_bins: int = 160) -> tuple[np.ndarray, np.ndarray]:
+        """The density averaged into ``n_bins`` bins equally spaced in log period, for drawing.
+
+        The estimate has one value per frequency, so the short periods, where
+        nothing of interest lives, own tens of thousands of points and the
+        long ones a handful; drawn against a logarithmic period axis, that is
+        a fuzz of noise at one end. Averaging inside log bins gives every
+        stretch of the axis the same number of points, and the mean of the
+        density inside a bin is the density of that band. Returns the bin
+        centers, in seconds, and the mean power of each bin that holds a
+        value; empty bins are left out.
+        """
+        if len(self.periods) < 2:
+            return self.periods, self.power
+        log = np.log10(self.periods)
+        edges = np.linspace(log[0], log[-1], n_bins + 1)
+        which = np.clip(np.searchsorted(edges, log, side="right") - 1, 0, n_bins - 1)
+        sums = np.bincount(which, weights=self.power, minlength=n_bins)
+        counts = np.bincount(which, minlength=n_bins)
+        filled = counts > 0
+        centers = 10.0 ** (0.5 * (edges[:-1] + edges[1:]))
+        return centers[filled], sums[filled] / counts[filled]
+
+
+@dataclass(frozen=True)
+class Spectrogram:
+    """Power per segment and per period, on a logarithmic grid of periods.
+
+    ``centers`` are the sample positions (seconds from the first sample of the
+    series) at the middle of each segment; ``log_periods`` the grid, ascending
+    log10 of seconds; ``power`` is ``(len(centers), len(log_periods))``, in
+    log10 of the density, so a plot maps it to a color ramp directly.
+    """
+
+    centers: np.ndarray
+    log_periods: np.ndarray
+    power: np.ndarray
+    segment_s: int
+    hop_s: int
+
+
+@dataclass(frozen=True)
+class Histogram:
+    """Counts per bin, stacked by group: the label period each sample was in.
+
+    ``edges`` has one more entry than there are bins. ``stacks`` maps a group
+    key (whatever the caller passed, kept in first-seen order) to its counts;
+    ``left_out`` is how many readings fell outside the plausible range and were
+    not counted.
+    """
+
+    edges: np.ndarray
+    stacks: dict = field(default_factory=dict)
+    left_out: int = 0
+    mean: float = np.nan  # of the readings counted
+    median: float = np.nan
+
+    @property
+    def counts(self) -> np.ndarray:
+        """Every group folded: the plain histogram."""
+        total = np.zeros(len(self.edges) - 1, dtype=int)
+        for counts in self.stacks.values():
+            total += counts
+        return total
+
+    @property
+    def total(self) -> int:
+        return int(self.counts.sum())
+
+
+# -- preparing a series
+
+
+def uniform_series(index, values: np.ndarray, step_s: float = 1.0) -> tuple[np.ndarray, int]:
+    """``values`` laid on the fixed grid its timestamps imply, missing rows as NaN.
+
+    The transforms assume one sample per second; a recording whose index skips
+    a row would otherwise shift everything after the hole. Returns the values
+    on the grid and the whole number of seconds a sample position stands for
+    (``step_s``), so a caller can place sample ``k`` at ``k * step_s`` from the
+    first timestamp.
+    """
+    stamps = np.asarray(index, dtype="datetime64[ns]")
+    values = np.asarray(values, dtype=float)
+    if len(stamps) < 2:
+        return values, int(step_s)
+    step = np.timedelta64(round(step_s * 1e9), "ns")
+    positions = ((stamps - stamps[0]) // step).astype(np.int64)
+    n = int(positions[-1]) + 1
+    if n == len(values) and positions[-1] == len(values) - 1:
+        return values, int(step_s)
+    grid = np.full(n, np.nan)
+    grid[positions] = values
+    return grid, int(step_s)
+
+
+def prepare(values: np.ndarray, bounds: tuple[float, float] | None = None) -> np.ndarray | None:
+    """A copy of ``values`` fit for a transform, or ``None`` when there is not enough to transform.
+
+    Readings outside ``bounds`` are treated as missing; the missing samples are
+    filled by linear interpolation between their neighbours (the ends by the
+    nearest reading); the mean and the linear trend are removed. ``None`` when
+    fewer than ``MIN_COVERAGE`` of the samples, or fewer than ``MIN_SAMPLES``,
+    carry a reading, or when the readings never move, which is a frozen sensor
+    and has no spectrum worth the name.
+    """
+    y = np.asarray(values, dtype=float).copy()
+    if bounds is not None:
+        y[(y < bounds[0]) | (y > bounds[1])] = np.nan
+    valid = ~np.isnan(y)
+    n = len(y)
+    if n < MIN_SAMPLES or valid.sum() < MIN_SAMPLES or valid.mean() < MIN_COVERAGE:
+        return None
+    kept = y[valid]
+    if is_flat(float(kept.min()), float(kept.max())):
+        return None
+    t = np.arange(n, dtype=float)
+    if not valid.all():
+        y = np.interp(t, t[valid], kept)
+    slope, intercept = np.polyfit(t, y, 1)
+    return y - (slope * t + intercept)
+
+
+def _segment_length(n: int, segment_s: int) -> int:
+    """The segment actually used: the one asked for, capped at the series, or the whole series."""
+    if segment_s <= 0 or segment_s >= n:
+        return n
+    return max(int(segment_s), MIN_SAMPLES)
+
+
+def _hop(segment: int, overlap: float) -> int:
+    return max(1, round(segment * (1.0 - overlap)))
+
+
+def _segments(x: np.ndarray, segment: int, hop: int) -> np.ndarray:
+    """The segments of ``x`` as rows, the last one ending at or before the end of ``x``."""
+    n = len(x)
+    if segment >= n:
+        return x[np.newaxis, :]
+    starts = np.arange(0, n - segment + 1, hop)
+    return np.lib.stride_tricks.sliding_window_view(x, segment)[starts]
+
+
+def _densities(segments: np.ndarray, window: str, fs: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """One-sided power spectral densities of the rows of ``segments``, and their frequencies."""
+    length = segments.shape[1]
+    taper = WINDOWS[window](length).astype(float)
+    spectra = np.fft.rfft(segments * taper, axis=1)
+    scale = 1.0 / (fs * float((taper**2).sum()))
+    density = (np.abs(spectra) ** 2) * scale
+    # One-sided: every bin but DC and, for an even length, Nyquist, stands for two.
+    if length % 2 == 0:
+        density[:, 1:-1] *= 2.0
+    else:
+        density[:, 1:] *= 2.0
+    freqs = np.fft.rfftfreq(length, d=1.0 / fs)
+    return freqs, density
+
+
+# -- the spectrum
+
+
+def welch(prepared: np.ndarray, params: TransformParams, fs: float = 1.0) -> Spectrum:
+    """Welch's estimate of the power spectral density of a prepared series, against period.
+
+    With ``params.segment_s`` at zero, or longer than the series, this is the
+    periodogram of the whole series under the window chosen; otherwise the
+    segments overlap by ``params.overlap`` and their densities are averaged.
+    The zero-frequency bin, which the detrending emptied, is dropped, and the
+    result runs from the shortest period up to the segment length.
+    """
+    x = np.asarray(prepared, dtype=float)
+    segment = _segment_length(len(x), params.segment_s)
+    hop = _hop(segment, params.overlap)
+    rows = _segments(x, segment, hop)
+    freqs, density = _densities(rows, params.window, fs)
+    power = density.mean(axis=0)[1:]
+    periods = 1.0 / freqs[1:]
+    order = np.argsort(periods)
+    return Spectrum(periods[order], power[order], int(segment), len(rows))
+
+
+# -- the spectrogram
+
+
+def log_period_grid(shortest: float, longest: float, n: int = 120) -> np.ndarray:
+    """``n`` log10 periods, ascending, from ``shortest`` to ``longest`` seconds."""
+    return np.linspace(np.log10(shortest), np.log10(longest), n)
+
+
+def spectrogram(
+    prepared: np.ndarray, params: TransformParams, n_periods: int = 120, fs: float = 1.0
+) -> Spectrogram | None:
+    """The short-time power of a prepared series, per segment, on a logarithmic grid of periods.
+
+    A segment of zero takes ``DEFAULT_SPECTROGRAM_SHARE`` of the series, since
+    a spectrogram of one segment is a spectrum. ``None`` when the series is
+    too short for two segments. The power is log10 of the density,
+    interpolated from the segment's own frequencies onto the grid, so that an
+    image item, which wants a uniform grid, can draw it against the same
+    logarithmic axis a spectrum uses.
+    """
+    x = np.asarray(prepared, dtype=float)
+    n = len(x)
+    wanted = params.segment_s if params.segment_s > 0 else int(n * DEFAULT_SPECTROGRAM_SHARE)
+    segment = max(min(wanted, n), MIN_SAMPLES)
+    if segment >= n:
+        return None
+    hop = _hop(segment, params.overlap)
+    rows = _segments(x, segment, hop)
+    if len(rows) < 2:
+        return None
+    freqs, density = _densities(rows, params.window, fs)
+    periods = 1.0 / freqs[1:]
+    density = density[:, 1:]
+    grid = log_period_grid(MIN_PERIOD_S / fs, segment / fs, n_periods)
+    log_periods = np.log10(periods)
+    order = np.argsort(log_periods)
+    floor = np.finfo(float).tiny
+    image = np.empty((len(rows), len(grid)))
+    for k, row in enumerate(density):
+        image[k] = np.interp(grid, log_periods[order], np.log10(np.maximum(row[order], floor)))
+    centers = np.arange(len(rows)) * hop / fs + segment / (2.0 * fs)
+    return Spectrogram(centers, grid, image, int(segment), int(hop))
+
+
+# -- the distribution
+
+
+def histogram(
+    values: np.ndarray,
+    groups: np.ndarray | None,
+    bins: int,
+    bounds: tuple[float, float] | None = None,
+    edges: np.ndarray | None = None,
+    keys: list | None = None,
+) -> Histogram | None:
+    """Counts of ``values`` per bin, stacked by the group each sample belongs to.
+
+    ``groups`` is an array of integer codes, one per sample, naming a position
+    in ``keys``, which names the stacks and fixes their order (a stack nothing
+    falls in is left out); a negative code is a sample in no group. With
+    ``groups`` ``None`` there is a single stack under the key ``None``.
+    Readings outside ``bounds`` are left out and counted in ``left_out``;
+    missing values are neither. ``edges`` fixes the bins (for several
+    histograms on one axis); otherwise ``bins`` equal bins span the readings.
+    ``None`` when nothing is left to count.
+    """
+    y = np.asarray(values, dtype=float)
+    valid = ~np.isnan(y)
+    left_out = 0
+    if bounds is not None:
+        outside = valid & ((y < bounds[0]) | (y > bounds[1]))
+        left_out = int(outside.sum())
+        valid &= ~outside
+    if not valid.any():
+        return None
+    kept = y[valid]
+    if edges is None:
+        low, high = float(kept.min()), float(kept.max())
+        if is_flat(low, high):
+            center = 0.5 * (low + high)
+            margin = max(abs(center) * 0.01, 0.5)
+            low, high = center - margin, center + margin
+        edges = np.linspace(low, high, bins + 1)
+    result = Histogram(
+        np.asarray(edges, dtype=float),
+        {},
+        left_out,
+        float(kept.mean()),
+        float(np.median(kept)),
+    )
+    if groups is None:
+        result.stacks[None] = np.histogram(kept, bins=result.edges)[0]
+        return result
+    codes = np.asarray(groups, dtype=np.int64)[valid]
+    if keys is None:
+        raise ValueError("keys must name the groups when groups are given")
+    for code, key in enumerate(keys):
+        chosen = kept[codes == code]
+        if len(chosen):
+            result.stacks[key] = np.histogram(chosen, bins=result.edges)[0]
+    return result
+
+
+# -- reading the axes
+
+
+def format_period(seconds: float) -> str:
+    """``30 s``, ``5 min``, ``1.5 h``, ``2 d``: a period as a person would say it."""
+    if not np.isfinite(seconds):
+        return "—"
+    if seconds < 60:
+        return f"{seconds:.3g} s"
+    if seconds < 3600:
+        return f"{seconds / 60:.3g} min"
+    if seconds < 86400:
+        return f"{seconds / 3600:.3g} h"
+    return f"{seconds / 86400:.3g} d"

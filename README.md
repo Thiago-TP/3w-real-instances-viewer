@@ -231,6 +231,52 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   the stretch that is garbage is seen for what it is; the panel's figures call it out, the header
   of the block names the sensors, and the feature's checkbox wears a ⚠.
 
+**Signal views** — three more views of every feature plot of the instance window, each placed
+where it shares an axis with the trace, and a *Domain* box on the Faults page that draws every
+instance of a fault in one of them. The events are slow: severe slugging on WELL-00014 cycles every
+50 to 90 minutes, flow instability on WELL-00001 every 45, so a six-hour instance holds four to
+seven cycles, and the spectral axis is a **period**, logarithmic, not a frequency that would read
+0.0002 Hz.
+
+![Signal views](docs/assets/signal_views.png)
+
+- **Distribution** is a marginal histogram to the right of the trace, turned on its side so its
+  value axis is the trace's; the bars are stacked by label period in the class colors, so how the
+  event moves the readings is read inside one instance, and a solid line marks the mean, a dashed
+  one the median. A bimodal shape is an oscillation.
+- **Spectrum** is Welch's estimate of the power spectral density against period, both logarithmic,
+  the mean and the linear trend removed first and the missing samples interpolated, readings
+  outside the plausible range left out. It sits beside the spectrogram sharing its period axis, or
+  in its place on its own, the period along the bottom. Its caption gives the **dominant period and
+  its share of the power**: a few percent for a normal instance, half or more for an oscillating
+  one; and one cycle of that period is laid as a bar against the trace, so the claim can be
+  checked against the waves.
+- **Spectrogram** sits under the trace on the shared time axis, the period up the side, the power
+  as a shade of the trace color. It earns its place over merged recordings of days, where the
+  period drifts (90 minutes on 18 September 2017 down to 51 by 28 October on WELL-00014); on a
+  single six-hour instance it resolves periods up to three quarters of an hour only, and says so.
+- The histogram and the spectrum are counted over the **stretch of time on screen**, so zooming is
+  brushing; the spectrogram covers the whole recording. A merged recording is transformed as the
+  single series it is, never stitched from its parts, and its seams are drawn on the spectrogram.
+- **Segment**, **Overlap**, **Window** and **Bins** are the parameters, the same widgets in both
+  windows, on a toolbar row of their own so that a narrow window never hides them. Nothing longer
+  than a segment can be resolved, so the plots grey the periods beyond it; with *whole stretch*
+  ticked the spectrum is the periodogram of everything on screen, the only way to see a slugging
+  line, since a segment of a few minutes holds no cycle of it.
+- On the **Faults page**, *Overlaid* spectra read together where overlaid traces did not, the
+  question being whether their peaks line up; histograms are drawn as a share of each instance's
+  samples, with the mean and the median of each as lines in the grid, and *Normalize per instance*
+  puts different wells on one z-score axis. The hours before and after the onset pick the stretch
+  transformed, so "2 h after" gives the spectrum of the fault alone. **Instances**, at the right
+  end of the toolbar, hides the list of instances to give the plots its width.
+
+![Spectra of every severe slugging instance](docs/assets/faults_spectra.png)
+
+There is deliberately no phase spectrum of a single signal (its phase depends on where the file
+begins and tells nothing the trace does not) and no wavelet transform (the spectrogram covers the
+time-frequency question until it proves too coarse); the cross-spectrum phase between two sensors is
+left for a later version.
+
 The pages are interactive counterparts of stage-0 figures of the `flowml` pipeline: the timelines
 of `faults_per_well.pdf` and `fault_<n>_real_instances.pdf`, the availability page of the cleaning
 rules the pipeline applies before anything is computed, the faults page of the per-fault figures.
@@ -357,6 +403,7 @@ app/
     ├── dataset.py            dataset.ini · instance catalogue and its cache · sensor figures from the footers, from merged recordings and pair by pair · overlaps and joins per well
     ├── availability.py       the three states of a sensor in a bar · groups folded into shares of samples or of bars · the pair map of a scope
     ├── faults.py             where the event begins in an instance · z-scores · the plausible extent of a series
+    ├── spectral.py           the signal views, numpy only: a series prepared · Welch's density and the dominant period · the spectrogram on a log period grid · histograms stacked by label
     ├── timemap.py            gap-compressed (or calendar) time axis in hours
     ├── labels.py             label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts
     ├── theme.py              every color of the light and of the dark mode
@@ -365,19 +412,20 @@ app/
     ├── styling.py            installing a theme into Qt and pyqtgraph · the saved mode
     ├── loading.py            progress dialogs · cache of loaded instances
     ├── items.py              pyqtgraph items: segments, instance bars and their marks, time axis, anchored text
+    ├── spectral_items.py     the parameter widgets, the period axis, the spectrogram ramp and the builders of the signal views
     ├── heatmap.py            the matrix widget of the availability page, its tooltips and the keys of the states
     ├── legend.py             the clickable color key and its flow layout
     ├── help.py               the help window
     ├── overview.py           the timelines page: the grid of well timelines
     ├── availability_page.py  the availability page: rows, sensors, the matrix and what it says
-    ├── faults_page.py        the faults page: the instances of one fault as small multiples, or over one another
-    ├── instance_window.py    the time series of a group of overlapping instances
+    ├── faults_page.py        the faults page: the instances of one fault as small multiples, or over one another, in time, as distributions or as spectra
+    ├── instance_window.py    the time series of a group of overlapping instances, with their distributions, spectra and spectrograms
     ├── window.py             the main window: the pages, the shared toolbar and status bar, the windows they open
     └── app.py                command line and start-up
 ```
 
-The backend (`config`, `dataset`, `availability`, `faults`, `timemap`, `labels`, `theme`,
-`palette`, `help_text`) depends on pandas, numpy and pyarrow only, and reads what the dataset states
+The backend (`config`, `dataset`, `availability`, `faults`, `spectral`, `timemap`, `labels`,
+`theme`, `palette`, `help_text`) depends on pandas, numpy and pyarrow only, and reads what the dataset states
 about itself from `dataset.ini` (event names and labels, which events have a transient, the
 transient offset, variable units, which variables are valve states), with built-in fallbacks for
 3W 2.0.0. The frontend is PySide6 and pyqtgraph. The lane-packing rule that stacks the instances is

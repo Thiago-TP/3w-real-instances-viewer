@@ -1090,7 +1090,9 @@ USAGE = {
         (
             "Tick features on the left to add a plot of them to every instance. The plots of one "
             "feature share their value axis, so the same reading sits at the same height in all of "
-            "them."
+            "them. 'Features' in the toolbar, beside 'Join overlapping instances', hides that "
+            "panel to give the plots its width; the choice survives a join toggled or a new group "
+            "opened."
         ),
         (
             "'Signature' ticks the variables whose joint behavior identifies the event, for the "
@@ -1177,8 +1179,8 @@ USAGE = {
             "the mean and the median of each as lines in the grid, and 'Normalize per instance' "
             "puts those of different wells on one z-score axis. The second row of the toolbar "
             "holds the hours around the onset, the normalization and the parameters of the "
-            "domain chosen; 'Instances' at the right end of the first row hides the list of "
-            "instances to give the plots its width."
+            "domain chosen; 'Features' and 'Instances' at the right end of the first row hide "
+            "the feature panel and the instance list to give the plots its width."
         ),
         (
             "There is no phase spectrum of a single signal: the phase of a transform at a period "

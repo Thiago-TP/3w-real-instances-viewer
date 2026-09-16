@@ -219,7 +219,8 @@ class FaultsPage(QWidget):
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(8, 0, 8, 4)
         body_layout.setSpacing(8)
-        body_layout.addWidget(self._build_feature_panel())
+        self._feature_panel = self._build_feature_panel()
+        body_layout.addWidget(self._feature_panel)
         self._stack = PlotStack()
         self._stack.ci.layout.setVerticalSpacing(4)
         self._stack.ci.setContentsMargins(0, 0, 0, 0)
@@ -307,6 +308,14 @@ class FaultsPage(QWidget):
         self._note = QLabel()
         bar.addWidget(self._note)
         bar.addSeparator()
+        self._show_features = QAction("Features", self)
+        self._show_features.setCheckable(True)
+        self._show_features.setChecked(True)
+        self._show_features.setToolTip(
+            "Show or hide the list of features on the left, to give the plots its width"
+        )
+        self._show_features.toggled.connect(self._on_features_toggled)
+        bar.addAction(self._show_features)
         self._show_instances = QAction("Instances", self)
         self._show_instances.setCheckable(True)
         self._show_instances.setChecked(True)
@@ -371,6 +380,9 @@ class FaultsPage(QWidget):
 
     def _on_instances_toggled(self, shown: bool) -> None:
         self._instance_panel.setVisible(shown)
+
+    def _on_features_toggled(self, shown: bool) -> None:
+        self._feature_panel.setVisible(shown)
 
     def _sync_layout_controls(self) -> None:
         """Show the controls only the grid, or only the domain chosen, has a use for."""
@@ -1060,9 +1072,23 @@ class FaultsPage(QWidget):
                 if self.small_multiples
                 else self._lay_out_overlay(features)
             )
-            stack.setMinimumHeight(max(height, 80))
+            stack.setMinimumHeight(max(height, self._stack_height_floor(), 80))
         stack.resizeEvent(None)
         self._apply_x_range()
+
+    def _stack_height_floor(self) -> int:
+        """The layout's own idea of its minimum height, as a floor under the estimate above.
+
+        The estimate sums a fixed height per row and a flat few pixels per
+        section for the gaps between them, which undercounts a grid with many
+        rows — each real gap between two rows of a pyqtgraph layout costs its
+        own spacing, and a grid of, say, eight rows has seven of them per
+        feature column, not the one or two pixels the flat fudge budgets. The
+        layout already knows its rows and its spacing once they are built, so
+        its own effective size hint is the authority the estimate only
+        approximates; short of it, the scroll area was clipping the last row.
+        """
+        return int(self._stack.ci.layout.effectiveSizeHint(Qt.SizeHint.MinimumSize).height())
 
     def _lay_out_overlay(self, features: list[str]) -> int:
         """One plot per feature, every instance drawn over the others in the color of its well."""

@@ -93,5 +93,7 @@ Raised on exploring the first cut, then acted on:
 - [x] feature: a *whole stretch* tick beside the *Segment* box; a spin box whose zero meant "whole" could not be brought back to it once changed.
 - [x] feature: an *Instances* toggle at the right end of the Faults toolbar that hides the list of instances.
 - [x] bugfix: the transform widgets fell behind the toolbar's overflow chevron on any window narrower than a screen; both windows now give them a second toolbar row, and on the Faults page the hours around the onset and the normalization move there too, so the first row holds only what chooses the question.
+- [x] bugfix: the Faults page grid clipped its last row of plots once enough instances were ticked to need many rows; the height it reserved was a flat few pixels of row-to-row spacing per feature section, which undercounts a grid of many rows (a hundred pixels short over 32 instances at four columns), where the real spacing is paid once per row. It now takes the greater of that estimate and the layout's own effective size hint, as the instance window already did.
+- [x] feature: a *Features* toggle beside *Join overlapping instances* in the instance window's toolbar, and beside *Instances* in the Faults page's, each hiding its own left-hand feature panel to give the plots its width; the choice survives a panel rebuild (a join toggled, a new group opened).
 
 ---

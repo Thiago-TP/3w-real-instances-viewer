@@ -267,8 +267,10 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
   question being whether their peaks line up; histograms are drawn as a share of each instance's
   samples, with the mean and the median of each as lines in the grid, and *Normalize per instance*
   puts different wells on one z-score axis. The hours before and after the onset pick the stretch
-  transformed, so "2 h after" gives the spectrum of the fault alone. **Instances**, at the right
-  end of the toolbar, hides the list of instances to give the plots its width.
+  transformed, so "2 h after" gives the spectrum of the fault alone. **Features** and
+  **Instances**, at the right end of the toolbar, hide the feature panel and the instance list to
+  give the plots their width; the instance window has the same **Features** toggle beside *Join
+  overlapping instances*.
 
 ![Spectra of every severe slugging instance](docs/assets/faults_spectra.png)
 

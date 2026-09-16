@@ -282,6 +282,7 @@ class InstanceWindow(QMainWindow):
         self._joinable = self._plain is not None and len(self._merged.rows) < len(self._plain.rows)
 
         self._checks: dict[str, QCheckBox] = {}
+        self._features_shown = True
         self._views: dict[str, QCheckBox] = {}
         self._plots: dict[tuple[int, str], pg.PlotItem] = {}
         self._time_plots: list[pg.PlotItem] = []  # every plot on the shared time axis
@@ -475,6 +476,15 @@ class InstanceWindow(QMainWindow):
         toolbar.addAction(close)
         toolbar.addSeparator()
         toolbar.addWidget(self._build_join_check())
+        toolbar.addSeparator()
+        self._show_features = QAction("Features", self)
+        self._show_features.setCheckable(True)
+        self._show_features.setChecked(True)
+        self._show_features.setToolTip(
+            "Show or hide the feature panel on the left, to give the plots its width"
+        )
+        self._show_features.toggled.connect(self._on_features_toggled)
+        toolbar.addAction(self._show_features)
         # The views and their parameters get a row of their own: on one row
         # with the rest they fell behind the toolbar's overflow chevron as soon
         # as the window was narrower than a screen.
@@ -508,6 +518,7 @@ class InstanceWindow(QMainWindow):
         body = self._body
         body.setSpacing(8)
         self._panel = self._build_feature_panel()
+        self._panel.setVisible(self._features_shown)
         body.addWidget(self._panel)
         self._layout_widget = PlotStack()
         self._layout_widget.ci.layout.setVerticalSpacing(ROW_SPACING)
@@ -605,6 +616,10 @@ class InstanceWindow(QMainWindow):
         self._join_check.toggled.connect(self.set_joined)
         return self._join_check
 
+    def _on_features_toggled(self, shown: bool) -> None:
+        self._features_shown = shown
+        self._panel.setVisible(shown)
+
     def _swap_feature_panel(self, selected: set[str]) -> None:
         """Build the feature panel again for the blocks now drawn, keeping the selection.
 
@@ -614,6 +629,7 @@ class InstanceWindow(QMainWindow):
         """
         previous, self._checks = self._panel, {}
         self._panel = self._build_feature_panel(selected)
+        self._panel.setVisible(self._features_shown)
         self._body.replaceWidget(previous, self._panel)
         previous.setParent(None)
         previous.deleteLater()

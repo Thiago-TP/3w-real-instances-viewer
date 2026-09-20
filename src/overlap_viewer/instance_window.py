@@ -49,6 +49,7 @@ from overlap_viewer.items import (
 from overlap_viewer.labels import (
     FeatureStats,
     Segment,
+    at_index_unit,
     coverage_counts,
     feature_stats,
     format_delta,
@@ -98,6 +99,7 @@ from overlap_viewer.spectral_items import (
     power_axis,
     power_label,
     set_log_period_axis,
+    shade_implausible,
     shade_unresolved,
     spectrum_grid,
     spectrum_xy,
@@ -1246,8 +1248,12 @@ class InstanceWindow(QMainWindow):
             return slice(0, len(frame))
         x0, x1 = self._master.getViewBox().viewRange()[0]
         t0, t1 = self.timemap.to_time(x0), self.timemap.to_time(x1)
-        start = 0 if t0 is None else int(frame.index.searchsorted(t0, side="left"))
-        stop = len(frame) if t1 is None else int(frame.index.searchsorted(t1, side="right"))
+        start = 0 if t0 is None else int(frame.index.searchsorted(at_index_unit(frame, t0)))
+        stop = (
+            len(frame)
+            if t1 is None
+            else int(frame.index.searchsorted(at_index_unit(frame, t1), side="right"))
+        )
         return slice(start, max(stop, start))
 
     def _refresh_stretch(self) -> None:
@@ -1302,10 +1308,17 @@ class InstanceWindow(QMainWindow):
             if panel.feature in frame.columns
             else np.array([])
         )
+        # With the clamp off the implausible readings are counted rather than
+        # left out, and the stretches of the value axis they fall in are given
+        # the amber ground the viewer marks an impossible reading with
+        # everywhere else. The axis itself already reaches them: it is the
+        # recorded extent, which is why those samples are drawn in amber over
+        # the trace beside this.
+        bounds = panel.bounds if params.clamp else None
         result = None
         if len(values):
             codes, keys = self._sample_groups(panel.position)
-            result = histogram(values, codes[window], params.bins, panel.bounds, keys=keys)
+            result = histogram(values, codes[window], params.bins, bounds, keys=keys)
         panel.histogram = result
         if result is None:
             panel.hist_note.setHtml(
@@ -1322,14 +1335,28 @@ class InstanceWindow(QMainWindow):
         pen = pg.mkPen(colors.plot_background, width=0.5)
         panel.hist_items = add_stacked_bars(plot, result, brushes, horizontal=True, pen=pen)
         panel.hist_items += add_center_lines(plot, result.mean, result.median, horizontal=True)
+        if bounds is None:
+            panel.hist_items += shade_implausible(plot, panel.bounds, "y")
         top = float(result.counts.max())
         plot.getViewBox().setXRange(0, top * 1.05 if top > 0 else 1, padding=0)
         width = format_width(float(result.edges[1] - result.edges[0]), panel.unit)
-        left_out = (
-            f'<br><span style="color:{colors.warning};">⚠ {result.left_out:,} implausible left out</span>'
-            if result.left_out
-            else ""
+        counted = int(
+            ((values < panel.bounds[0]) | (values > panel.bounds[1])).sum() if len(values) else 0
         )
+        if bounds is None:
+            left_out = (
+                f'<br><span style="color:{colors.warning};">⚠ {counted:,} implausible '
+                "counted</span>"
+                if counted
+                else ""
+            )
+        else:
+            left_out = (
+                f'<br><span style="color:{colors.warning};">⚠ {result.left_out:,} implausible '
+                "left out</span>"
+                if result.left_out
+                else ""
+            )
         panel.hist_note.setHtml(
             f'<span style="font-size:8pt; color:{colors.text};">{result.total:,} samples<br>'
             f"{len(result.edges) - 1} bins of {width}<br>"
@@ -1548,7 +1575,10 @@ class InstanceWindow(QMainWindow):
             if stamp < frame.index[0] or stamp > frame.index[-1]:
                 parts.append(f"{title}: outside")
                 continue
-            i = min(int(frame.index.searchsorted(stamp, side="right")) - 1, len(frame) - 1)
+            i = min(
+                int(frame.index.searchsorted(at_index_unit(frame, stamp), side="right")) - 1,
+                len(frame) - 1,
+            )
             klass = frame["class"].iloc[i] if "class" in frame.columns else np.nan
             state = frame["state"].iloc[i] if "state" in frame.columns else np.nan
             klass = float("nan") if pd.isna(klass) else float(klass)

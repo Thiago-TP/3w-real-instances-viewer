@@ -69,8 +69,18 @@ class Theme:
     warning: str  # the mark of a reading no instrument could have produced
 
     # -- the wells of the faults page, where every line is an instance and its
-    # color says which well recorded it; cycled when a fault spans more wells.
-    series: tuple[str, ...]
+    # color says which well recorded it; cycled when the dataset holds more
+    # wells. A well keeps its color whatever fault is on show, so the code has
+    # to be told apart from the fault code at a glance, and the two are drawn
+    # in the same plot: a trace over the shading of its label periods, the
+    # outline of a histogram over stacks in the fault's own hue. They are
+    # therefore separated by register rather than by hue, which ten fault hues
+    # leave no room for. Every well color sits on the far side of every fault
+    # hue in luminance — deeper than all of them here, paler than all of them
+    # in the dark mode — which is the same band the trace color already keeps
+    # to, and for the same reason: a line has to stay legible over every
+    # shading it can be drawn on.
+    wells: tuple[str, ...]
 
     # -- the data
     faults: dict[int, str]
@@ -125,19 +135,21 @@ LIGHT = Theme(
     live="#4f6d8f",
     frozen="#c2c2c2",
     warning="#d4871a",
-    series=(
-        "#1f77b4",
-        "#d62728",
-        "#2ca02c",
-        "#9467bd",
-        "#e6771d",
-        "#17a2b8",
-        "#8c564b",
-        "#c2399a",
-        "#6b8e23",
-        "#4d4d4d",
-        "#0b5394",
-        "#b8860b",
+    # Deeper than every fault hue, so a well line reads as ink over the pale
+    # wash the label periods put behind it.
+    wells=(
+        "#55140d",
+        "#7c0083",
+        "#006200",
+        "#341462",
+        "#003b21",
+        "#900034",
+        "#4827b1",
+        "#5c4100",
+        "#5c2e55",
+        "#aa1476",
+        "#0055cb",
+        "#002790",
     ),
     # One hue per fault-class folder. Normal is green; the faults get distinct
     # categorical colors.
@@ -215,19 +227,21 @@ DARK = Theme(
     live="#7f9fc4",
     frozen="#4a4f57",
     warning="#e8a838",
-    series=(
-        "#6baed6",
-        "#f4736f",
-        "#74c476",
-        "#c3a5e6",
-        "#ffa14f",
-        "#5fd0e0",
-        "#d2a58e",
-        "#f18ccd",
-        "#b5cf5c",
-        "#c0c4ca",
-        "#7fa7e8",
-        "#e6c05a",
+    # The mirror of the light palette: paler than every fault hue, since here
+    # the shading is a step toward the dark ground rather than toward white.
+    wells=(
+        "#69ffc4",
+        "#f8f8aa",
+        "#ffbeb1",
+        "#c4beff",
+        "#b1d8b7",
+        "#6ff2ff",
+        "#bef883",
+        "#ffc4f8",
+        "#ffd183",
+        "#b7ffe5",
+        "#9dd8ff",
+        "#ffa3ff",
     ),
     faults={
         0: "#5cb85c",

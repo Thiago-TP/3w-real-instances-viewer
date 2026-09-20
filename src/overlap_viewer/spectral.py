@@ -57,13 +57,17 @@ class TransformParams:
 
     ``segment_s`` is the segment length in samples (seconds); zero means the
     whole stretch, one segment, a periodogram. ``overlap`` is the share of a
-    segment the next one repeats. ``bins`` is for the histograms.
+    segment the next one repeats. ``bins`` and ``clamp`` are for the
+    histograms: ``clamp`` counts only the readings inside the plausible range,
+    which is how a histogram is normally read, and unticking it lets the
+    garbage be looked at rather than only counted.
     """
 
     segment_s: int = 0
     overlap: float = 0.5
     window: str = "Hann"
     bins: int = 40
+    clamp: bool = True
 
     def __post_init__(self):
         if self.window not in WINDOWS:
@@ -175,6 +179,23 @@ class Histogram:
     @property
     def total(self) -> int:
         return int(self.counts.sum())
+
+    @property
+    def peak(self) -> tuple[float, int]:
+        """The middle of the fullest bin and how many readings fell in it.
+
+        The value the stretch spends most of its time at, which is what a
+        reader looks for first and what the mean and the median both miss when
+        the distribution is skewed or has two humps — and a fault moving the
+        readings makes both. ``(nan, 0)`` when nothing was counted; a tie goes
+        to the lower bin, so the answer does not depend on how the counts were
+        summed.
+        """
+        counts = self.counts
+        if not len(counts) or counts.max() == 0:
+            return (np.nan, 0)
+        k = int(np.argmax(counts))
+        return (float(0.5 * (self.edges[k] + self.edges[k + 1])), int(counts[k]))
 
 
 # -- preparing a series

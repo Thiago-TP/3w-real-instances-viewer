@@ -27,6 +27,7 @@ from overlap_viewer.availability_page import AvailabilityPage
 from overlap_viewer.config import DEFAULT_GAP_HOURS
 from overlap_viewer.dataset import DatasetInfo, ScanCancelled, WellData, split_wells
 from overlap_viewer.faults_page import FaultsPage
+from overlap_viewer.features_page import FeaturesPage
 from overlap_viewer.help import HelpWindow, real_instance_counts
 from overlap_viewer.loading import FrameCache, catalogue_with_progress
 from overlap_viewer.overview import ElidedLabel, TimelinesPage
@@ -36,6 +37,7 @@ HELP_TABS = {
     TimelinesPage: "Fault classes",
     AvailabilityPage: "Data availability",
     FaultsPage: "Fault classes",
+    FeaturesPage: "Variables",
 }
 
 
@@ -66,15 +68,20 @@ class MainWindow(QMainWindow):
         self.timelines = TimelinesPage(info, gap_hours=gap_hours, columns=columns)
         self.availability = AvailabilityPage(info)
         self.faults = FaultsPage(info, self._frames)
+        self.features = FeaturesPage(info, self._frames)
         self._tabs.addTab(self.timelines, "Timelines")
         self._tabs.addTab(self.availability, "Availability")
         self._tabs.addTab(self.faults, "Faults")
+        self._tabs.addTab(self.features, "Features")
         self._tabs.setTabToolTip(0, "Every real instance of every well, laid out in time")
         self._tabs.setTabToolTip(
             1, "What the sensors recorded, per fault class, per well, or instance by instance"
         )
         self._tabs.setTabToolTip(
             2, "Every real instance of one fault, from every well, drawn over the others"
+        )
+        self._tabs.setTabToolTip(
+            3, "One sensor, a section per fault class: what it reads under each event"
         )
         self._tabs.currentChanged.connect(self._on_page_changed)
         self.setCentralWidget(self._tabs)
@@ -106,7 +113,7 @@ class MainWindow(QMainWindow):
 
     @property
     def pages(self) -> tuple:
-        return (self.timelines, self.availability, self.faults)
+        return (self.timelines, self.availability, self.faults, self.features)
 
     def _build_toolbar(self) -> None:
         bar = QToolBar("Viewer")

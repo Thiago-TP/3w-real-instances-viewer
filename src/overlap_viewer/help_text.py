@@ -1025,6 +1025,15 @@ USAGE = {
             "transient, of the steady state, or the start of the recording."
         ),
         (
+            "A well keeps its color whatever fault is on show, so that the same line means the "
+            "same well from one fault to the next; the list on the right is the key. The colors "
+            "are deliberately not the fault hues: since both codes are drawn in one plot — a "
+            "trace over the shading of its label periods, the outline of a histogram over stacks "
+            "in the fault's own hue — the wells are separated from the faults by lightness rather "
+            "than by hue, deeper than every fault hue here and paler than every one of them in "
+            "the dark mode."
+        ),
+        (
             "'Layout' chooses between the two. <b>Small multiples</b>, the default, give every "
             "instance a plot of its own in a grid under a heading per feature, each with its own "
             "value axis and its label periods shaded behind the trace — hatched where nobody "
@@ -1060,6 +1069,47 @@ USAGE = {
             "'Signature' ticks the variables whose joint behavior identifies the event, for the "
             "events the 2.0.0 article illustrates; features no instance of the fault recorded are "
             "greyed out."
+        ),
+    ],
+    "Features page": [
+        (
+            "The faults page fixes a fault and asks what its instances did to each sensor; this "
+            "page turns the question round. Pick a <b>Feature</b> — one sensor — and every fault "
+            "class gets a section, so that what a gauge reads under a hydrate can be set beside "
+            "what the same gauge reads under severe slugging and under normal operation. That is "
+            "the feature-wise grouping of the catalogue: the timelines are the well-wise one and "
+            "the faults page the fault-wise one."
+        ),
+        (
+            "The count beside a sensor's name is how many real instances recorded it; one no "
+            "instance recorded is greyed out. The page opens on the sensor the most instances "
+            "record a <i>moving</i> reading of, which keeps a valve state out of the way of the "
+            "default: nearly every instance carries one, and a valve holding its position for a "
+            "whole recording would open the page on a row of flat lines. <b>Well</b> narrows "
+            "everything to one well, so that the classes are compared at one place and one set of "
+            "instruments."
+        ),
+        (
+            "The classes on the left choose the sections and are the color key; the instances on "
+            "the right choose what is read from disk. The earliest few of each class are ticked "
+            "to start with — of <i>each</i> class, rather than the earliest few overall, or a "
+            "class whose instances all come later would open with nothing in its section — and "
+            "the grid likewise spends its cap per class."
+        ),
+        (
+            "<b>Layout</b> means something particular here. Small multiples give every instance a "
+            "plot of its own in a grid under a heading per class; because the heading already "
+            "names the class, the trace takes the neutral color and the class hues are left to "
+            "the shading of the label periods behind it and to the stacks of a histogram, which "
+            "a line of the same hue would vanish into. <b>Overlaid</b> puts every class on one "
+            "set of axes, each instance in its class's color — which is the view the page exists "
+            "for, and the natural one for histograms and spectra, where the question is whether "
+            "the classes sit at different values or peak at different periods."
+        ),
+        (
+            "'Align at' starts on the start of the recording, the one anchor every class has: "
+            "normal operation has no transient and no steady fault state, so anchoring on either "
+            "leaves every normal instance greyed out."
         ),
     ],
     "Instance window": [
@@ -1164,6 +1214,18 @@ USAGE = {
             "period drifting. 'Bins' is the number of bins of the histograms."
         ),
         (
+            "<b>'Plausible only'</b>, beside 'Bins', is what every histogram counts by default: "
+            "the readings inside the plausible range of the flowml pipeline. It is what a "
+            "histogram is normally asked for — one gauge reporting 10¹² Pa would otherwise put "
+            "every genuine reading into the first bin — but it hides the very thing a data "
+            "review is looking for, so unticking it counts the garbage too, on an amber ground "
+            "beyond the range, with the caption saying how many were counted rather than how "
+            "many were left out. The same tick serves the marginal of an instance window, the "
+            "Distribution domain of the faults page and the features page. Spectra are not "
+            "affected: interpolating over a spike of 10¹² gives the spectrum of the spike, not "
+            "of the signal, so they always mask it."
+        ),
+        (
             "The caption of a spectrum gives its <b>dominant period</b> and the share of the power "
             "in it: a few percent for a normal instance, whose power is spread thin, half or more "
             "for an oscillating one. The period is looked for among those the stretch holds at "
@@ -1176,11 +1238,21 @@ USAGE = {
             "spectrum of the fault alone. Overlaid spectra read together where overlaid traces "
             "did not, since the question is whether their peaks line up; histograms are drawn as "
             "a share of each instance's samples, so instances of different length compare, with "
-            "the mean and the median of each as lines in the grid, and 'Normalize per instance' "
+            "the mean and the median of each as lines in the grid and a triangle over the fullest "
+            "bin of each in either layout — the value that instance spends most of its time at, "
+            "which the mean and the median both miss once a fault has skewed the readings or "
+            "split them in two, and which hovering the curve reads out. 'Normalize per instance' "
             "puts those of different wells on one z-score axis. The second row of the toolbar "
             "holds the hours around the onset, the normalization and the parameters of the "
             "domain chosen; 'Features' and 'Instances' at the right end of the first row hide "
             "the feature panel and the instance list to give the plots its width."
+        ),
+        (
+            "Off the time axis nothing is drawn against the hours from the onset, so 'Align at' "
+            "reaches a distribution or a spectrum only through the stretch those hours cut around "
+            "the anchor. With both hour boxes at 'all' the whole recording is transformed "
+            "whichever moment it is aligned on, and the box is greyed to say so; it comes back as "
+            "soon as hours around the onset are asked for, or the time series is."
         ),
         (
             "There is no phase spectrum of a single signal: the phase of a transform at a period "

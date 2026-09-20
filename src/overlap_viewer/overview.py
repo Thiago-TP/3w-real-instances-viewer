@@ -15,7 +15,7 @@ from functools import partial
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFontMetrics
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -594,7 +594,7 @@ class TimelinesPage(QWidget):
             "labeling conflicts. A bar joined from several fault folders is striped with every "
             "folder's color; clicking it opens the time series of every instance behind it."
         )
-        self._join.toggled.connect(self._build_grid)
+        self._join.toggled.connect(self._on_join_toggled)
         bar.addWidget(self._join)
 
         bar.addSeparator()
@@ -650,7 +650,18 @@ class TimelinesPage(QWidget):
         """The wells as the grid draws them: instance by instance, or joined into bars."""
         return self._joined_wells if self._join.isChecked() else self.wells
 
-    def _build_grid(self, *args) -> None:
+    def _on_join_toggled(self, *args) -> None:
+        """Join or unjoin the instances, keeping the well the reader was looking at in view.
+
+        The same wells, in the same order, are drawn either way — only the bars
+        inside them change — so throwing the reader back to the first well of a
+        long grid loses the very comparison the tick was made to see.
+        """
+        anchor = self._scroll_anchor()
+        self._build_grid(keep_scroll=True)
+        self._restore_scroll(anchor)
+
+    def _build_grid(self, *args, keep_scroll: bool = False) -> None:
         """Build every timeline again, from the instances or from their joins."""
         for cell in self._cells.values():
             self._grid.removeWidget(cell)
@@ -691,7 +702,7 @@ class TimelinesPage(QWidget):
             self._summary = f"{instances}, {n_overlapping} overlapping on {n_over} wells "
         self.summary_changed.emit()
         self._show_key()
-        self._relayout()
+        self._relayout(keep_scroll=keep_scroll)
 
     def summary(self) -> str:
         """One line for the status bar: what the grid is showing."""
@@ -775,7 +786,7 @@ class TimelinesPage(QWidget):
             wells = [well for well in wells if self._fault_filter in well.fault_classes()]
         return sorted(wells, key=SORT_KEYS[self._sort.currentText()])
 
-    def _relayout(self, *args) -> None:
+    def _relayout(self, *args, keep_scroll: bool = False) -> None:
         for cell in self._cells.values():
             self._grid.removeWidget(cell)
             cell.hide()
@@ -794,7 +805,52 @@ class TimelinesPage(QWidget):
         self._grid.setRowStretch(rows, 1)
         self._scroll.setVisible(bool(selected))
         self._empty.setVisible(not selected)
-        self._scroll.verticalScrollBar().setValue(0)
+        if not keep_scroll:
+            # A new set of wells, or a new order for them, is a new page: it
+            # starts at the top. What only redraws the same wells says so.
+            self._scroll.verticalScrollBar().setValue(0)
+
+    # -- keeping the reader's place
+
+    def _scroll_anchor(self) -> tuple[int, float] | None:
+        """The well at the top of the viewport, and how far into its cell the view has scrolled.
+
+        A pixel offset on its own does not survive a rebuild: joining leaves a
+        well fewer stack levels, so its cell is shorter, and an offset measured
+        against the taller one lands past the end of it, on a well further
+        down. The distance is therefore kept as a share of the cell, which
+        means the same place whatever height it comes back at.
+        """
+        tops = sorted((cell.y(), well) for well, cell in self._cells.items() if not cell.isHidden())
+        if not tops:
+            return None
+        y = self._scroll.verticalScrollBar().value()
+        top, well = tops[0]
+        for other_top, other_well in tops:
+            if other_top > y:
+                break
+            top, well = other_top, other_well
+        return well, (y - top) / max(self._cells[well].height(), 1)
+
+    def _restore_scroll(self, anchor: tuple[int, float] | None) -> None:
+        """Bring the anchored well back to the top of the viewport.
+
+        The cells are laid out at once so their positions can be read, but the
+        scroll range only catches up when Qt gets to the layout request the
+        rebuild posted, and a value beyond a stale range would be clamped away;
+        hence the second, exact attempt on the next turn of the event loop.
+        """
+        if anchor is None:
+            return
+        well, share = anchor
+        cell = self._cells.get(well)
+        if cell is None or cell.isHidden():
+            return
+        self._grid.activate()
+        bar = self._scroll.verticalScrollBar()
+        wanted = max(0, round(cell.y() + share * cell.height()))
+        bar.setValue(min(wanted, bar.maximum()))
+        QTimer.singleShot(0, lambda: bar.setValue(min(wanted, bar.maximum())))
 
     def toggle_fault_filter(self, fault_class: int | None) -> None:
         """Show only the wells that recorded ``fault_class``; the same fault again clears it."""

@@ -1,0 +1,1306 @@
+"""What the faults page and the features page both are: sections of instances, in a chosen domain.
+
+The two pages ask the same question with the roles of *fault* and *feature*
+swapped. The faults page fixes a fault class and gives each **feature** a
+section, every instance of that fault drawn inside it in the color of its well;
+the features page fixes a sensor and gives each **fault class** a section, the
+instances of that class drawn inside it in the color of the class. Everything
+between the choice and the picture is the same: the same two layouts, the same
+three domains, the same window of hours around an onset, the same
+normalization, the same transforms, the same hover.
+
+So that machinery lives here, and a page supplies only what differs — which
+instances it reads, what a section is, what color a series takes and what the
+status bar should call it. A *section* is a heading, the sensor its plots draw,
+and the instances that belong in it; the layouts below know nothing else about
+why those instances are together.
+
+Two layouts, chosen in the *Layout* box. **Small multiples** give every
+instance a small plot of its own, laid out in a grid, each with its own value
+axis and its label periods shaded behind the trace: two dozen shapes can be
+read at a glance, and the eye compares them one against the next. **Overlaid**
+draws them all on one set of axes, which says how far apart the levels are and
+little else once there are more than a handful — the reason the grid is the
+default. Each series can be scaled to its own level (a z-score over the
+instance, as Rabelo's pipeline does) so that shapes can be compared where the
+readings themselves cannot.
+"""
+
+from dataclasses import dataclass, field
+from math import ceil
+
+import numpy as np
+import pandas as pd
+import pyqtgraph as pg
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QIcon, QPixmap
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QSpinBox,
+    QToolBar,
+    QWidget,
+)
+
+from overlap_viewer import theme
+from overlap_viewer.config import MAX_SMALL_MULTIPLES, plausible_range
+from overlap_viewer.dataset import DatasetInfo, well_label
+from overlap_viewer.faults import (
+    ALIGNMENT_AXES,
+    ALIGNMENT_NAMES,
+    ALIGNMENTS,
+    plausible_extent,
+    relative_hours,
+    window_mask,
+    zscore,
+)
+from overlap_viewer.instance_window import AXIS_WIDTH, PlotStack
+from overlap_viewer.items import AnchoredText, HeaderLabel, ScrollFriendlyViewBox, SegmentsItem
+from overlap_viewer.labels import (
+    Segment,
+    at_index_unit,
+    column_as_float,
+    label_fault,
+    label_kind,
+    label_name,
+    padded_range,
+    state_name,
+)
+from overlap_viewer.palette import background_color, bar_color, tint, unknown_background
+from overlap_viewer.spectral import Histogram, Spectrum, format_period, histogram, prepare, welch
+from overlap_viewer.spectral_items import (
+    TransformControls,
+    add_center_lines,
+    add_peak_marker,
+    add_spectrum_curve,
+    add_stacked_bars,
+    add_step_outline,
+    caption_for,
+    power_axis,
+    power_label,
+    set_log_period_axis,
+    shade_implausible,
+    shade_unresolved,
+    spectrum_grid,
+    spectrum_xy,
+)
+
+LAYOUTS = ("Small multiples", "Overlaid")
+VALUE_AXES = ("Per instance", "Shared")
+# What every plot shows of the stretch selected: the readings against time, their
+# distribution, or their spectrum.
+DOMAINS = ("time", "distribution", "spectrum")
+DOMAIN_NAMES = {"time": "Time series", "distribution": "Distribution", "spectrum": "Spectrum"}
+HIST_KINDS = ("normal", "transient", "steady", "unknown")
+
+ALIGN_TIP = (
+    "Where the time axis of every instance starts: the first sample labeled with the transient of "
+    "its fault, the first labeled with its steady state, or the first sample of the recording. An "
+    "instance whose labels never reach the state chosen cannot be aligned on it and is left out, "
+    "greyed in the list."
+)
+# Why the box is greyed: off the time axis nothing is drawn against the hours
+# from the onset, and with both hour boxes at *all* the whole recording is
+# transformed whatever the anchor, so the choice has nothing left to change.
+ALIGN_MOOT_TIP = (
+    "The anchor only reaches a distribution or a spectrum through the stretch the hours before "
+    "and after it select, and both hour boxes are at 'all', so the whole recording is transformed "
+    "whichever moment it is aligned on. Ask for hours around the onset, or go back to the time "
+    "series, to choose it again."
+)
+PLOT_PX = 230  # height of one overlaid section plot
+SMALL_PLOT_PX = 132  # height of one small multiple
+SMALL_AXIS_WIDTH = 48  # every small plot keeps this width for its left axis, so the grid aligns
+SMALL_AXIS_PX = 26  # the time axis under the last row of a grid section
+SECTION_PX = 22  # the heading above one section's grid
+LIST_WIDTH = 380  # the instances panel: room for a title, the mark and an onset
+CHIP_PX = 12  # the square of a series color before an instance
+HOVER_PX = 10  # a line closer than this to the pointer, in pixels, is the one named
+FADE_ALPHA = 70  # the other lines while one is named
+
+
+@dataclass
+class Series:
+    """One instance as drawn: which it is, its frame, where it is aligned, its hours and color."""
+
+    well: int
+    position: int  # in the well's instance table
+    title: str
+    frame: pd.DataFrame
+    onset: pd.Timestamp
+    hours: np.ndarray
+    color: str
+    fault: int = 0  # the fault class of the instance itself, for its shading
+    runs: list[Segment] = field(default_factory=list)  # its label runs, for the shading
+
+    @property
+    def label(self) -> str:
+        """What a small plot writes in its corner: the well and the day it was aligned on.
+
+        Short enough to sit inside a plot a seventh of a window wide; the list
+        on the right carries the filename and the hour.
+        """
+        return f"{well_label(self.well)} · {self.onset:%Y-%m-%d}"
+
+
+@dataclass
+class Section:
+    """One heading and the plots under it: a sensor, and the instances drawn of it.
+
+    ``key`` is whatever the page groups by — a sensor name on the faults page,
+    a fault class on the features page — and is only ever passed back to the
+    page that made it. ``members`` are positions in the page's series.
+    """
+
+    key: object
+    feature: str
+    title: str
+    members: list[int]
+
+
+class SeriesPage(QWidget):
+    """Sections of instances, drawn in one of three domains and one of two layouts.
+
+    Subclasses build their own first toolbar row (calling ``add_shared_controls``
+    for the part every page has), own the panels left and right of the plots,
+    and answer four questions: which instances to read (``load_series``), how
+    they group into sections (``sections``), what the status bar should call one
+    of them (``series_headline``) and what its heading should note
+    (``section_note``).
+
+    Signals
+    -------
+    status(str)
+        What the main window's status bar should say: the instance under the
+        pointer and its reading, or the page's hint.
+    summary_changed()
+        The one-line count of what is on show has changed.
+    """
+
+    status = Signal(str)
+    summary_changed = Signal()
+
+    HINT = ""
+
+    def hint(self) -> str:
+        """What the status bar says when the pointer is over nothing in particular."""
+        return self.HINT
+
+    def __init__(self, info: DatasetInfo, parent=None):
+        super().__init__(parent)
+        self.info = info
+        self._series: list[Series] = []
+        self._plots: list[pg.PlotItem] = []
+        self._curves: dict[int, list[pg.PlotDataItem]] = {}  # series index -> its curve per plot
+        self._plot_series: list[
+            list[tuple[int, np.ndarray, np.ndarray]]
+        ] = []  # per plot: (series, x, y)
+        self._spectra_by_plot: dict[tuple[int, int], Spectrum] = {}  # (plot, series) -> spectrum
+        # (plot, series) -> the fullest bin of its histogram and its share, for
+        # the marker on the plot and the reading in the status bar.
+        self._peaks_by_plot: dict[tuple[int, int], tuple[float, float]] = {}
+        self._hover = -1
+        self._x_range: tuple[float, float] | None = None
+
+    # -- construction, the parts every page shares
+
+    def build_body(self, left: QWidget | None, right: QWidget | None) -> QWidget:
+        """The plots, with the page's own panels on either side of them."""
+        body = QWidget()
+        layout = QHBoxLayout(body)
+        layout.setContentsMargins(8, 0, 8, 4)
+        layout.setSpacing(8)
+        if left is not None:
+            layout.addWidget(left)
+        self._stack = PlotStack()
+        self._stack.ci.layout.setVerticalSpacing(4)
+        self._stack.ci.setContentsMargins(0, 0, 0, 0)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setWidget(self._stack)
+        layout.addWidget(self._scroll, 1)
+        if right is not None:
+            layout.addWidget(right)
+        self._stack.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        return body
+
+    def add_alignment_control(self, bar: QToolBar) -> None:
+        """The *Align at* box: the moment every instance's time axis starts from."""
+        bar.addWidget(QLabel(" Align at "))
+        self._align = QComboBox()
+        for key in ALIGNMENTS:
+            self._align.addItem(ALIGNMENT_NAMES[key], key)
+        self._align.setToolTip(ALIGN_TIP)
+        self._align.currentIndexChanged.connect(self._on_alignment_changed)
+        bar.addWidget(self._align)
+
+    def add_shared_controls(self, bar: QToolBar, domain_tip: str, layout_tip: str) -> None:
+        """The *Domain* and *Layout* boxes, and the two controls only the grid uses."""
+        bar.addWidget(QLabel(" Domain "))
+        self._domain = QComboBox()
+        for key in DOMAINS:
+            self._domain.addItem(DOMAIN_NAMES[key], key)
+        self._domain.setToolTip(domain_tip)
+        self._domain.currentIndexChanged.connect(self._on_domain_changed)
+        bar.addWidget(self._domain)
+
+        bar.addSeparator()
+        bar.addWidget(QLabel(" Layout "))
+        self._layout_box = QComboBox()
+        self._layout_box.addItems(list(LAYOUTS))
+        self._layout_box.setToolTip(layout_tip)
+        self._layout_box.currentIndexChanged.connect(self._on_layout_changed)
+        bar.addWidget(self._layout_box)
+        self._grid_only: list = []
+        self._grid_only.append(bar.addWidget(QLabel(" Columns ")))
+        self._columns = QSpinBox()
+        self._columns.setRange(1, 8)
+        self._columns.setValue(3)
+        self._columns.setToolTip("Small plots per row of the grid")
+        self._columns.valueChanged.connect(self._replot)
+        self._grid_only.append(bar.addWidget(self._columns))
+        self._grid_only.append(bar.addWidget(QLabel(" Axis ")))
+        self._value_axis = QComboBox()
+        self._value_axis.addItems(list(VALUE_AXES))
+        self._value_axis.setToolTip(
+            "Per instance, every small plot scales to its own readings, so that every shape is "
+            "legible whatever the level of its well; shared, they all take the same value axis, "
+            "so that the plots say how far apart those levels are — which is the very thing that "
+            "flattens most of them."
+        )
+        self._value_axis.currentIndexChanged.connect(self._replot)
+        self._grid_only.append(bar.addWidget(self._value_axis))
+
+    def build_parameter_bar(self, normalize_tip: str) -> QToolBar:
+        """The second row: the stretch around the onset, the normalization, the transforms.
+
+        On one row with the rest these fell behind the toolbar's overflow
+        chevron as soon as the page was narrower than a screen; the first row
+        now holds what chooses the question, this one what tunes the answer.
+        """
+        bar = QToolBar("Parameters")
+        bar.setMovable(False)
+        bar.addWidget(QLabel(" Show "))
+        self._before = QDoubleSpinBox()
+        self._before.setRange(0.0, 999.0)
+        self._before.setDecimals(1)
+        self._before.setSingleStep(0.5)
+        self._before.setSuffix(" h before")
+        self._before.setSpecialValueText("all before")
+        self._before.setToolTip(
+            "Hours before the onset to draw; at zero, everything recorded before it"
+        )
+        self._before.valueChanged.connect(self._on_window_changed)
+        bar.addWidget(self._before)
+        self._after = QDoubleSpinBox()
+        self._after.setRange(0.0, 999.0)
+        self._after.setDecimals(1)
+        self._after.setSingleStep(0.5)
+        self._after.setSuffix(" h after")
+        self._after.setSpecialValueText("all after")
+        self._after.setToolTip(
+            "Hours after the onset to draw; at zero, everything recorded after it"
+        )
+        self._after.valueChanged.connect(self._on_window_changed)
+        bar.addWidget(self._after)
+
+        bar.addSeparator()
+        self._normalize = QCheckBox("Normalize per instance")
+        self._normalize.setToolTip(normalize_tip)
+        self._normalize.toggled.connect(self._replot)
+        bar.addWidget(self._normalize)
+
+        self._parameter_separator = bar.addSeparator()
+        self._controls = TransformControls()
+        self._controls.changed.connect(self._replot)
+        bar.addWidget(self._controls)
+        self._parameter_bar = bar
+        self._sync_layout_controls()
+        return bar
+
+    # -- the state of the controls
+
+    def _sync_layout_controls(self) -> None:
+        """Show the controls only the grid, or only the domain chosen, has a use for."""
+        for action in self._grid_only:
+            action.setVisible(self.small_multiples)
+        self._controls.show_spectral(self.domain == "spectrum")
+        self._controls.show_bins(self.domain == "distribution")
+        self._parameter_separator.setVisible(self.domain != "time")
+        self._sync_alignment_control()
+
+    def _sync_alignment_control(self) -> None:
+        """Grey *Align at* wherever the anchor has nothing left to change.
+
+        Off the time axis no plot is drawn against the hours from the onset,
+        so the anchor reaches a distribution or a spectrum only through the
+        stretch the hour boxes cut around it; with both of them at *all* the
+        whole recording is transformed whichever moment it is aligned on. The
+        box comes back as soon as a window is asked for, or the time series
+        is.
+        """
+        moot = self.domain != "time" and self._before.value() == 0 and self._after.value() == 0
+        self._align.setEnabled(not moot)
+        self._align.setToolTip(ALIGN_MOOT_TIP if moot else ALIGN_TIP)
+
+    def _on_layout_changed(self, *args) -> None:
+        self._sync_layout_controls()
+        self._replot(keep_range=False)
+
+    def _on_domain_changed(self, *args) -> None:
+        self._sync_layout_controls()
+        self._replot(keep_range=False)
+
+    def _on_window_changed(self, *args) -> None:
+        """The hours around the onset changed: the anchor may have become worth choosing again."""
+        self._sync_alignment_control()
+        self._replot()
+
+    def _on_alignment_changed(self, *args) -> None:
+        self._replot(keep_range=False)
+
+    @property
+    def domain(self) -> str:
+        return str(self._domain.currentData() or "time")
+
+    def set_domain(self, domain: str) -> None:
+        """Show every plot in one domain, as the box would."""
+        if domain not in DOMAINS:
+            raise ValueError(f"unknown domain {domain!r}; expected one of {DOMAINS}")
+        self._domain.setCurrentIndex(DOMAINS.index(domain))
+
+    @property
+    def small_multiples(self) -> bool:
+        return self._layout_box.currentIndex() == 0
+
+    @property
+    def per_instance_axis(self) -> bool:
+        """Whether every small plot scales to its own readings."""
+        return self._value_axis.currentIndex() == 0
+
+    @property
+    def alignment(self) -> str:
+        return str(self._align.currentData())
+
+    @property
+    def clamped(self) -> bool:
+        """Whether the histograms count only the physically plausible readings."""
+        return self._controls.params().clamp
+
+    def bounds_of(self, feature: str) -> tuple[float, float]:
+        """The range a reading of ``feature`` has to be in to be believed."""
+        return plausible_range(self.info.unit(feature))
+
+    def hist_bounds(self, feature: str, normalize: bool) -> tuple[float, float] | None:
+        """What a histogram of ``feature`` leaves out: nothing, unless the clamp is on.
+
+        A normalized series is already scaled over the plausible readings only,
+        so its z-scores have no range of their own to be clipped to.
+        """
+        if normalize or not self.clamped:
+            return None
+        return self.bounds_of(feature)
+
+    # -- appearance
+
+    def _restyle_plots(self) -> None:
+        self._stack.setBackground(theme.current().plot_background)
+
+    # -- what a subclass answers
+
+    def load_series(self) -> list[Series]:
+        """The instances to draw, in the order the page wants them."""
+        raise NotImplementedError
+
+    def sections(self) -> list[Section]:
+        """The headings and, under each, the sensor and the instances drawn."""
+        raise NotImplementedError
+
+    def series_headline(self, series: Series) -> str:
+        """What the status bar calls one instance, before the reading under the pointer."""
+        raise NotImplementedError
+
+    def section_note(self, section: Section, drawn: int, total: int) -> str:
+        """What the heading adds after the counts; empty for nothing."""
+        return "" if drawn == total else f" · {total - drawn} recorded none of it"
+
+    def before_replot(self) -> None:
+        """Called before the plots are laid out again, for a page's own bookkeeping."""
+
+    # -- drawing
+
+    def _replot(self, *args, keep_range: bool = True) -> None:
+        """Read the ticked instances and lay the plots out again.
+
+        The stretch of time on screen is kept, so that ticking a feature or an
+        instance does not throw away a zoom; a new question — a new grouping, a
+        new alignment, a new layout — starts from the whole of it.
+        """
+        if not self.ready():
+            return
+        self.before_replot()
+        if not keep_range:
+            self._x_range = None
+        elif self._plots:
+            self._x_range = tuple(self._plots[0].getViewBox().viewRange()[0])
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            self._series = self.load_series()
+            self._lay_out()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.summary_changed.emit()
+
+    def ready(self) -> bool:
+        """Whether there is a catalogue to draw from yet."""
+        return True
+
+    def drawn_series(self) -> list[Series]:
+        """The instances a layout actually draws: all of them, or as many as a grid can hold."""
+        if self.small_multiples:
+            return self._series[:MAX_SMALL_MULTIPLES]
+        return self._series
+
+    def _drawn_members(self, section: Section) -> list[int]:
+        """The members of one section a layout actually draws."""
+        limit = len(self.drawn_series())
+        return [i for i in section.members if i < limit]
+
+    @staticmethod
+    def chip(color: str) -> QIcon:
+        """The small square of a series color, before an instance in a list."""
+        pixmap = QPixmap(CHIP_PX, CHIP_PX)
+        pixmap.fill(QColor(color))
+        return QIcon(pixmap)
+
+    # -- one series, one feature
+
+    def _xy(
+        self, series: Series, feature: str, normalize: bool, before: float, after: float, bounds
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """The hours and the readings of one series for one feature, inside the window.
+
+        ``None`` when this instance says nothing about the feature, so that a
+        plot is never built for a blank.
+        """
+        frame = series.frame
+        if feature not in frame.columns:
+            return None
+        y = column_as_float(frame, feature)
+        if not (~np.isnan(y)).any():
+            return None
+        if normalize:
+            # Scaled over the plausible readings only, as the pipelines mask the
+            # garbage before they normalize: one absurd level would otherwise
+            # squash every genuine reading into zero.
+            y = zscore(np.where((y >= bounds[0]) & (y <= bounds[1]), y, np.nan))
+            if not (~np.isnan(y)).any():
+                return None
+        mask = window_mask(series.hours, before, after)
+        x, y = series.hours[mask], y[mask]
+        return (x, y) if len(x) else None
+
+    def _window_values(
+        self, series: Series, feature: str, normalize: bool, before: float, after: float, bounds
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """The readings of one series inside the window, with the label kind of each sample.
+
+        What the distribution and the spectrum are computed from: the same
+        stretch the time series draws, in the same order, so that "2 h after
+        the onset" means the same in every domain.
+        """
+        got = self._xy(series, feature, normalize, before, after, bounds)
+        if got is None:
+            return None
+        _x, y = got
+        mask = window_mask(series.hours, before, after)
+        labels = column_as_float(series.frame, "class")[mask]
+        return y, self._kind_codes(labels)
+
+    def _kind_codes(self, labels: np.ndarray) -> np.ndarray:
+        """``label_kind`` of every sample at once, as positions in ``HIST_KINDS``."""
+        offset = self.info.transient_offset
+        transient = (labels > offset) & (labels < 2 * offset)
+        return np.select(
+            [np.isnan(labels), labels == 0, transient],
+            [
+                HIST_KINDS.index("unknown"),
+                HIST_KINDS.index("normal"),
+                HIST_KINDS.index("transient"),
+            ],
+            default=HIST_KINDS.index("steady"),
+        ).astype(np.int64)
+
+    # -- the pieces both layouts build from
+
+    def _new_plot(self, row: int, col: int) -> pg.PlotItem:
+        """A plot in the stack; in the time domain, with the dashed vertical marking the onset."""
+        plot = self._stack.addPlot(row=row, col=col, viewBox=ScrollFriendlyViewBox())
+        plot.hideButtons()
+        plot.getViewBox().disableAutoRange()
+        if self.domain == "time":
+            onset_line = pg.InfiniteLine(
+                pos=0.0,
+                angle=90,
+                movable=False,
+                pen=pg.mkPen(theme.current().gap_line, width=1, style=Qt.PenStyle.DashLine),
+            )
+            onset_line.setZValue(-5)
+            plot.addItem(onset_line, ignoreBounds=True)
+        return plot
+
+    def _bottom_label(self, feature: str, normalize: bool) -> str:
+        """What the horizontal axis of a plot means in the domain chosen."""
+        if self.domain == "time":
+            return ALIGNMENT_AXES[self.alignment]
+        if self.domain == "distribution":
+            unit = "z-score" if normalize else self.info.unit(feature)
+            return f"{feature} [{unit}]" if unit else feature
+        return "period"
+
+    def _prepare_left_axis(
+        self,
+        plot: pg.PlotItem,
+        feature: str,
+        normalize: bool,
+        width: int,
+        values: bool,
+        label: bool,
+    ) -> None:
+        """The left axis in the domain chosen: readings, a share of samples, or a power."""
+        if self.domain == "time":
+            self._prepare_axis(plot, feature, normalize, width, values, label)
+            return
+        axis = plot.getAxis("left")
+        axis.setWidth(width)
+        axis.enableAutoSIPrefix(False)
+        if self.domain == "distribution":
+            if label:
+                plot.setLabel("left", "% of samples")
+        else:
+            unit = "" if normalize else self.info.unit(feature)
+            power_axis(plot, "left", power_label(unit) if label else "")
+        if not values:
+            axis.setStyle(showValues=False)
+
+    def _prepare_bottom_axis(self, plot: pg.PlotItem, feature: str, normalize: bool) -> None:
+        """The bottom axis in the domain chosen; a period axis for the spectrum."""
+        if self.domain == "spectrum":
+            set_log_period_axis(plot, "bottom", "period")
+        else:
+            plot.setLabel("bottom", self._bottom_label(feature, normalize))
+
+    def _prepare_axis(
+        self,
+        plot: pg.PlotItem,
+        feature: str,
+        normalize: bool,
+        width: int,
+        values: bool,
+        label: bool,
+    ) -> None:
+        """Give a plot its left axis: the same width everywhere, so a grid of them lines up."""
+        axis = plot.getAxis("left")
+        axis.setWidth(width)
+        unit = self.info.unit(feature)
+        prefixed = unit == "Pa" and not normalize
+        axis.enableAutoSIPrefix(prefixed)
+        if label:
+            if normalize:
+                plot.setLabel("left", f"{feature} (z-score)")
+            elif prefixed:
+                plot.setLabel("left", feature, units=unit)
+            else:
+                plot.setLabel("left", f"{feature} [{unit}]" if unit else feature)
+        if not values:
+            axis.setStyle(showValues=False)
+
+    # -- one series, one feature, off the time axis
+
+    def _histogram_of(self, values: np.ndarray, codes: np.ndarray, edges, bounds):
+        """The histogram of one series, stacked by label kind."""
+        return histogram(
+            values,
+            codes,
+            self._controls.params().bins,
+            bounds,
+            edges=edges,
+            keys=list(HIST_KINDS),
+        )
+
+    def _spectrum_of(self, values: np.ndarray, bounds, normalize) -> Spectrum | None:
+        # The spectrum always masks the implausible: interpolating over a spike
+        # of 10¹² is the spectrum of the spike, not of the signal. The clamp is
+        # about what a histogram counts, which is a question of reading.
+        prepared = prepare(values, None if normalize else bounds)
+        if prepared is None:
+            return None
+        return welch(prepared, self._controls.params())
+
+    def _kind_brush(self, kind: str, fault: int):
+        """The fill of one stack of a histogram: the class color of the label period."""
+        if kind == "unknown":
+            return pg.mkBrush(tint(unknown_background(), 0.7))
+        return pg.mkBrush(bar_color(fault, kind))
+
+    def _mark_peak(self, plot: pg.PlotItem, index: int, result: Histogram, color: str) -> None:
+        """Put the triangle over the fullest bin of one instance's histogram, and remember it.
+
+        The height is the share of the instance's samples, which is what the
+        value axis carries, so that instances of different length are marked at
+        the height their own curve reaches.
+        """
+        value, count = result.peak
+        if not count:
+            return
+        share = 100.0 * count / result.total
+        self._peaks_by_plot[(id(plot), index)] = (value, share)
+        add_peak_marker(plot, value, share, color, horizontal=False)
+
+    def _shade_outside(self, plot: pg.PlotItem, feature: str, normalize: bool) -> None:
+        """With the clamp off, say where the believable readings end."""
+        if self.clamped or normalize or self.domain != "distribution":
+            return
+        shade_implausible(plot, self.bounds_of(feature), "x")
+
+    def _add_curve(self, plot: pg.PlotItem, series: Series, x, y) -> pg.PlotDataItem:
+        curve = pg.PlotDataItem(x, y, pen=pg.mkPen(series.color, width=1.2), connect="finite")
+        plot.addItem(curve)
+        curve.setDownsampling(auto=True, method="peak")
+        curve.setClipToView(True)
+        return curve
+
+    def _add_shading(self, plot: pg.PlotItem, series: Series) -> None:
+        """Shade the label periods of one instance behind its trace, as the instance window does.
+
+        The runs come from the catalogue, so this costs no reading; with them a
+        small plot says not only what the readings did but how long the experts
+        left the instance in normal operation, in the transient and in the
+        steady state, which is the very thing that differs from well to well.
+
+        A stretch nobody labeled is hatched rather than merely grey, as it is
+        everywhere else in the viewer: two of the fault hues are themselves
+        grey, and a texture says *nothing is known here* where one more shade
+        would just read as one more class.
+        """
+        if not series.runs:
+            return
+        offset = self.info.transient_offset
+        x0, x1, fills, unknown = [], [], [], []
+        for run in series.runs:
+            start, end = relative_hours([run.start, run.end], series.onset)
+            kind = label_kind(run.value, offset)
+            if kind == "unknown":
+                fill = tint(unknown_background(), 0.7)
+            else:
+                hue = label_fault(run.value, offset)
+                fill = background_color(series.fault if hue is None else hue, kind)
+            x0.append(float(start))
+            x1.append(float(end))
+            fills.append(fill)
+            unknown.append(kind == "unknown")
+        shading = SegmentsItem(z=-10)
+        shading.set_segments(x0, x1, fills, hatched=unknown)
+        plot.addItem(shading, ignoreBounds=True)
+
+    # -- laying out
+
+    def _lay_out(self) -> None:
+        stack = self._stack
+        stack.clear()
+        self._plots = []
+        self._curves = {i: [] for i in range(len(self._series))}
+        self._plot_series = []
+        self._spectra_by_plot = {}
+        self._peaks_by_plot = {}
+        self._hover = -1
+        sections = self.sections()
+        if not sections:
+            label = stack.addLabel(
+                self.empty_message(),
+                row=0,
+                col=0,
+                color=theme.current().faint,
+            )
+            label.setMinimumHeight(60)
+            stack.setMinimumHeight(80)
+        else:
+            height = (
+                self._lay_out_grid(sections)
+                if self.small_multiples
+                else self._lay_out_overlay(sections)
+            )
+            stack.setMinimumHeight(max(height, self._stack_height_floor(), 80))
+        stack.resizeEvent(None)
+        self._apply_x_range()
+
+    def empty_message(self) -> str:
+        return "Nothing to draw."
+
+    def _stack_height_floor(self) -> int:
+        """The layout's own idea of its minimum height, as a floor under the estimate above.
+
+        The estimate sums a fixed height per row and a flat few pixels per
+        section for the gaps between them, which undercounts a grid with many
+        rows — each real gap between two rows of a pyqtgraph layout costs its
+        own spacing, and a grid of, say, eight rows has seven of them per
+        section, not the one or two pixels the flat fudge budgets. The layout
+        already knows its rows and its spacing once they are built, so its own
+        effective size hint is the authority the estimate only approximates;
+        short of it, the scroll area was clipping the last row.
+        """
+        return int(self._stack.ci.layout.effectiveSizeHint(Qt.SizeHint.MinimumSize).height())
+
+    def _lay_out_overlay(self, sections: list[Section]) -> int:
+        """One plot per section, every instance in it drawn over the others."""
+        if self.domain != "time":
+            return self._lay_out_overlay_off_time(sections)
+        normalize = self._normalize.isChecked()
+        before, after = self._before.value(), self._after.value()
+        master = None
+        for row, section in enumerate(sections):
+            feature = section.feature
+            plot = self._new_plot(row, 0)
+            plot.setMinimumHeight(PLOT_PX)
+            self._stack.ci.layout.setRowStretchFactor(row, 1)
+            self._prepare_axis(plot, feature, normalize, AXIS_WIDTH, values=True, label=True)
+            if row == len(sections) - 1:
+                plot.setLabel("bottom", ALIGNMENT_AXES[self.alignment])
+            else:
+                plot.hideAxis("bottom")
+            if master is None:
+                master = plot
+            else:
+                plot.setXLink(master)
+
+            drawn: list[tuple[int, np.ndarray, np.ndarray]] = []
+            lows, highs = [], []
+            bounds = self.bounds_of(feature)
+            for i in self._drawn_members(section):
+                series = self._series[i]
+                got = self._xy(series, feature, normalize, before, after, bounds)
+                if got is None:
+                    continue
+                x, y = got
+                self._curves[i].append(self._add_curve(plot, series, x, y))
+                drawn.append((i, x, y))
+                low, high = plausible_extent(y, (-np.inf, np.inf) if normalize else bounds)
+                if not np.isnan(low):
+                    lows.append(low)
+                    highs.append(high)
+            if lows:
+                plot.getViewBox().setYRange(*padded_range(min(lows), max(highs)), padding=0)
+            self._plots.append(plot)
+            self._plot_series.append(drawn)
+        return PLOT_PX * len(sections) + 8
+
+    def _lay_out_grid(self, sections: list[Section]) -> int:
+        """One small plot per instance, in a grid under a heading per section."""
+        if self.domain != "time":
+            return self._lay_out_grid_off_time(sections)
+        normalize = self._normalize.isChecked()
+        before, after = self._before.value(), self._after.value()
+        columns = self._columns.value()
+        per_instance = self.per_instance_axis
+        master = None
+        row, height = 0, 0
+        for index, section in enumerate(sections):
+            feature = section.feature
+            members = self._drawn_members(section)
+            bounds = self.bounds_of(feature)
+            prepared: list[tuple[int, np.ndarray, np.ndarray]] = []
+            lows, highs = [], []
+            for i in members:
+                got = self._xy(self._series[i], feature, normalize, before, after, bounds)
+                if got is None:
+                    continue
+                x, y = got
+                prepared.append((i, x, y))
+                low, high = plausible_extent(y, (-np.inf, np.inf) if normalize else bounds)
+                if not np.isnan(low):
+                    lows.append(low)
+                    highs.append(high)
+            shared = padded_range(min(lows), max(highs)) if lows else None
+
+            heading = HeaderLabel(justify="left")
+            heading.setText(self._section_html(section, normalize, len(prepared), len(members)))
+            heading.setFixedHeight(SECTION_PX)
+            self._stack.addItem(heading, row=row, col=0, colspan=columns)
+            row += 1
+            height += SECTION_PX
+            if not prepared:
+                continue
+
+            n_rows = ceil(len(prepared) / columns)
+            section_master = None
+            for k, (i, x, y) in enumerate(prepared):
+                place, column = divmod(k, columns)
+                bottom = place == n_rows - 1
+                plot = self._new_plot(row + place, column)
+                plot.setMinimumHeight(SMALL_PLOT_PX + (SMALL_AXIS_PX if bottom else 0))
+                self._prepare_axis(
+                    plot,
+                    feature,
+                    normalize,
+                    SMALL_AXIS_WIDTH,
+                    values=per_instance or column == 0,
+                    label=False,
+                )
+                if not bottom:
+                    plot.hideAxis("bottom")
+                elif index == len(sections) - 1:
+                    plot.setLabel("bottom", ALIGNMENT_AXES[self.alignment])
+                if master is None:
+                    master = plot
+                else:
+                    plot.setXLink(master)
+                if per_instance:
+                    low, high = plausible_extent(y, (-np.inf, np.inf) if normalize else bounds)
+                    plot.getViewBox().setYRange(*padded_range(low, high), padding=0)
+                elif section_master is None:
+                    section_master = plot
+                    if shared is not None:
+                        plot.getViewBox().setYRange(*shared, padding=0)
+                else:
+                    plot.setYLink(section_master)
+                self._add_shading(plot, self._series[i])
+                self._curves[i].append(self._add_curve(plot, self._series[i], x, y))
+                self._corner_label(plot, self._series[i])
+                self._plots.append(plot)
+                self._plot_series.append([(i, x, y)])
+            row += n_rows
+            height += n_rows * SMALL_PLOT_PX + SMALL_AXIS_PX + 8
+        return height + 8
+
+    def _corner_label(self, plot: pg.PlotItem, series: Series) -> None:
+        AnchoredText(
+            f'<span style="font-size:7pt; color:{series.color};">{series.label}</span>',
+            frac=(0.02, 0.98),
+            anchor=(0, 0),
+            boxed=False,
+        ).attach(plot)
+
+    # -- the other domains: the same two layouts, drawing what the transforms give
+
+    def _prepared_off_time(self, sections: list[Section]):
+        """Per section, what every drawn member gives in the domain chosen: values or a spectrum."""
+        normalize = self._normalize.isChecked()
+        before, after = self._before.value(), self._after.value()
+        prepared: dict[object, list] = {}
+        for section in sections:
+            feature = section.feature
+            bounds = self.bounds_of(feature)
+            hist_bounds = self.hist_bounds(feature, normalize)
+            rows = []
+            for i in self._drawn_members(section):
+                got = self._window_values(
+                    self._series[i], feature, normalize, before, after, bounds
+                )
+                if got is None:
+                    continue
+                values, codes = got
+                if self.domain == "spectrum":
+                    spectrum = self._spectrum_of(values, bounds, normalize)
+                    if spectrum is not None:
+                        rows.append((i, spectrum))
+                else:
+                    inside = values[~np.isnan(values)]
+                    if hist_bounds is not None:
+                        inside = inside[(inside >= hist_bounds[0]) & (inside <= hist_bounds[1])]
+                    if len(inside):
+                        rows.append((i, values, codes, float(inside.min()), float(inside.max())))
+            prepared[section.key] = rows
+        return prepared, normalize
+
+    def _shared_edges(self, rows) -> np.ndarray | None:
+        """Bins spanning the readings of every series of one section, for histograms on one axis."""
+        if not rows:
+            return None
+        low = min(row[3] for row in rows)
+        high = max(row[4] for row in rows)
+        if high <= low:
+            margin = max(abs(low) * 0.01, 0.5)
+            low, high = low - margin, high + margin
+        return np.linspace(low, high, self._controls.params().bins + 1)
+
+    @staticmethod
+    def _log_period_span(spectra: list[Spectrum]) -> tuple[float, float]:
+        lows = [np.log10(s.periods[0]) for s in spectra]
+        highs = [np.log10(s.periods[-1]) for s in spectra]
+        return (float(min(lows)), float(max(highs)))
+
+    def _shade_fixed_segment(self, plot: pg.PlotItem) -> None:
+        """Grey the periods a fixed segment cannot resolve; a whole-stretch one differs per instance."""
+        segment = self._controls.params().segment_s
+        if segment > 0:
+            shade_unresolved(plot, float(np.log10(segment)), "x")
+
+    def _lay_out_overlay_off_time(self, sections: list[Section]) -> int:
+        """One plot per section: the histograms, or the spectra, of every instance over one another."""
+        prepared, normalize = self._prepared_off_time(sections)
+        for row, section in enumerate(sections):
+            feature = section.feature
+            rows = prepared[section.key]
+            plot = self._new_plot(row, 0)
+            plot.setMinimumHeight(PLOT_PX)
+            self._stack.ci.layout.setRowStretchFactor(row, 1)
+            self._prepare_left_axis(plot, feature, normalize, AXIS_WIDTH, values=True, label=True)
+            self._prepare_bottom_axis(plot, feature, normalize)
+            if self.domain == "spectrum":
+                spectrum_grid(plot)
+            drawn: list[tuple[int, np.ndarray, np.ndarray]] = []
+            vb = plot.getViewBox()
+            if self.domain == "distribution":
+                edges = self._shared_edges(rows)
+                self._shade_outside(plot, feature, normalize)
+                top = 0.0
+                for i, values, codes, _low, _high in rows:
+                    result = self._histogram_of(
+                        values, codes, edges, self.hist_bounds(feature, normalize)
+                    )
+                    if result is None or result.total == 0:
+                        continue
+                    share = 100.0 * result.counts / result.total
+                    top = max(top, float(share.max()))
+                    curve = add_step_outline(
+                        plot, result.edges, share, pg.mkPen(self._series[i].color, width=1.2)
+                    )
+                    self._curves[i].append(curve)
+                    self._mark_peak(plot, i, result, self._series[i].color)
+                    centers = 0.5 * (result.edges[:-1] + result.edges[1:])
+                    drawn.append((i, centers, share))
+                if edges is not None:
+                    vb.setXRange(float(edges[0]), float(edges[-1]), padding=0.02)
+                    vb.setYRange(0.0, top * 1.05 if top > 0 else 1.0, padding=0)
+            else:
+                spectra = [spectrum for _i, spectrum in rows]
+                lows, highs = [], []
+                for i, spectrum in rows:
+                    curve = add_spectrum_curve(
+                        plot, spectrum, pg.mkPen(self._series[i].color, width=1.2), "x"
+                    )
+                    self._curves[i].append(curve)
+                    self._spectra_by_plot[(id(plot), i)] = spectrum
+                    x, y = spectrum_xy(spectrum, "x")
+                    drawn.append((i, x, y))
+                    finite = y[np.isfinite(y)]
+                    if len(finite):
+                        lows.append(float(finite.min()))
+                        highs.append(float(finite.max()))
+                if spectra:
+                    vb.setXRange(*self._log_period_span(spectra), padding=0.01)
+                    low, high = min(lows), max(highs)
+                    pad = 0.05 * max(high - low, 1.0)
+                    vb.setYRange(low - pad, high + pad, padding=0)
+                    self._shade_fixed_segment(plot)
+            if not drawn:
+                AnchoredText(
+                    f'<span style="font-size:10pt; color:{theme.current().faint};">nothing to '
+                    "transform: too few readings, or flat signals</span>",
+                    frac=(0.5, 0.5),
+                    anchor=(0.5, 0.5),
+                    boxed=False,
+                ).attach(plot)
+            self._plots.append(plot)
+            self._plot_series.append(drawn)
+        return PLOT_PX * len(sections) + 8
+
+    def _lay_out_grid_off_time(self, sections: list[Section]) -> int:
+        """One small plot per instance: its histogram stacked by label period, or its spectrum."""
+        prepared, normalize = self._prepared_off_time(sections)
+        columns = self._columns.value()
+        per_instance = self.per_instance_axis
+        colors = theme.current()
+        row, height = 0, 0
+        for index, section in enumerate(sections):
+            feature = section.feature
+            rows = prepared[section.key]
+            hist_bounds = self.hist_bounds(feature, normalize)
+            heading = HeaderLabel(justify="left")
+            heading.setText(
+                self._section_html(section, normalize, len(rows), len(self._drawn_members(section)))
+            )
+            heading.setFixedHeight(SECTION_PX)
+            self._stack.addItem(heading, row=row, col=0, colspan=columns)
+            row += 1
+            height += SECTION_PX
+            if not rows:
+                continue
+            edges = self._shared_edges(rows) if self.domain == "distribution" else None
+            span = (
+                self._log_period_span([s for _i, s in rows]) if self.domain == "spectrum" else None
+            )
+            n_rows = ceil(len(rows) / columns)
+            section_master = None
+            for k, entry in enumerate(rows):
+                i = entry[0]
+                place, column = divmod(k, columns)
+                bottom = place == n_rows - 1
+                plot = self._new_plot(row + place, column)
+                plot.setMinimumHeight(SMALL_PLOT_PX + (SMALL_AXIS_PX if bottom else 0))
+                self._prepare_left_axis(
+                    plot,
+                    feature,
+                    normalize,
+                    SMALL_AXIS_WIDTH,
+                    values=per_instance or column == 0,
+                    label=False,
+                )
+                if bottom:
+                    self._prepare_bottom_axis(plot, feature, normalize)
+                    if index != len(sections) - 1:
+                        plot.setLabel("bottom", "")
+                elif self.domain == "spectrum":
+                    set_log_period_axis(plot, "bottom", "")
+                    plot.hideAxis("bottom")
+                else:
+                    plot.hideAxis("bottom")
+                vb = plot.getViewBox()
+                if self.domain == "distribution":
+                    _i, values, codes, _low, _high = entry
+                    result = self._histogram_of(
+                        values, codes, None if per_instance else edges, hist_bounds
+                    )
+                    if result is None or result.total == 0:
+                        continue
+                    self._shade_outside(plot, feature, normalize)
+                    shares = {
+                        kind: 100.0 * counts / result.total
+                        for kind, counts in result.stacks.items()
+                    }
+                    scaled = Histogram(
+                        result.edges, shares, result.left_out, result.mean, result.median
+                    )
+                    brushes = {
+                        kind: self._kind_brush(kind, self._series[i].fault) for kind in shares
+                    }
+                    add_stacked_bars(
+                        plot,
+                        scaled,
+                        brushes,
+                        horizontal=False,
+                        pen=pg.mkPen(colors.plot_background, width=0.5),
+                    )
+                    total_share = 100.0 * result.counts / result.total
+                    outline = add_step_outline(
+                        plot, result.edges, total_share, pg.mkPen(self._series[i].color, width=1.2)
+                    )
+                    self._curves[i].append(outline)
+                    add_center_lines(plot, result.mean, result.median, horizontal=False)
+                    self._mark_peak(plot, i, result, self._series[i].color)
+                    centers = 0.5 * (result.edges[:-1] + result.edges[1:])
+                    x, y = centers, total_share
+                    vb.setXRange(float(result.edges[0]), float(result.edges[-1]), padding=0.02)
+                    top = float(total_share.max()) * 1.05 if total_share.max() > 0 else 1.0
+                else:
+                    _i, spectrum = entry
+                    curve = add_spectrum_curve(
+                        plot, spectrum, pg.mkPen(self._series[i].color, width=1.2), "x"
+                    )
+                    self._curves[i].append(curve)
+                    self._spectra_by_plot[(id(plot), i)] = spectrum
+                    spectrum_grid(plot)
+                    x, y = spectrum_xy(spectrum, "x")
+                    vb.setXRange(*span, padding=0.01)
+                    finite = y[np.isfinite(y)]
+                    low_p, high_p = (
+                        (float(finite.min()), float(finite.max())) if len(finite) else (0, 1)
+                    )
+                    pad = 0.05 * max(high_p - low_p, 1.0)
+                    top = (low_p - pad, high_p + pad)
+                    self._shade_fixed_segment(plot)
+                if per_instance:
+                    if self.domain == "distribution":
+                        vb.setYRange(0.0, top, padding=0)
+                    else:
+                        vb.setYRange(*top, padding=0)
+                elif section_master is None:
+                    section_master = plot
+                    if self.domain == "distribution":
+                        vb.setYRange(0.0, top, padding=0)
+                    else:
+                        vb.setYRange(*top, padding=0)
+                else:
+                    plot.setYLink(section_master)
+                    if not per_instance:
+                        # Widen the section's shared axis to hold this plot too.
+                        master_vb = section_master.getViewBox()
+                        (lo, hi) = master_vb.viewRange()[1]
+                        if self.domain == "distribution":
+                            master_vb.setYRange(0.0, max(hi, top), padding=0)
+                        else:
+                            master_vb.setYRange(min(lo, top[0]), max(hi, top[1]), padding=0)
+                self._corner_label(plot, self._series[i])
+                self._plots.append(plot)
+                self._plot_series.append([(i, x, y)])
+            row += n_rows
+            height += n_rows * SMALL_PLOT_PX + SMALL_AXIS_PX + 8
+        return height + 8
+
+    def _section_html(self, section: Section, normalize: bool, drawn: int, total: int) -> str:
+        """The heading above one section's grid: what it groups, and what its axes mean."""
+        colors = theme.current()
+        unit = "z-score" if normalize else self.info.unit(section.feature)
+        head = f"{section.title}" + (f" [{unit}]" if unit else "")
+        what = {
+            "time": "value axis",
+            "distribution": "share axis",
+            "spectrum": "power axis",
+        }[self.domain]
+        axis = f"each plot on its own {what}" if self.per_instance_axis else f"all on one {what}"
+        if self.domain == "spectrum":
+            axis += ", the period along the bottom"
+        return (
+            f'<span style="font-size:10pt; color:{colors.text};"><b>{head}</b></span>'
+            f'<span style="font-size:8pt; color:{colors.muted};">&nbsp;&nbsp;'
+            f"{drawn} of {total} instances · {axis}{self.section_note(section, drawn, total)}</span>"
+        )
+
+    def _apply_x_range(self) -> None:
+        if not self._plots or self.domain != "time":
+            return  # off the time axis every plot set its own range as it was built
+        vb = self._plots[0].getViewBox()
+        if self._x_range is not None:
+            vb.setXRange(*self._x_range, padding=0)
+            return
+        xs = [x for drawn in self._plot_series for _, x, _ in drawn]
+        if not xs:
+            return
+        starts = [float(x.min()) for x in xs]
+        ends = [float(x.max()) for x in xs]
+        if self.small_multiples and len(xs) >= 4:
+            # One instance recorded for days would leave every other plot of the
+            # grid a sliver against its left edge, so the grid opens on the
+            # stretch most of the instances cover and leaves the rest to the
+            # zoom; the hours boxes set it outright.
+            lo, hi = float(np.quantile(starts, 0.1)), float(np.quantile(ends, 0.9))
+        else:
+            lo, hi = min(starts), max(ends)
+        before, after = self._before.value(), self._after.value()
+        if before > 0:
+            lo = max(lo, -before)
+        if after > 0:
+            hi = min(hi, after)
+        if hi <= lo:
+            hi = lo + 1.0
+        vb.setXRange(lo, hi, padding=0.02)
+
+    def reset_views(self) -> None:
+        self._x_range = None
+        self._apply_x_range()
+
+    # -- pointer
+
+    def _highlight(self, index: int) -> None:
+        """Bring one series to the front by width and fade the others; ``-1`` restores them all."""
+        if index == self._hover:
+            return
+        self._hover = index
+        for i, curves in self._curves.items():
+            if i >= len(self._series):
+                continue
+            color = QColor(self._series[i].color)
+            if index >= 0 and i != index:
+                color.setAlpha(FADE_ALPHA)
+                pen = pg.mkPen(color, width=1.0)
+            elif i == index:
+                pen = pg.mkPen(color, width=2.6)
+            else:
+                pen = pg.mkPen(color, width=1.2)
+            for curve in curves:
+                curve.setPen(pen)
+
+    def _on_mouse_moved(self, pos) -> None:
+        """Name the line nearest the pointer, and read the instance at that moment."""
+        for plot, drawn in zip(self._plots, self._plot_series):
+            vb = plot.getViewBox()
+            if not vb.sceneBoundingRect().contains(pos):
+                continue
+            point = vb.mapSceneToView(pos)
+            px_per_y = vb.viewPixelSize()[1]
+            best, best_px = -1, HOVER_PX
+            for i, x, y in drawn:
+                k = int(np.searchsorted(x, point.x()))
+                candidates = [j for j in (k - 1, k) if 0 <= j < len(x)]
+                for j in candidates:
+                    if np.isnan(y[j]):
+                        continue
+                    distance = abs(y[j] - point.y()) / px_per_y if px_per_y > 0 else np.inf
+                    if distance < best_px:
+                        best, best_px = i, distance
+            self._highlight(best)
+            if best >= 0:
+                self.status.emit(self._describe(best, plot, float(point.x())))
+            else:
+                self.status.emit(self.hint())
+            return
+        self._highlight(-1)
+        self.status.emit(self.hint())
+
+    def _describe(self, index: int, plot, hours: float | None) -> str:
+        series = self._series[index]
+        parts = [self.series_headline(series)]
+        if hours is not None and self.domain != "time":
+            # Off the time axis the coordinate under the pointer is a reading or a period.
+            x = hours
+            drawn = next(
+                (entry for k, entry in enumerate(self._plot_series) if self._plots[k] is plot), []
+            )
+            own = next((row for row in drawn if row[0] == index), None)
+            if self.domain == "distribution":
+                if own is not None:
+                    _i, centers, share = own
+                    k = int(np.clip(np.searchsorted(centers, x), 0, len(centers) - 1))
+                    parts.append(f"around {centers[k]:.4g}: {share[k]:.1f} % of its samples")
+                peak = self._peaks_by_plot.get((id(plot), index))
+                if peak is not None:
+                    parts.append(f"peak ▾ at {peak[0]:.4g}, {peak[1]:.1f} % of its samples")
+            else:
+                if own is not None:
+                    _i, log_periods, log_power = own
+                    k = int(np.clip(np.searchsorted(log_periods, x), 0, len(log_periods) - 1))
+                    parts.append(
+                        f"period {format_period(10 ** log_periods[k])}: power {10 ** log_power[k]:.3g}"
+                    )
+                    spectrum = self._spectra_by_plot.get((id(plot), index))
+                    if spectrum is not None:
+                        parts.append(caption_for(spectrum, ""))
+            return " · ".join(parts)
+        if hours is not None:
+            stamp = series.onset + pd.Timedelta(hours=hours)
+            frame = series.frame
+            parts.append(f"t = {hours:+.2f} h ({stamp:%Y-%m-%d %H:%M:%S})")
+            if frame.index[0] <= stamp <= frame.index[-1]:
+                i = min(
+                    int(frame.index.searchsorted(at_index_unit(frame, stamp), side="right")) - 1,
+                    len(frame) - 1,
+                )
+                klass = column_as_float(frame, "class")[i]
+                state = column_as_float(frame, "state")[i]
+                parts.append(
+                    f"{label_name(klass, self.info.fault_names, self.info.transient_offset)} / "
+                    f"{state_name(state)}"
+                )
+                readings = []
+                for feature in self.read_out_features():
+                    if feature in frame.columns:
+                        value = column_as_float(frame, feature)[i]
+                        unit = self.info.unit(feature)
+                        readings.append(
+                            f"{feature} = {'—' if np.isnan(value) else f'{value:.4g} {unit}'.rstrip()}"
+                        )
+                if readings:
+                    parts.append(", ".join(readings))
+            else:
+                parts.append("outside the instance")
+        return " · ".join(parts)
+
+    def read_out_features(self) -> list[str]:
+        """The sensors the status bar reads at the moment under the pointer."""
+        return sorted({section.feature for section in self.sections()})

@@ -184,6 +184,34 @@ starts where the event begins in each instance, so that the shapes line up whate
   on its example figure of the event, for the five events it illustrates, and features no instance
   of the fault recorded are greyed out.
 
+**Features page** — the faults page with the question turned round. It fixes one **sensor** and
+gives every fault class a section, so that what a gauge reads under a hydrate can be set beside
+what the same gauge reads under severe slugging and under normal operation. That is the
+feature-wise grouping of the catalogue: the timelines are the well-wise one and the faults page the
+fault-wise one. The two pages share their whole drawing machinery — the same two layouts, the same
+three domains, the same window of hours around an onset, the same transforms and the same hover.
+
+- **Feature** picks the sensor; the count beside a name is how many real instances recorded it, and
+  one no instance recorded is greyed out. The page opens on the sensor the most instances record a
+  *moving* reading of, which keeps a valve state out of the way of the default: nearly every
+  instance carries one, and a valve holding its position for a whole recording would open the page
+  on a row of flat lines whose spectrum declines every one of them. **Well** narrows everything to
+  one well, so the classes are compared at one place and one set of instruments.
+- **The classes on the left** choose the sections and are the color key; **the instances on the
+  right** choose what is read from disk. The earliest few of *each* class are ticked to start with,
+  rather than the earliest few overall — a class whose instances all come later would otherwise
+  open with nothing in its section — and the grid spends its cap per class for the same reason.
+- **Layout** means something particular here. *Small multiples* give every instance a plot of its
+  own in a grid under a heading per class; because the heading already names the class, the trace
+  takes the neutral color and the class hues are left to the shading of the label periods behind it
+  and to the stacks of a histogram, which a line of the same hue would vanish into. **Overlaid**
+  puts every class on one set of axes, each instance in its class's color — the view the page
+  exists for, and the natural one for histograms and spectra, where the question is whether the
+  classes sit at different values or peak at different periods.
+- **Align at** starts on the start of the recording, the one anchor every class has: normal
+  operation has no transient and no steady fault state, so anchoring on either would silently leave
+  every normal instance out.
+
 **Instance window** — one block per bar of the timelines, stacked chronologically on a shared time
 axis, so the overlapping stretches line up vertically. Each block has a header line, the well
 operational status (`state`) and the label (`class`) as thin bands, then one plot per selected
@@ -258,6 +286,14 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
 - The histogram and the spectrum are counted over the **stretch of time on screen**, so zooming is
   brushing; the spectrogram covers the whole recording. A merged recording is transformed as the
   single series it is, never stitched from its parts, and its seams are drawn on the spectrogram.
+- **Plausible only**, beside *Bins*, is what every histogram counts by default: the readings inside
+  the plausible range of the `flowml` pipeline. That is what a histogram is normally asked for —
+  one gauge reporting 10¹² Pa would otherwise put every genuine reading into the first bin — but it
+  hides the very thing a data review is looking for, so unticking it counts the garbage too, on an
+  amber ground beyond the range, with the caption saying how many were *counted* rather than how
+  many were left out. The one tick serves the marginal of an instance window, the *Distribution*
+  domain of the faults page and the features page. Spectra are not affected: interpolating over a
+  spike of 10¹² gives the spectrum of the spike, not of the signal, so they always mask it.
 - **Segment**, **Overlap**, **Window** and **Bins** are the parameters, the same widgets in both
   windows, on a toolbar row of their own so that a narrow window never hides them. Nothing longer
   than a segment can be resolved, so the plots grey the periods beyond it; with *whole stretch*
@@ -265,9 +301,15 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
   line, since a segment of a few minutes holds no cycle of it.
 - On the **Faults page**, *Overlaid* spectra read together where overlaid traces did not, the
   question being whether their peaks line up; histograms are drawn as a share of each instance's
-  samples, with the mean and the median of each as lines in the grid, and *Normalize per instance*
+  samples, with the mean and the median of each as lines in the grid and a **triangle over the
+  fullest bin** of each in either layout — the value that instance spends most of its time at,
+  which the mean and the median both miss once a fault has skewed the readings or split them in
+  two, and which hovering the curve reads out — and *Normalize per instance*
   puts different wells on one z-score axis. The hours before and after the onset pick the stretch
-  transformed, so "2 h after" gives the spectrum of the fault alone. **Features** and
+  transformed, so "2 h after" gives the spectrum of the fault alone — which is the only way *Align
+  at* reaches these two domains, nothing being drawn against the hours from the onset, so with both
+  hour boxes at *all* the box is greyed and comes back as soon as hours are asked for. **Features**
+  and
   **Instances**, at the right end of the toolbar, hide the feature panel and the instance list to
   give the plots their width; the instance window has the same **Features** toggle beside *Join
   overlapping instances*.
@@ -334,7 +376,15 @@ fault classes and of the instances carry the fault hue of the timelines as a sma
 their label.
 
 The faults page colors its lines by **well**, from a palette of twelve that no other page uses,
-cycled when a fault spans more wells; the list on the right is its key.
+fixed per well over the whole catalogue so that a well keeps its color from one fault to the next,
+and cycled only when the dataset holds more wells than the palette has colors; the list on the
+right is its key. The well code and the fault code are drawn in the same plot — a trace over the
+shading of its label periods, the outline of a histogram over stacks in the fault's own hue — so
+they are separated by **register** rather than by hue, which ten fault hues leave no room for.
+Every well color sits on the far side of every fault hue in luminance: deeper than all of them in
+the light mode, paler than all of them in the dark one. That is the band the trace color already
+keeps to, and for the same reason — a line has to stay legible over every shading it can be drawn
+on.
 
 ## Light and dark
 
@@ -407,7 +457,7 @@ app/
     ├── faults.py             where the event begins in an instance · z-scores · the plausible extent of a series
     ├── spectral.py           the signal views, numpy only: a series prepared · Welch's density and the dominant period · the spectrogram on a log period grid · histograms stacked by label
     ├── timemap.py            gap-compressed (or calendar) time axis in hours
-    ├── labels.py             label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts
+    ├── labels.py             label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts · a stamp at a frame's own resolution
     ├── theme.py              every color of the light and of the dark mode
     ├── palette.py            fault hues tinted by reach · legend entries
     ├── help_text.py          what the help says: classes, variables, statuses, availability, usage
@@ -420,7 +470,9 @@ app/
     ├── help.py               the help window
     ├── overview.py           the timelines page: the grid of well timelines
     ├── availability_page.py  the availability page: rows, sensors, the matrix and what it says
-    ├── faults_page.py        the faults page: the instances of one fault as small multiples, or over one another, in time, as distributions or as spectra
+    ├── series_page.py        what the faults and features pages both are: sections of instances, in a chosen domain and layout
+    ├── faults_page.py        the faults page: one fault, a section per feature, its instances in the color of their well
+    ├── features_page.py      the features page: one sensor, a section per fault class, the classes over one another when overlaid
     ├── instance_window.py    the time series of a group of overlapping instances, with their distributions, spectra and spectrograms
     ├── window.py             the main window: the pages, the shared toolbar and status bar, the windows they open
     └── app.py                command line and start-up
@@ -444,7 +496,9 @@ figure 1. The availability page follows the availability map of
 and section 2.3.2 of the
 [final graduation project of G. Rabelo de Oliveira](docs/papers/final_graduation_project_gabriel_rabelo.pdf),
 counting the real instances only, and every one of them; its pair matrix is his figure 2.10, and
-the faults page makes the comparison of his figures 2.5 and 2.6 for every fault.
+the faults page makes the comparison of his figures 2.5 and 2.6 for every fault. The features page
+is the same machinery with the roles of fault and feature swapped, and its overlaid histogram of
+one sensor per class is the closest the viewer comes to the diagonal of a pairplot.
 
 ## Development
 

@@ -315,6 +315,25 @@ def feature_stats(df: pd.DataFrame, sensor: str) -> FeatureStats:
     return FeatureStats(len(valid), len(df), float(valid.min()), float(valid.max()))
 
 
+def at_index_unit(frame: pd.DataFrame, stamp: pd.Timestamp) -> pd.Timestamp:
+    """``stamp`` at the resolution ``frame`` is indexed in, rounding if it has to.
+
+    A 3W file read back through pyarrow is indexed in **microseconds**, while a
+    timestamp worked out from the edge of a view, or from an axis coordinate,
+    carries nanoseconds. Pandas will not search a microsecond index with such a
+    value: rather than move the boundary silently it raises ``Cannot losslessly
+    convert units``. The boundary here is a view edge or a pointer position,
+    where a nanosecond either way is nothing, so it is rounded and the search
+    goes ahead.
+    """
+    # ``DatetimeIndex.dtype`` is a plain numpy ``M8[us]``, which carries no
+    # ``unit`` attribute; the index itself is what knows its resolution.
+    unit = getattr(frame.index, "unit", None)
+    if unit is None or not isinstance(stamp, pd.Timestamp):
+        return stamp
+    return stamp.as_unit(unit, round_ok=True)
+
+
 def is_flat(low: float, high: float) -> bool:
     """Whether a range is below ``FLAT_SPAN`` of its own level."""
     center = 0.5 * (low + high)

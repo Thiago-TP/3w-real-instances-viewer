@@ -65,9 +65,16 @@ MIN_TICK_PX = 34  # two ticks of a period axis closer than this collide
 DEFAULT_SEGMENT_MIN = 45  # what the box offers once the whole stretch is unticked
 DEFAULT_OVERLAP_PCT = 50  # Rabelo's windows overlap by half
 DEFAULT_BINS = 40
+CLAMP_TIP = (
+    "Count only the readings inside the plausible range of the flowml pipeline, which is what a "
+    "histogram is normally asked for: one gauge reporting a pressure of 10¹² Pa would otherwise "
+    "put every genuine reading into the first bin. Untick to see the garbage itself — the bins "
+    "beyond the range sit on an amber ground, and the axis opens to hold them."
+)
 GRID_ALPHA = 0.25  # the grid of a spectrum plot, faint enough to stay behind the curve
 PEAK_BAR_PX = 14  # how far under the top of a trace plot the bar of one peak period sits
 PEAK_FONT_PX = 10
+PEAK_MARKER_PX = 9  # the triangle over the fullest bin of a histogram
 
 
 class TransformControls(QWidget):
@@ -130,6 +137,9 @@ class TransformControls(QWidget):
         self._bins.setRange(5, 200)
         self._bins.setValue(DEFAULT_BINS)
         self._bins.setToolTip("How many bins the histograms count the readings into")
+        self._clamp = QCheckBox("Plausible only")
+        self._clamp.setChecked(True)
+        self._clamp.setToolTip(CLAMP_TIP)
 
         for widget in (
             self._segment_label,
@@ -141,6 +151,7 @@ class TransformControls(QWidget):
             self._window,
             self._bins_label,
             self._bins,
+            self._clamp,
         ):
             layout.addWidget(widget)
         self._whole.toggled.connect(self._on_whole_toggled)
@@ -148,6 +159,7 @@ class TransformControls(QWidget):
         self._overlap.valueChanged.connect(self.changed)
         self._window.currentIndexChanged.connect(self.changed)
         self._bins.valueChanged.connect(self.changed)
+        self._clamp.toggled.connect(self.changed)
 
     def _on_whole_toggled(self, checked: bool) -> None:
         self._segment.setEnabled(not checked)
@@ -159,6 +171,7 @@ class TransformControls(QWidget):
             overlap=self._overlap.value() / 100.0,
             window=self._window.currentText(),
             bins=self._bins.value(),
+            clamp=self._clamp.isChecked(),
         )
 
     def show_spectral(self, shown: bool) -> None:
@@ -179,9 +192,10 @@ class TransformControls(QWidget):
         return self._segment.isVisibleTo(self) or self._bins.isVisibleTo(self)
 
     def show_bins(self, shown: bool) -> None:
-        """Show the bins widget only while a distribution view is on."""
+        """Show the bins widget and the plausibility clamp only while a distribution view is on."""
         self._bins_label.setVisible(shown)
         self._bins.setVisible(shown)
+        self._clamp.setVisible(shown)
 
 
 class LogPeriodAxisItem(pg.AxisItem):
@@ -246,6 +260,38 @@ def add_center_lines(
         plot.addItem(line, ignoreBounds=True)
         items.append(line)
     return items
+
+
+def add_peak_marker(
+    plot: pg.PlotItem, value: float, height: float, color: str, horizontal: bool
+) -> pg.ScatterPlotItem | None:
+    """Mark the fullest bin of a histogram with a triangle over its top, in the series color.
+
+    The mean and the median are already lines across the plot, and a third
+    grey stroke would be one more to tell apart where what is wanted is the
+    single place the readings pile up. A triangle sitting on the tallest bar
+    says it without crossing anything, and in the color of the series it
+    belongs to, so that a grid or an overlay of several says at a glance
+    whether their peaks line up.
+
+    ``horizontal`` for a marginal histogram, whose values run up the side and
+    whose bars grow to the right; the marker then points at them from the
+    right. ``None`` when there is no peak to mark.
+    """
+    if not np.isfinite(value) or not np.isfinite(height):
+        return None
+    x, y = (height, value) if horizontal else (value, height)
+    item = pg.ScatterPlotItem(
+        [x],
+        [y],
+        symbol="t3" if horizontal else "t",  # pointing back at the bar
+        size=PEAK_MARKER_PX,
+        brush=pg.mkBrush(color),
+        pen=pg.mkPen(theme.current().plot_background, width=0.8),
+    )
+    item.setZValue(14)  # over the bars and the center lines
+    plot.addItem(item, ignoreBounds=True)
+    return item
 
 
 class PeriodMarker(pg.GraphicsObject):
@@ -431,6 +477,42 @@ def shade_unresolved(
     region.setZValue(-8)
     plot.addItem(region, ignoreBounds=True)
     return region
+
+
+def implausible_brush() -> QColor:
+    """The ground under the readings no instrument could have produced: the warning amber, faint."""
+    color = QColor(theme.current().warning)
+    color.setAlpha(45)
+    return color
+
+
+def shade_implausible(
+    plot: pg.PlotItem, bounds: tuple[float, float], value_axis: str
+) -> list[pg.LinearRegionItem]:
+    """Put an amber ground under the stretches of the value axis outside the plausible range.
+
+    Only wanted where a histogram has been told to count the implausible
+    readings too: the bins beyond the range are then real counts of real
+    samples, and what they need is not to be hidden but to be marked as what
+    they are, in the amber this viewer uses for an impossible reading
+    everywhere else.
+    """
+    orientation = "vertical" if value_axis == "x" else "horizontal"
+    brush = pg.mkBrush(implausible_brush())
+    items = []
+    span = max(abs(bounds[1] - bounds[0]), 1.0) * 1e3
+    for low, high in ((bounds[0] - span, bounds[0]), (bounds[1], bounds[1] + span)):
+        region = pg.LinearRegionItem(
+            values=(low, high),
+            orientation=orientation,
+            brush=brush,
+            pen=pg.mkPen(None),
+            movable=False,
+        )
+        region.setZValue(-9)
+        plot.addItem(region, ignoreBounds=True)
+        items.append(region)
+    return items
 
 
 def add_spectrogram_image(

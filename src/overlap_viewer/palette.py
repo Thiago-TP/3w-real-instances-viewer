@@ -50,6 +50,12 @@ def fault_color(fault_class: int) -> str:
     return colors.faults.get(fault_class, colors.fallback_fault)
 
 
+def luminance(color: str) -> float:
+    """How bright a color reads, on the usual weighting of its channels."""
+    r, g, b = to_rgb(color)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
 def bar_strength(fault_class: int, reach: str) -> float:
     """Tint strength of an instance bar.
 

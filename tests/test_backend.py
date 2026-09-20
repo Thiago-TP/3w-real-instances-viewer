@@ -69,6 +69,7 @@ from overlap_viewer.palette import (
     fault_color,
     legend_entries,
     legend_key,
+    luminance,
     state_color,
     text_color,
     tint,
@@ -552,7 +553,7 @@ def test_every_theme_colors_everything_the_viewer_can_draw():
         assert set(colors.swatches) == {"plain", "highlight", "selected", "dimmed"}
         assert colors.name in theme.MODES
         # The wells of the faults page get a dozen colors before any repeats.
-        assert len(colors.series) >= 12 and len(set(colors.series)) == len(colors.series)
+        assert len(colors.wells) >= 12 and len(set(colors.wells)) == len(colors.wells)
         assert len({colors.live, colors.frozen, colors.warning, colors.block_fill}) == 4
 
 
@@ -591,11 +592,6 @@ def test_the_tint_ladder_runs_away_from_the_ground_of_each_mode():
             assert text_color(fill) != fill
 
 
-def luminance(color: str) -> float:
-    r, g, b = to_rgb(color)
-    return 0.299 * r + 0.587 * g + 0.114 * b
-
-
 def test_the_trace_stays_visible_over_every_shading_it_can_sit_on():
     """A time series line keeps to one side of the ladder, the far side of it."""
     for mode in theme.MODES[1:]:
@@ -607,6 +603,29 @@ def test_the_trace_stays_visible_over_every_shading_it_can_sit_on():
             assert max(gaps) < -0.3, mode  # the trace sits above every shading
         else:
             assert min(gaps) > 0.3, mode  # and below every one of them here
+
+
+def test_the_well_code_is_never_read_as_the_fault_code():
+    """The faults page draws both codes in one plot, so they are kept in different registers."""
+    for mode in theme.MODES[1:]:
+        colors = theme.use(mode)
+        hues = set(colors.faults.values())
+        assert not hues & set(colors.wells), mode  # never the very same color
+        grounds = [background_color(f, r) for f in DEFAULT_FAULT_NAMES for r in REACH_TINTS]
+        grounds += [tint(unknown_background(), 0.7), colors.plot_background]
+        for well in colors.wells:
+            here = luminance(well)
+            # A well line stays on the far side of every fault hue, so the two
+            # codes cannot be confused whatever hue a well happens to be given.
+            gaps = [here - luminance(hue) for hue in hues]
+            # And, like the trace, on the far side of every shading it can sit on.
+            over = [here - luminance(ground) for ground in grounds]
+            if colors.dark:
+                assert min(gaps) > 0, (mode, well)
+                assert min(over) > 0.25, (mode, well)
+            else:
+                assert max(gaps) < 0, (mode, well)
+                assert max(over) < -0.25, (mode, well)
 
 
 def test_the_coverage_band_only_speaks_where_instances_pile_up():
@@ -1268,3 +1287,69 @@ def test_histogram_stacks_by_group_and_leaves_the_implausible_out():
     flat = histogram(np.full(10, 7.0), None, bins=4)
     assert flat is not None and flat.edges[0] < 7.0 < flat.edges[-1]
     assert histogram(np.array([np.nan, np.nan]), None, bins=3) is None
+
+
+def test_a_histogram_counts_the_implausible_only_when_it_is_asked_to():
+    """The clamp is what a histogram leaves out, and unticking it must let the garbage in."""
+    from overlap_viewer.spectral import TransformParams, histogram
+
+    assert TransformParams().clamp is True  # what a histogram is normally asked for
+    values = np.concatenate([np.linspace(1.0e7, 1.1e7, 200), np.full(20, 9.0e12)])
+    bounds = plausible_range("Pa")
+    clamped = histogram(values, None, bins=20, bounds=bounds)
+    assert clamped is not None
+    assert clamped.total == 200 and clamped.left_out == 20
+    assert clamped.edges[-1] <= bounds[1]
+    # Unclamped, the caller passes no bounds at all: every reading is counted
+    # and the bins have to stretch over the garbage to hold them.
+    loose = histogram(values, None, bins=20, bounds=None)
+    assert loose is not None
+    assert loose.total == 220 and loose.left_out == 0
+    assert loose.edges[-1] == pytest.approx(9.0e12)
+    # The fullest bin is still the one the real readings fall in — though with
+    # the bins now stretched over five orders of magnitude it is a wide one,
+    # which is the honest picture of a sensor reporting 10¹² Pa.
+    assert loose.peak[1] == 200
+    assert loose.edges[0] <= bounds[1] <= loose.edges[1]
+
+
+def test_a_stamp_is_searched_at_the_resolution_the_frame_is_indexed_in():
+    """A view edge carries nanoseconds; a 3W file read through pyarrow is indexed in microseconds."""
+    from overlap_viewer.labels import at_index_unit
+
+    index = pd.date_range(T0, periods=5, freq="1s", name="timestamp").as_unit("us")
+    frame = pd.DataFrame({"P-PDG": np.arange(5.0)}, index=index)
+    edge = T0 + pd.Timedelta("2s") + pd.Timedelta(1, unit="ns")
+    # Pandas would rather raise than move the boundary silently.
+    with pytest.raises(ValueError):
+        frame.index.searchsorted(edge)
+    rounded = at_index_unit(frame, edge)
+    assert rounded.unit == "us"
+    # The odd nanosecond is rounded away, which for a view edge is nothing.
+    assert rounded == T0 + pd.Timedelta("2s")
+    assert int(frame.index.searchsorted(rounded)) == 2
+    # A frame already indexed in nanoseconds is left alone, and so is a non-timestamp.
+    nanos = pd.DataFrame({"P-PDG": np.arange(5.0)}, index=index.as_unit("ns"))
+    assert at_index_unit(nanos, edge) == edge
+    assert at_index_unit(frame, None) is None
+
+
+def test_the_peak_of_a_histogram_is_the_fullest_bin():
+    """What the readings pile up at, which a skewed or two-humped shape hides from the mean."""
+    from overlap_viewer.spectral import Histogram, histogram
+
+    # A long tail to the right: the mean is dragged out of the hump, the peak is not.
+    values = np.concatenate([np.full(40, 1.0), np.linspace(2.0, 11.0, 10)])
+    result = histogram(values, None, bins=10)
+    assert result is not None
+    peak, count = result.peak
+    assert count == 40 and peak == pytest.approx(1.5, abs=0.6)
+    assert result.mean > peak  # the tail moved the mean off the hump
+    # Two humps: the peak names the taller one, where the median sits between them.
+    two = histogram(np.concatenate([np.full(30, 0.0), np.full(20, 10.0)]), None, bins=11)
+    assert two is not None and two.peak[0] == pytest.approx(0.0, abs=0.5)
+    assert two.peak[1] == 30
+    # A tie goes to the lower bin, so the answer does not depend on the summing.
+    tie = histogram(np.array([0.0, 0.0, 1.0, 1.0]), None, bins=2)
+    assert tie is not None and tie.peak == (pytest.approx(0.25), 2)
+    assert Histogram(np.array([0.0, 1.0])).peak == (pytest.approx(np.nan, nan_ok=True), 0)

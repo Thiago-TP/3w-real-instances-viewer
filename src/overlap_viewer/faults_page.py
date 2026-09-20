@@ -8,9 +8,9 @@ starts where the event begins in each instance, so that the shapes line up
 whatever the clock said.
 
 One fault is chosen and each **feature** gets a section; the drawing itself —
-the two layouts, the three domains, the window of hours around the onset, the
-normalization, the transforms, the hover — is ``series_page.SeriesPage``, which
-the features page is the other half of.
+the three arrangements, the three domains, the window of hours around the
+onset, the normalization, the transforms, the hover — is
+``series_page.SeriesPage``, which the features page is the other half of.
 
 The instances of a fault are listed on the right with the moment each can be
 aligned on, read from the label runs the catalogue keeps, so the list costs
@@ -63,8 +63,9 @@ DOMAIN_TIP = (
     "What every plot shows of the stretch the hours before and after the onset select. Time "
     "series: the readings against the hours from the onset. Distribution: a histogram of the "
     "readings, as a share of the instance's samples so that instances of different length "
-    "compare, stacked by label period in the class colors in the grid, outlined in the color of "
-    "the well when overlaid, with a triangle over the fullest bin of each — the value that "
+    "compare, stacked by label period in the class colors in the grid, an area in the color of "
+    "the well when overlaid, so that where two distributions sit on top of one another reads as "
+    "a deeper shade, with a triangle over the fullest bin of each — the value that "
     "instance spends most of its time at, which the mean and the median both miss once the fault "
     "has skewed the readings or split them in two. Spectrum: the power spectral density against "
     "the period, both "
@@ -76,7 +77,10 @@ LAYOUT_TIP = (
     "Small multiples give every instance a plot of its own, laid out in a grid, so that "
     "two dozen shapes can be read one against the next; overlaid draws them all on one "
     "set of axes, which says how far apart their levels are and little else once there "
-    "are more than a handful."
+    "are more than a handful. Overall pools every instance drawn into a single curve per "
+    "feature, across every well at once: one distribution, or one spectrum, of the fault as the "
+    "dataset holds it. It is offered off the time axis only — instances cut from different "
+    "months have no common clock to be drawn against."
 )
 NORMALIZE_TIP = (
     "Scale every series to its own level: each reading as standard deviations from the "
@@ -542,6 +546,11 @@ class FaultsPage(SeriesPage):
         self._refresh_instance_note()
 
     def load_series(self) -> list[Series]:
+        # Pooled, every instance of the fault becomes one curve per feature,
+        # drawn across every well at once: the color of a well would then be
+        # the color of whichever well happened to come first, so the curve
+        # takes the neutral trace color instead.
+        neutral = theme.current().trace if self.overall else None
         series = []
         for entry in self._checked_instances():
             data = self._wells[entry["well"]]
@@ -555,7 +564,7 @@ class FaultsPage(SeriesPage):
                     frame,
                     entry["onset"],
                     hours,
-                    entry["color"],
+                    neutral or entry["color"],
                     int(entry["fault"]),
                     entry.get("runs", []),
                 )
@@ -578,6 +587,9 @@ class FaultsPage(SeriesPage):
             f"{well_label(series.well)} · {series.title} · {self.info.fault_name(self.fault)} · "
             f"{ALIGNMENT_NAMES[self.alignment].lower()} at {series.onset:%Y-%m-%d %H:%M:%S}"
         )
+
+    def pool_headline(self, members: list[int]) -> str:
+        return f"{self.info.fault_name(self.fault)} · {super().pool_headline(members)}"
 
     def summary(self) -> str:
         """One line for the status bar: the fault, its instances and wells, how many are drawn."""

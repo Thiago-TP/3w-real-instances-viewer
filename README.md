@@ -259,9 +259,9 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   the stretch that is garbage is seen for what it is; the panel's figures call it out, the header
   of the block names the sensors, and the feature's checkbox wears a ⚠.
 
-**Signal views** — three more views of every feature plot of the instance window, each placed
-where it shares an axis with the trace, and a *Domain* box on the Faults page that draws every
-instance of a fault in one of them. The events are slow: severe slugging on WELL-00014 cycles every
+**Signal views** — two more views of every feature plot of the instance window, each placed
+where it shares an axis with the trace, and a *Domain* box on the Faults and Features pages that
+draws every instance in one of them. The events are slow: severe slugging on WELL-00014 cycles every
 50 to 90 minutes, flow instability on WELL-00001 every 45, so a six-hour instance holds four to
 seven cycles, and the spectral axis is a **period**, logarithmic, not a frequency that would read
 0.0002 Hz.
@@ -274,18 +274,17 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
   one the median. A bimodal shape is an oscillation.
 - **Spectrum** is Welch's estimate of the power spectral density against period, both logarithmic,
   the mean and the linear trend removed first and the missing samples interpolated, readings
-  outside the plausible range left out. It sits beside the spectrogram sharing its period axis, or
-  in its place on its own, the period along the bottom. Its caption gives the **dominant period and
-  its share of the power**: a few percent for a normal instance, half or more for an oscillating
-  one; and one cycle of that period is laid as a bar against the trace, so the claim can be
-  checked against the waves.
-- **Spectrogram** sits under the trace on the shared time axis, the period up the side, the power
-  as a shade of the trace color. It earns its place over merged recordings of days, where the
-  period drifts (90 minutes on 18 September 2017 down to 51 by 28 October on WELL-00014); on a
-  single six-hour instance it resolves periods up to three quarters of an hour only, and says so.
-- The histogram and the spectrum are counted over the **stretch of time on screen**, so zooming is
-  brushing; the spectrogram covers the whole recording. A merged recording is transformed as the
-  single series it is, never stitched from its parts, and its seams are drawn on the spectrogram.
+  outside the plausible range left out. It takes a row under the trace, the period along the
+  bottom. Its caption gives the **dominant period and its share of the power**: a few percent for a
+  normal instance, half or more for an oscillating one; and one cycle of that period is laid as a
+  bar against the trace, so the claim can be checked against the waves.
+- Both are counted over the **stretch of time on screen**, so zooming is brushing. A merged
+  recording is transformed as the single series it is, never stitched from its parts.
+
+There was a third view, a **spectrogram** under each trace on the shared time axis. It was dropped:
+it earned its place only over a merged recording of days, where the slugging period drifts, and
+everywhere else it said what the spectrum already said while taking a row of its own from every
+feature of every block — which is the scarce thing in a window that stacks them.
 - **Plausible only**, beside *Bins*, is what every histogram counts by default: the readings inside
   the plausible range of the `flowml` pipeline. That is what a histogram is normally asked for —
   one gauge reporting 10¹² Pa would otherwise put every genuine reading into the first bin — but it
@@ -300,9 +299,22 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
   ticked the spectrum is the periodogram of everything on screen, the only way to see a slugging
   line, since a segment of a few minutes holds no cycle of it.
 - On the **Faults page**, *Overlaid* spectra read together where overlaid traces did not, the
-  question being whether their peaks line up; histograms are drawn as a share of each instance's
-  samples, with the mean and the median of each as lines in the grid and a **triangle over the
-  fullest bin** of each in either layout — the value that instance spends most of its time at,
+  question being whether their peaks line up; **Overall** pools instead of overlaying — on the
+  Faults page into one curve per feature across every well, on the Features page into one curve
+  per fault class, which is the feature-level histogram this was built for. A distribution pools
+  by putting the readings together; a spectrum never pools by concatenation, since a transform
+  reads consecutive samples as one second apart and the months between two instances would become
+  a step, so the estimates are averaged band by band on a shared period axis, as Welch's method
+  already does one level down. **Join overlapping**, beside it, first reads the windows of a well
+  that overlap as the single recording they were cut from, so the samples two windows share are
+  counted once instead of twice — which otherwise inflates a pooled histogram at exactly the
+  levels that well was recorded twice at. Overall is offered off the time axis only: instances
+  cut from different months have no common clock. Histograms are drawn as a share of each
+  instance's
+  samples — stacked bars in the grid, a filled area in the series color when overlaid, so that
+  where two distributions sit on top of one another reads as a deeper shade — with the mean and
+  the median of each as lines in the grid and a **triangle over the fullest bin** of each in
+  either layout — the value that instance spends most of its time at,
   which the mean and the median both miss once a fault has skewed the readings or split them in
   two, and which hovering the curve reads out — and *Normalize per instance*
   puts different wells on one z-score axis. The hours before and after the onset pick the stretch
@@ -317,9 +329,9 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
 ![Spectra of every severe slugging instance](docs/assets/faults_spectra.png)
 
 There is deliberately no phase spectrum of a single signal (its phase depends on where the file
-begins and tells nothing the trace does not) and no wavelet transform (the spectrogram covers the
-time-frequency question until it proves too coarse); the cross-spectrum phase between two sensors is
-left for a later version.
+begins and tells nothing the trace does not) and no wavelet transform; the cross-spectrum phase
+between two sensors, and any other view of how a period moves along a recording, are left for a
+later version.
 
 The pages are interactive counterparts of stage-0 figures of the `flowml` pipeline: the timelines
 of `faults_per_well.pdf` and `fault_<n>_real_instances.pdf`, the availability page of the cleaning
@@ -455,7 +467,7 @@ app/
     ├── dataset.py            dataset.ini · instance catalogue and its cache · sensor figures from the footers, from merged recordings and pair by pair · overlaps and joins per well
     ├── availability.py       the three states of a sensor in a bar · groups folded into shares of samples or of bars · the pair map of a scope
     ├── faults.py             where the event begins in an instance · z-scores · the plausible extent of a series
-    ├── spectral.py           the signal views, numpy only: a series prepared · Welch's density and the dominant period · the spectrogram on a log period grid · histograms stacked by label
+    ├── spectral.py           the signal views, numpy only: a series prepared · Welch's density and the dominant period · histograms stacked by label, with their peak
     ├── timemap.py            gap-compressed (or calendar) time axis in hours
     ├── labels.py             label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts · a stamp at a frame's own resolution
     ├── theme.py              every color of the light and of the dark mode
@@ -464,7 +476,7 @@ app/
     ├── styling.py            installing a theme into Qt and pyqtgraph · the saved mode
     ├── loading.py            progress dialogs · cache of loaded instances
     ├── items.py              pyqtgraph items: segments, instance bars and their marks, time axis, anchored text
-    ├── spectral_items.py     the parameter widgets, the period axis, the spectrogram ramp and the builders of the signal views
+    ├── spectral_items.py     the parameter widgets, the period axis and the builders of the signal views
     ├── heatmap.py            the matrix widget of the availability page, its tooltips and the keys of the states
     ├── legend.py             the clickable color key and its flow layout
     ├── help.py               the help window
@@ -473,7 +485,7 @@ app/
     ├── series_page.py        what the faults and features pages both are: sections of instances, in a chosen domain and layout
     ├── faults_page.py        the faults page: one fault, a section per feature, its instances in the color of their well
     ├── features_page.py      the features page: one sensor, a section per fault class, the classes over one another when overlaid
-    ├── instance_window.py    the time series of a group of overlapping instances, with their distributions, spectra and spectrograms
+    ├── instance_window.py    the time series of a group of overlapping instances, with their distributions and spectra
     ├── window.py             the main window: the pages, the shared toolbar and status bar, the windows they open
     └── app.py                command line and start-up
 ```

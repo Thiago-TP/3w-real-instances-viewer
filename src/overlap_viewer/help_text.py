@@ -720,9 +720,9 @@ DATASET_NOTES = [
             "that one line; the pressures of a spurious DHSV closure oscillate every 45 to 80 "
             "minutes; a normal instance has no line to speak of, 1 to 2 % of the power in its "
             "strongest one. A six-hour instance therefore holds four to seven cycles of the "
-            "events, which is why the viewer's spectral axis is a period rather than a frequency, "
-            "why the default spectrum is taken over the whole stretch, and why the spectrogram of "
-            "a single instance says little at those periods."
+            "events, which is why the viewer's spectral axis is a period rather than a frequency "
+            "and why the default spectrum is taken over the whole stretch: a segment short enough "
+            "to be one of several holds no cycle of the events at all."
         ),
     ),
 ]
@@ -1171,23 +1171,21 @@ USAGE = {
     ],
     "Signal views": [
         (
-            "The 'Views' boxes of the instance window add, to every feature plot, up to three "
+            "The 'Views' boxes of the instance window add, to every feature plot, two more "
             "views of the same signal, each placed where it shares an axis with the trace. "
             "<b>Distribution</b> is a histogram turned on its side to the right of the trace, on "
             "the trace's value axis, its bars stacked by label period in the class colors, so "
             "that how the event moves the readings is seen inside one instance; a bimodal shape "
             "is an oscillation. A solid line marks the mean and a dashed one the median. "
-            "<b>Spectrogram</b> sits under the trace on the shared time axis, the period up its "
-            "side and the power as a shade. <b>Spectrum</b> sits beside the spectrogram sharing "
-            "its period axis, or, on its own, in the spectrogram's place with the period along "
-            "the bottom; whenever it is on, one cycle of its dominant period is laid as a bar "
-            "against the trace, so the claim can be checked against the waves."
+            "<b>Spectrum</b> takes a row under the trace, the period along the bottom; whenever "
+            "it is on, one cycle of its dominant period is laid as a bar against the trace, so "
+            "the claim can be checked against the waves."
         ),
         (
-            "The histogram and the spectrum are counted over the stretch of time on screen, so "
-            "zooming the trace is brushing: narrow the view to a stretch and read its "
-            "distribution and its spectrum. The spectrogram covers the whole recording. A merged "
-            "recording is transformed as the single series it is, never stitched from its parts."
+            "Both are counted over the stretch of time on screen, so zooming the trace is "
+            "brushing: narrow the view to a stretch and read its distribution and its spectrum. "
+            "A merged recording is transformed as the single series it is, never stitched from "
+            "its parts."
         ),
         (
             "The spectral axis is the <b>period</b>, logarithmic, from two seconds up to the "
@@ -1201,17 +1199,13 @@ USAGE = {
             "instead."
         ),
         (
-            "'Segment' sets the length of the segments the spectrum averages over and the "
-            "spectrogram is sliced into, once 'whole stretch' is unticked; 'Overlap' how much "
-            "each repeats of the last; 'Window' the taper. Nothing longer than a segment can be "
-            "resolved, and the plots grey the periods beyond it rather than leave them silently "
-            "empty. With 'whole stretch' ticked the "
-            "spectrum is the periodogram of everything on screen, which is the only way to see "
-            "the slugging line: a segment of five minutes, the size a pipeline windows by, holds "
-            "no cycle of it. The spectrogram then slices the recording into eighths, so on a "
-            "six-hour instance it resolves periods up to three quarters of an hour and says "
-            "something about the shorter ones only; over a merged recording of days it shows the "
-            "period drifting. 'Bins' is the number of bins of the histograms."
+            "'Segment' sets the length of the segments the spectrum averages over, once 'whole "
+            "stretch' is unticked; 'Overlap' how much each repeats of the last; 'Window' the "
+            "taper. Nothing longer than a segment can be resolved, and the plots grey the "
+            "periods beyond it rather than leave them silently empty. With 'whole stretch' "
+            "ticked the spectrum is the periodogram of everything on screen, which is the only "
+            "way to see the slugging line: a segment of five minutes, the size a pipeline "
+            "windows by, holds no cycle of it. 'Bins' is the number of bins of the histograms."
         ),
         (
             "<b>'Plausible only'</b>, beside 'Bins', is what every histogram counts by default: "
@@ -1237,7 +1231,9 @@ USAGE = {
             "stretch the hours before and after the onset select, so '2 h after' gives the "
             "spectrum of the fault alone. Overlaid spectra read together where overlaid traces "
             "did not, since the question is whether their peaks line up; histograms are drawn as "
-            "a share of each instance's samples, so instances of different length compare, with "
+            "a share of each instance's samples, so instances of different length compare — "
+            "stacked bars in the grid, a filled area in the series color when overlaid, so that "
+            "where two of them sit on top of one another reads as a deeper shade — with "
             "the mean and the median of each as lines in the grid and a triangle over the fullest "
             "bin of each in either layout — the value that instance spends most of its time at, "
             "which the mean and the median both miss once a fault has skewed the readings or "
@@ -1246,6 +1242,33 @@ USAGE = {
             "holds the hours around the onset, the normalization and the parameters of the "
             "domain chosen; 'Features' and 'Instances' at the right end of the first row hide "
             "the feature panel and the instance list to give the plots its width."
+        ),
+        (
+            "<b>'Overall'</b>, the third entry of 'Layout', is not a third placement but a "
+            "reduction before them: the instances of a group are pooled into one curve, which "
+            "the overlaid arrangement then draws. On the faults page a group is everything on "
+            "show, so each feature gets one curve across every well at once; on the features "
+            "page a group is a fault class, so the plot becomes one distribution, or one "
+            "spectrum, per class. It is offered off the time axis only — instances cut from "
+            "different months have no common clock to be drawn against."
+        ),
+        (
+            "A distribution pools by putting the readings together, a histogram of the union "
+            "being a histogram whatever order the samples arrive in. A <b>spectrum does not</b>, "
+            "and is never taken over the concatenation: a transform reads consecutive samples as "
+            "one second apart, so the months between two instances would become a step and the "
+            "seams would spread power across the whole axis. The estimates are averaged band by "
+            "band on a shared period axis instead — which is what Welch's method already does "
+            "one level down — and a band only the longest instances reach stays theirs alone."
+        ),
+        (
+            "<b>'Join overlapping'</b>, beside it, is what keeps the counts honest. The windows "
+            "of a well are cut from one recording, so two that overlap hold the same samples "
+            "twice and a pooled histogram would count them twice, inflating it at exactly the "
+            "levels that well was recorded twice at. Ticked, those windows are first read as the "
+            "single recording they were cut from, by the same rule as everywhere else in the "
+            "viewer: every instant once, what one window missed filled in by the one it "
+            "overlaps, and windows whose labels disagree there left apart."
         ),
         (
             "Off the time axis nothing is drawn against the hours from the onset, so 'Align at' "

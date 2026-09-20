@@ -1,4 +1,4 @@
-"""The signal views beyond the time series: distribution, spectrum, spectrogram. No Qt here, numpy only.
+"""The signal views beyond the time series: distribution and spectrum. No Qt here, numpy only.
 
 The 3W signals are sampled once a second and the events are slow: severe
 slugging cycles every 50 to 90 minutes, flow instability every 45, so a
@@ -41,11 +41,6 @@ WINDOWS: dict[str, object] = {
 MIN_COVERAGE = 0.5
 # And below this many readings there is nothing to estimate from.
 MIN_SAMPLES = 16
-# The shortest period a 1 Hz grid can carry (Nyquist), for the period axes.
-MIN_PERIOD_S = 2.0
-# A spectrogram given no segment takes this share of the recording per segment:
-# a six-hour instance gets segments of 45 minutes.
-DEFAULT_SPECTROGRAM_SHARE = 1 / 8
 # The dominant period is looked for among the periods the stretch holds at
 # least this many cycles of: a single half-cycle is a trend, not a line.
 MIN_CYCLES = 4.0
@@ -133,23 +128,6 @@ class Spectrum:
         filled = counts > 0
         centers = 10.0 ** (0.5 * (edges[:-1] + edges[1:]))
         return centers[filled], sums[filled] / counts[filled]
-
-
-@dataclass(frozen=True)
-class Spectrogram:
-    """Power per segment and per period, on a logarithmic grid of periods.
-
-    ``centers`` are the sample positions (seconds from the first sample of the
-    series) at the middle of each segment; ``log_periods`` the grid, ascending
-    log10 of seconds; ``power`` is ``(len(centers), len(log_periods))``, in
-    log10 of the density, so a plot maps it to a color ramp directly.
-    """
-
-    centers: np.ndarray
-    log_periods: np.ndarray
-    power: np.ndarray
-    segment_s: int
-    hop_s: int
 
 
 @dataclass(frozen=True)
@@ -310,48 +288,58 @@ def welch(prepared: np.ndarray, params: TransformParams, fs: float = 1.0) -> Spe
     return Spectrum(periods[order], power[order], int(segment), len(rows))
 
 
-# -- the spectrogram
+def average_spectra(spectra: list[Spectrum], n_bins: int = 160) -> Spectrum | None:
+    """One density from several, averaged band by band on a shared logarithmic grid.
 
+    This is how the spectra of a set of instances are pooled, and it is what
+    Welch's method already does one level down: average the densities of
+    several stretches of the same process rather than transform their
+    concatenation. Concatenating is not an option here — the instances are cut
+    from different months, and a transform reads consecutive samples as one
+    second apart, so every gap between two of them would become a step and the
+    seams would spread power across the whole axis.
 
-def log_period_grid(shortest: float, longest: float, n: int = 120) -> np.ndarray:
-    """``n`` log10 periods, ascending, from ``shortest`` to ``longest`` seconds."""
-    return np.linspace(np.log10(shortest), np.log10(longest), n)
+    The instances have different lengths, so their estimates land on different
+    frequencies and cannot be averaged point by point. Each is binned onto the
+    shared grid first (``Spectrum.binned``, the same binning a plot draws
+    with), and a band is the mean of the estimates that reach it, so the long
+    periods only the longest instances resolve are still theirs to say. The
+    result carries the longest segment of the set, which is the longest period
+    any of them could resolve.
 
-
-def spectrogram(
-    prepared: np.ndarray, params: TransformParams, n_periods: int = 120, fs: float = 1.0
-) -> Spectrogram | None:
-    """The short-time power of a prepared series, per segment, on a logarithmic grid of periods.
-
-    A segment of zero takes ``DEFAULT_SPECTROGRAM_SHARE`` of the series, since
-    a spectrogram of one segment is a spectrum. ``None`` when the series is
-    too short for two segments. The power is log10 of the density,
-    interpolated from the segment's own frequencies onto the grid, so that an
-    image item, which wants a uniform grid, can draw it against the same
-    logarithmic axis a spectrum uses.
+    ``None`` when there is nothing to average.
     """
-    x = np.asarray(prepared, dtype=float)
-    n = len(x)
-    wanted = params.segment_s if params.segment_s > 0 else int(n * DEFAULT_SPECTROGRAM_SHARE)
-    segment = max(min(wanted, n), MIN_SAMPLES)
-    if segment >= n:
+    usable = [s for s in spectra if len(s.periods)]
+    if not usable:
         return None
-    hop = _hop(segment, params.overlap)
-    rows = _segments(x, segment, hop)
-    if len(rows) < 2:
+    if len(usable) == 1:
+        return usable[0]
+    lows = [np.log10(s.periods[0]) for s in usable]
+    highs = [np.log10(s.periods[-1]) for s in usable]
+    grid = np.linspace(min(lows), max(highs), n_bins)
+    total = np.zeros(n_bins)
+    counts = np.zeros(n_bins)
+    for spectrum in usable:
+        periods, power = spectrum.binned(n_bins)
+        if not len(periods):
+            continue
+        log = np.log10(periods)
+        # Only the stretch of the axis this estimate actually covers: reading
+        # its ends across the rest would invent power at periods it never saw.
+        inside = (grid >= log[0]) & (grid <= log[-1])
+        if not inside.any():
+            continue
+        total[inside] += np.interp(grid[inside], log, power)
+        counts[inside] += 1
+    filled = counts > 0
+    if not filled.any():
         return None
-    freqs, density = _densities(rows, params.window, fs)
-    periods = 1.0 / freqs[1:]
-    density = density[:, 1:]
-    grid = log_period_grid(MIN_PERIOD_S / fs, segment / fs, n_periods)
-    log_periods = np.log10(periods)
-    order = np.argsort(log_periods)
-    floor = np.finfo(float).tiny
-    image = np.empty((len(rows), len(grid)))
-    for k, row in enumerate(density):
-        image[k] = np.interp(grid, log_periods[order], np.log10(np.maximum(row[order], floor)))
-    centers = np.arange(len(rows)) * hop / fs + segment / (2.0 * fs)
-    return Spectrogram(centers, grid, image, int(segment), int(hop))
+    return Spectrum(
+        10.0 ** grid[filled],
+        total[filled] / counts[filled],
+        max(s.segment_s for s in usable),
+        sum(s.n_segments for s in usable),
+    )
 
 
 # -- the distribution

@@ -5,16 +5,16 @@ takes — the segment length, the overlap, the window function, the number of
 bins — so that the two windows offer the same widgets and mean the same thing
 by them. ``LogPeriodAxisItem`` labels an axis of log10 seconds in the units a
 person says a period in. The rest are the builders both windows draw with: a
-histogram as stacked bars or as a step outline, a spectrum curve, the image of
-a spectrogram on a single-hue ramp, and the shading of the periods a segment
-cannot resolve.
+histogram as stacked bars or as a filled step outline, a spectrum curve, the
+marker over a histogram's fullest bin, and the shading of the periods a
+segment cannot resolve or of the readings no instrument could have produced.
 
 Every spectral plot carries its data in log10: the period axis because the
 events span seconds to days, the power axis because a line an order of
 magnitude above the noise is what a spectrum is read for. The axes are told
 so (``AxisItem.setLogMode`` for power, this module's own axis for period) and
-print real values; the items themselves are never put in log mode, since an
-image item or a bar item would not follow.
+print real values; the items themselves are never put in log mode, since a
+bar item would not follow.
 """
 
 from collections.abc import Sequence
@@ -26,11 +26,9 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSpinBox, QWidget
 
 from overlap_viewer import theme
-from overlap_viewer.palette import tint
 from overlap_viewer.spectral import (
     WINDOWS,
     Histogram,
-    Spectrogram,
     Spectrum,
     TransformParams,
     format_period,
@@ -75,6 +73,7 @@ GRID_ALPHA = 0.25  # the grid of a spectrum plot, faint enough to stay behind th
 PEAK_BAR_PX = 14  # how far under the top of a trace plot the bar of one peak period sits
 PEAK_FONT_PX = 10
 PEAK_MARKER_PX = 9  # the triangle over the fullest bin of a histogram
+HIST_FILL_ALPHA = 55  # the wash under a histogram outline, faint enough that several stack
 
 
 class TransformControls(QWidget):
@@ -100,9 +99,8 @@ class TransformControls(QWidget):
         self._whole.setToolTip(
             "Take the spectrum over the whole stretch shown, in one segment (a periodogram), "
             "which is the only way to see the events: severe slugging cycles every 50 to 90 "
-            "minutes, and a segment of a few minutes holds no cycle of it. The spectrogram, "
-            "which needs more than one segment, then slices the recording into eighths. Untick "
-            "to set the segment length yourself."
+            "minutes, and a segment of a few minutes holds no cycle of it. Untick to set the "
+            "segment length yourself."
         )
         self._segment = QSpinBox()
         self._segment.setRange(1, 24 * 60)
@@ -110,9 +108,8 @@ class TransformControls(QWidget):
         self._segment.setSuffix(" min")
         self._segment.setEnabled(False)
         self._segment.setToolTip(
-            "Length of the segments the spectrum averages over and the spectrogram is sliced "
-            "into, in minutes. Nothing longer than a segment can be resolved, so the axis is "
-            "greyed beyond it."
+            "Length of the segments the spectrum averages over, in minutes. Nothing longer "
+            "than a segment can be resolved, so the axis is greyed beyond it."
         )
         self._overlap_label = QLabel(" Overlap ")
         self._overlap = QSpinBox()
@@ -121,8 +118,8 @@ class TransformControls(QWidget):
         self._overlap.setSuffix(" %")
         self._overlap.setSingleStep(10)
         self._overlap.setToolTip(
-            "How much of a segment the next one repeats. More overlap gives the spectrogram more "
-            "slices and the spectrum more segments to average, from the same stretch."
+            "How much of a segment the next one repeats. More overlap gives the spectrum more "
+            "segments to average, from the same stretch."
         )
         self._window_label = QLabel(" Window ")
         self._window = QComboBox()
@@ -371,24 +368,6 @@ class PeriodMarker(pg.GraphicsObject):
         p.restore()
 
 
-def spectrogram_colormap() -> pg.ColorMap:
-    """One hue, from the plotting ground to the trace color of the theme in force.
-
-    A magnitude wants a single hue running away from the background, so that
-    the eye reads "more" as "darker" (or, on a dark ground, "brighter") and
-    never as a change of hue; the trace color is the hue every plot of the
-    viewer already draws its signal in.
-    """
-    colors = theme.current()
-    stops = [
-        colors.plot_background,
-        tint(colors.trace, 0.35),
-        tint(colors.trace, 0.7),
-        colors.trace,
-    ]
-    return pg.ColorMap(pos=np.array([0.0, 0.35, 0.7, 1.0]), color=[QColor(stop) for stop in stops])
-
-
 def unresolved_brush() -> QColor:
     """The fill of the periods a segment cannot resolve: the shade of an unknown, translucent."""
     color = QColor(theme.current().unknown)
@@ -428,18 +407,49 @@ def add_stacked_bars(
     return items
 
 
+def histogram_fill(color: str) -> QColor:
+    """The wash under one histogram outline: its own color, faint enough to stack.
+
+    Several of these share a plot, so the fill has to read as an area without
+    hiding the ones behind it; at this alpha two overlapping distributions
+    still show where they overlap, as a third, deeper shade.
+    """
+    fill = QColor(color)
+    fill.setAlpha(HIST_FILL_ALPHA)
+    return fill
+
+
 def add_step_outline(
-    plot: pg.PlotItem, edges: np.ndarray, heights: np.ndarray, pen, horizontal: bool = False
+    plot: pg.PlotItem,
+    edges: np.ndarray,
+    heights: np.ndarray,
+    pen,
+    horizontal: bool = False,
+    fill: str | None = None,
 ) -> pg.PlotDataItem:
-    """The outline of a histogram as a step curve: what several of them can share one plot as."""
+    """The outline of a histogram as a step curve: what several of them can share one plot as.
+
+    ``fill`` washes the area under the steps in that color, for the layouts
+    where the outline is the whole of the histogram; where it is drawn over
+    stacked bars there is nothing to fill, the stacks being the area already.
+    """
     if horizontal:
         # A step curve only steps along x, so a sideways outline is drawn as
         # the polygon of its corners.
         ys = np.repeat(edges, 2)
         xs = np.concatenate(([0.0], np.repeat(heights, 2), [0.0]))
         curve = pg.PlotDataItem(xs, ys, pen=pen)
-    else:
+    elif fill is None:
         curve = pg.PlotDataItem(edges, heights, stepMode="center", pen=pen)
+    else:
+        curve = pg.PlotDataItem(
+            edges,
+            heights,
+            stepMode="center",
+            pen=pen,
+            fillLevel=0.0,
+            fillBrush=pg.mkBrush(histogram_fill(fill)),
+        )
     plot.addItem(curve)
     return curve
 
@@ -515,44 +525,9 @@ def shade_implausible(
     return items
 
 
-def add_spectrogram_image(
-    plot: pg.PlotItem, image: Spectrogram, x_of_seconds, levels: tuple[float, float] | None = None
-) -> pg.ImageItem:
-    """Draw a spectrogram into ``plot``: time along x, log10 period along y, log10 power as color.
-
-    ``x_of_seconds`` maps seconds from the first sample of the series to the
-    plot's x; the image is stretched over the segments' centers, half a hop
-    beyond the first and the last. ``levels`` fixes the two powers the ramp
-    runs between; by default the 5th and the 99.5th percentiles of the image,
-    so that one bright line does not wash out the rest.
-    """
-    item = pg.ImageItem(image.power, axisOrder="col-major")
-    item.setColorMap(spectrogram_colormap())
-    if levels is None:
-        finite = image.power[np.isfinite(image.power)]
-        if len(finite):
-            levels = (float(np.percentile(finite, 5)), float(np.percentile(finite, 99.5)))
-            if levels[1] <= levels[0]:
-                levels = (levels[0] - 1.0, levels[0] + 1.0)
-        else:
-            levels = (-1.0, 1.0)
-    item.setLevels(levels)
-    half = image.hop_s / 2.0
-    x0 = float(x_of_seconds(image.centers[0] - half))
-    x1 = float(x_of_seconds(image.centers[-1] + half))
-    y0, y1 = float(image.log_periods[0]), float(image.log_periods[-1])
-    step = (y1 - y0) / max(len(image.log_periods) - 1, 1)
-    item.setRect(QRectF(x0, y0 - step / 2, x1 - x0, (y1 - y0) + step))
-    item.setZValue(-1)
-    plot.addItem(item)
-    return item
-
-
-def period_range(image_or_spectrum) -> tuple[float, float]:
-    """The log10 period span an axis should show for a spectrum or a spectrogram."""
-    if isinstance(image_or_spectrum, Spectrogram):
-        return (float(image_or_spectrum.log_periods[0]), float(image_or_spectrum.log_periods[-1]))
-    periods = image_or_spectrum.periods
+def period_range(spectrum: Spectrum) -> tuple[float, float]:
+    """The log10 period span an axis should show for a spectrum."""
+    periods = spectrum.periods
     return (float(np.log10(periods[0])), float(np.log10(periods[-1])))
 
 

@@ -80,8 +80,9 @@ DOMAIN_TIP = (
     "What every plot shows of the stretch the hours before and after the onset select. Time "
     "series: the readings against the hours from the onset. Distribution: a histogram of the "
     "readings, as a share of the instance's samples so that instances of different length "
-    "compare, stacked by label period in the class colors in the grid, outlined per instance "
-    "when overlaid, with a triangle over the fullest bin of each. Spectrum: the power spectral "
+    "compare, stacked by label period in the class colors in the grid, an area in the color of "
+    "its class when overlaid, so that where two classes sit on top of one another reads as a "
+    "deeper shade, with a triangle over the fullest bin of each. Spectrum: the power spectral "
     "density against the period, both logarithmic, the mean and the trend removed first."
 )
 LAYOUT_TIP = (
@@ -90,7 +91,10 @@ LAYOUT_TIP = (
     "class below. Overlaid draws every class on one set of axes, each instance in the color of "
     "its class, which is what makes the classes comparable rather than merely adjacent — and the "
     "natural view for histograms and spectra, where the question is whether the classes sit at "
-    "different values or peak at different periods."
+    "different values or peak at different periods. Overall goes one further and pools each "
+    "class into a single curve, so the plot becomes one distribution, or one spectrum, per fault "
+    "class over every instance of it — the feature-level view this page was built for. It is "
+    "offered off the time axis only, instances cut from different months having no common clock."
 )
 NORMALIZE_TIP = (
     "Scale every series to its own level: each reading as standard deviations from the mean of "
@@ -652,6 +656,17 @@ class FeaturesPage(SeriesPage):
             for fault in self.selected_classes()
             if members.get(fault)
         ]
+
+    def pool_key(self, series: Series):
+        """Pooled, a class becomes one curve: telling the classes apart is what the page is for."""
+        return series.fault
+
+    def pool_headline(self, members: list[int]) -> str:
+        fault = self._series[members[0]].fault
+        return (
+            f"{fault} · {self.info.fault_name(fault)} · {self.feature} · "
+            f"{SeriesPage.pool_headline(self, members)}"
+        )
 
     def read_out_features(self) -> list[str]:
         feature = self.feature

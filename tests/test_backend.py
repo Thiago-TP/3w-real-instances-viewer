@@ -1236,34 +1236,6 @@ def test_welch_finds_the_period_of_a_sine_and_says_what_it_resolves():
         TransformParams(overlap=1.0)
 
 
-def test_spectrogram_is_a_grid_over_time_and_log_period():
-    from overlap_viewer.spectral import (
-        MIN_PERIOD_S,
-        TransformParams,
-        format_period,
-        prepare,
-        spectrogram,
-    )
-
-    t = np.arange(4 * 3600, dtype=float)
-    y = np.sin(2 * np.pi * t / 600)  # 10 min
-    image = spectrogram(prepare(y), TransformParams(segment_s=1800, overlap=0.5), n_periods=50)
-    assert image is not None
-    assert image.segment_s == 1800 and image.hop_s == 900
-    assert image.power.shape == (len(image.centers), 50)
-    assert image.log_periods[0] == pytest.approx(np.log10(MIN_PERIOD_S))
-    assert image.log_periods[-1] == pytest.approx(np.log10(1800))
-    assert image.centers[0] == pytest.approx(900) and np.all(np.diff(image.centers) == 900)
-    brightest = image.log_periods[image.power.mean(axis=0).argmax()]
-    assert 10**brightest == pytest.approx(600, rel=0.1)
-    # No segment given: an eighth of the series each.
-    default = spectrogram(prepare(y), TransformParams())
-    assert default is not None and default.segment_s == len(t) // 8
-    assert spectrogram(prepare(y), TransformParams(segment_s=len(t))) is None  # one segment
-    assert format_period(30) == "30 s" and format_period(5400) == "1.5 h"
-    assert format_period(300) == "5 min" and format_period(2 * 86400) == "2 d"
-
-
 def test_histogram_stacks_by_group_and_leaves_the_implausible_out():
     from overlap_viewer.spectral import histogram
 
@@ -1287,6 +1259,40 @@ def test_histogram_stacks_by_group_and_leaves_the_implausible_out():
     flat = histogram(np.full(10, 7.0), None, bins=4)
     assert flat is not None and flat.edges[0] < 7.0 < flat.edges[-1]
     assert histogram(np.array([np.nan, np.nan]), None, bins=3) is None
+
+
+def test_spectra_are_pooled_by_averaging_the_bands_they_reach():
+    """Instances are cut from different months, so their spectra average; they never concatenate."""
+    from overlap_viewer.spectral import TransformParams, average_spectra, prepare, welch
+
+    params = TransformParams()
+    # Two stretches of the same process, of different lengths, so their
+    # estimates land on different frequencies and cannot be averaged point by
+    # point; both oscillate every 10 minutes.
+    short = np.sin(2 * np.pi * np.arange(2 * 3600, dtype=float) / 600)
+    long = np.sin(2 * np.pi * np.arange(6 * 3600, dtype=float) / 600)
+    a, b = welch(prepare(short), params), welch(prepare(long), params)
+    pooled = average_spectra([a, b])
+    assert pooled is not None
+    # The pooled estimate still finds the line, and reaches the longest period
+    # the longest of them could resolve.
+    assert pooled.dominant()[0] == pytest.approx(600, rel=0.1)
+    # It reaches past what the shorter one could resolve, up to within a band
+    # of the longest period the longer one saw (the grid carries bin centers,
+    # so the topmost band sits half a bin below it).
+    assert a.periods[-1] < pooled.periods[-1] <= b.periods[-1]
+    assert pooled.periods[-1] > 0.9 * b.periods[-1]
+    assert pooled.segment_s == max(a.segment_s, b.segment_s)
+    # A band only one of them reaches is that one's alone, not halved by a
+    # zero from the other.
+    beyond = pooled.periods > a.periods[-1]
+    assert beyond.any()
+    periods_b, power_b = b.binned(160)
+    at = np.interp(np.log10(pooled.periods[beyond]), np.log10(periods_b), power_b)
+    assert np.allclose(pooled.power[beyond], at)
+    # Pooling one is that one; pooling nothing is nothing.
+    assert average_spectra([a]) is a
+    assert average_spectra([]) is None
 
 
 def test_a_histogram_counts_the_implausible_only_when_it_is_asked_to():

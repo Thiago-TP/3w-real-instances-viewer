@@ -77,20 +77,16 @@ from overlap_viewer.palette import (
 from overlap_viewer.spectral import (
     Histogram,
     Spectrum,
-    TransformParams,
     format_period,
     histogram,
     prepare,
-    spectrogram,
     uniform_series,
     welch,
 )
 from overlap_viewer.spectral_items import (
-    LogPeriodAxisItem,
     PeriodMarker,
     TransformControls,
     add_center_lines,
-    add_spectrogram_image,
     add_spectrum_curve,
     add_stacked_bars,
     caption_for,
@@ -121,8 +117,13 @@ SI_UNITS = ("Pa",)  # units pyqtgraph may prefix (kPa, MPa); the others stay lit
 STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch views are recounted
 
 # The views of a signal beyond its time series, in the order of the toolbar.
-VIEWS = ("distribution", "spectrum", "spectrogram")
-VIEW_NAMES = {"distribution": "Distribution", "spectrum": "Spectrum", "spectrogram": "Spectrogram"}
+# There was a third, a spectrogram under each trace on the shared time axis. It
+# was dropped: it earned its place only over a merged recording of days, where
+# the slugging period drifts, and everywhere else it said what the spectrum
+# beside it already said while taking a row of its own from every feature of
+# every block — which is the scarce thing in a window that stacks them.
+VIEWS = ("distribution", "spectrum")
+VIEW_NAMES = {"distribution": "Distribution", "spectrum": "Spectrum"}
 VIEW_TIPS = {
     "distribution": (
         "A histogram of the readings to the right of every trace, turned on its side so that it "
@@ -137,15 +138,9 @@ VIEW_TIPS = {
         "stretch of time on screen: Welch's estimate with the window chosen, the mean and the "
         "linear trend removed first, the missing samples interpolated. The caption gives the "
         "dominant period and its share of the power — a few percent for a normal instance, half "
-        "or more for an oscillating one. Beside the spectrogram it shares its period axis; on its "
-        "own it takes the spectrogram's place, the period along the bottom."
-    ),
-    "spectrogram": (
-        "The same density per segment of the recording, under the trace on the shared time axis, "
-        "the period up the side and the power as a shade. It says something where the period "
-        "drifts along a recording, which a merged recording of several days shows and one of six "
-        "hours cannot: a segment must hold a few cycles of a period to resolve it, and the "
-        "slugging periods are close to an hour."
+        "or more for an oscillating one — and one cycle of that period is laid against the trace, "
+        "so the claim can be checked against the waves. It takes a row under the trace, the "
+        "period along the bottom."
     ),
 }
 
@@ -195,7 +190,6 @@ class StretchPanel:
     bounds: tuple[float, float]
     hist_plot: pg.PlotItem | None = None
     spec_plot: pg.PlotItem | None = None
-    period_axis: str = "y"  # where the spectrum lays its period: beside the spectrogram, "y"
     hist_items: list = field(default_factory=list)
     spec_items: list = field(default_factory=list)
     hist_note: AnchoredText | None = None
@@ -288,7 +282,6 @@ class InstanceWindow(QMainWindow):
         self._views: dict[str, QCheckBox] = {}
         self._plots: dict[tuple[int, str], pg.PlotItem] = {}
         self._time_plots: list[pg.PlotItem] = []  # every plot on the shared time axis
-        self._image_plots: list[tuple[int, str, pg.PlotItem]] = []  # the spectrograms
         self._stretch_panels: list[StretchPanel] = []
         self._feature_masters: dict[str, pg.PlotItem] = {}
         self._crosshairs: list[pg.InfiniteLine] = []
@@ -581,15 +574,13 @@ class InstanceWindow(QMainWindow):
 
     def _sync_controls(self) -> None:
         """Offer the parameters only the views on screen have a use for."""
-        self._controls.show_spectral(self.view_on("spectrum") or self.view_on("spectrogram"))
+        self._controls.show_spectral(self.view_on("spectrum"))
         self._controls.show_bins(self.view_on("distribution"))
 
     @property
     def _side_column(self) -> bool:
         """Whether anything sits in the column beside the traces."""
-        return self.view_on("distribution") or (
-            self.view_on("spectrum") and self.view_on("spectrogram")
-        )
+        return self.view_on("distribution")
 
     def _build_join_check(self) -> QCheckBox:
         """The toolbar's local join, which changes what this window draws and nothing else."""
@@ -867,15 +858,14 @@ class InstanceWindow(QMainWindow):
         Everything on the time axis sits in the first column, and only there,
         so that the same instant is at the same pixel in every row; the second
         column, when a view asks for it, holds what shares an axis with the row
-        beside it but not the time: a marginal histogram, a spectrum beside a
-        spectrogram. A spectrum on its own takes the place a spectrogram would,
-        the period along the bottom, since nothing then has to line up with it.
+        beside it but not the time, which is the marginal histogram. The
+        spectrum takes a full-width row under the trace, the period along the
+        bottom, since nothing has to line up with it.
         """
         layout = self._layout_widget
         layout.clear()
         self._plots = {}
         self._time_plots = []
-        self._image_plots = []
         self._stretch_panels = []
         self._feature_masters = {}
         self._crosshairs = []
@@ -886,10 +876,7 @@ class InstanceWindow(QMainWindow):
         grid.setColumnFixedWidth(1, SIDE_PX if side else 0)
         grid.setColumnStretchFactor(0, 1)
         span = 2 if side else 1
-        spectral = self.view_on("spectrum") or self.view_on("spectrogram")
-        # The time axis closes the last row on the time axis of every block: the
-        # last trace, or the spectrogram under it.
-        axis_on_image = self.view_on("spectrogram")
+        spectral = self.view_on("spectrum")
 
         heights: list[int] = []
         row = 0
@@ -914,7 +901,9 @@ class InstanceWindow(QMainWindow):
             row += 2
             for k, feature in enumerate(features):
                 last = k == len(features) - 1
-                trace_axis = last and not axis_on_image
+                # The time axis closes the last trace of every block; the
+                # spectrum under it carries a period axis of its own.
+                trace_axis = last
                 panel = StretchPanel(
                     position,
                     feature,
@@ -927,7 +916,7 @@ class InstanceWindow(QMainWindow):
                 heights.append(PLOT_MIN_PX + (AXIS_PX if trace_axis else 0))
                 row += 1
                 if spectral:
-                    self._add_spectral_row(row, panel, span, show_axis=last and axis_on_image)
+                    self._add_spectral_row(row, panel, span)
                     heights.append(PLOT_MIN_PX + AXIS_PX)
                     row += 1
                 if panel.hist_plot is not None or panel.spec_plot is not None:
@@ -970,11 +959,9 @@ class InstanceWindow(QMainWindow):
         """
         self._layout_widget.resizeEvent(None)
 
-    def _new_plot(self, row: int, with_axis: bool, left_axis=None) -> pg.PlotItem:
+    def _new_plot(self, row: int, with_axis: bool) -> pg.PlotItem:
         """A plot on the shared time axis, in the first column, with a crosshair."""
         axis_items = {"bottom": TimeAxisItem(self.timemap)} if with_axis else {}
-        if left_axis is not None:
-            axis_items["left"] = left_axis
         plot = self._layout_widget.addPlot(
             row=row, col=0, viewBox=ScrollFriendlyViewBox(), axisItems=axis_items or None
         )
@@ -1141,102 +1128,29 @@ class InstanceWindow(QMainWindow):
         panel.hist_note = AnchoredText("", frac=(1.0, 0.0), anchor=(1.03, 1.25))
         panel.hist_note.attach(plot)
 
-    def _add_spectral_row(self, row: int, panel: StretchPanel, span: int, show_axis: bool) -> None:
-        """The spectrogram under a trace, the spectrum beside it — or the spectrum alone in its place."""
-        colors = theme.current()
-        params = self._controls.params()
-        frame = self.frames[panel.position]
-        unit = panel.unit
-        image_plot = None
-        if self.view_on("spectrogram"):
-            image_plot = self._new_plot(
-                row, with_axis=show_axis, left_axis=LogPeriodAxisItem("left")
-            )
-            image_plot.setMinimumHeight(PLOT_MIN_PX + AXIS_PX)
-            self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
-            image_plot.setLabel("left", f"{panel.feature} · period")
-            image_plot.getViewBox().setMouseEnabled(x=True, y=False)
-            self._add_seams(image_plot, self._seams[panel.position])
-            self._image_plots.append((panel.position, panel.feature, image_plot))
-            note = self._draw_spectrogram(image_plot, frame, panel, params)
-            AnchoredText(f'<span style="font-size:8pt; color:{colors.text};">{note}</span>').attach(
-                image_plot
-            )
-        if self.view_on("spectrum"):
-            if image_plot is not None:
-                # Beside the spectrogram: the period up the side, shared with it.
-                plot = self._new_side_plot(row)
-                plot.hideAxis("left")
-                power_axis(plot, "bottom", power_label(unit))
-                plot.setYLink(image_plot)
-                plot.getViewBox().setMouseEnabled(x=True, y=False)
-                panel.period_axis = "y"
-            else:
-                plot = self._new_side_plot(row, col=0, colspan=span)
-                plot.getAxis("left").setWidth(AXIS_WIDTH)
-                set_log_period_axis(plot, "bottom", "period")
-                power_axis(plot, "left", f"{panel.feature} · {power_label(unit)}")
-                plot.getViewBox().setMouseEnabled(x=True, y=True)
-                panel.period_axis = "x"
-            plot.setMinimumHeight(PLOT_MIN_PX + AXIS_PX)
-            self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
-            spectrum_grid(plot)
-            panel.spec_plot = plot
-            panel.peak = PeriodMarker()
-            self._plots[(panel.position, panel.feature)].addItem(panel.peak, ignoreBounds=True)
-            # The power climbs with the period, so the peak sits where the
-            # period is long and the power high: top right beside the
-            # spectrogram, right on its own. The note goes where the curve is not.
-            if panel.period_axis == "y":
-                panel.spec_note = AnchoredText("", frac=(1.0, 0.0), anchor=(1.03, 1.25))
-            else:
-                panel.spec_note = AnchoredText("", frac=(0.0, 1.0), anchor=(-0.03, -0.25))
-            panel.spec_note.attach(plot)
+    def _add_spectral_row(self, row: int, panel: StretchPanel, span: int) -> None:
+        """The spectrum in a row of its own under the trace, the period along the bottom."""
+        plot = self._new_side_plot(row, col=0, colspan=span)
+        plot.getAxis("left").setWidth(AXIS_WIDTH)
+        set_log_period_axis(plot, "bottom", "period")
+        power_axis(plot, "left", f"{panel.feature} · {power_label(panel.unit)}")
+        plot.getViewBox().setMouseEnabled(x=True, y=True)
+        plot.setMinimumHeight(PLOT_MIN_PX + AXIS_PX)
+        self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
+        spectrum_grid(plot)
+        panel.spec_plot = plot
+        panel.peak = PeriodMarker()
+        self._plots[(panel.position, panel.feature)].addItem(panel.peak, ignoreBounds=True)
+        # The power climbs with the period, so the curve ends up at the right;
+        # the caption goes to the left, where it is not.
+        panel.spec_note = AnchoredText("", frac=(0.0, 1.0), anchor=(-0.03, -0.25))
+        panel.spec_note.attach(plot)
 
     def _series_on_grid(self, frame: pd.DataFrame, feature: str) -> tuple[np.ndarray, int]:
         """The readings of one feature on the fixed 1 Hz grid, and how many seconds a sample spans."""
         if feature not in frame.columns:
             return np.full(len(frame), np.nan), 1
         return uniform_series(frame.index, frame[feature].to_numpy(dtype=float))
-
-    def _draw_spectrogram(
-        self, plot: pg.PlotItem, frame: pd.DataFrame, panel: StretchPanel, params: TransformParams
-    ) -> str:
-        """Compute and draw the spectrogram of one block's feature; the caption is returned."""
-        values, step = self._series_on_grid(frame, panel.feature)
-        prepared = prepare(values, panel.bounds)
-        image = spectrogram(prepared, params) if prepared is not None else None
-        vb = plot.getViewBox()
-        if image is None:
-            vb.setYRange(0.0, 1.0, padding=0)
-            plot.getAxis("left").setStyle(showValues=False)
-            reason = (
-                "too few readings, or a flat signal, to transform"
-                if prepared is None
-                else "the recording holds fewer than two segments"
-            )
-            AnchoredText(
-                f'<span style="font-size:10pt; color:{theme.current().faint};">{reason}</span>',
-                frac=(0.5, 0.5),
-                anchor=(0.5, 0.5),
-                boxed=False,
-            ).attach(plot)
-            return "no spectrogram"
-        x_start = float(self.timemap.to_x([frame.index[0]])[0])
-        add_spectrogram_image(plot, image, lambda s: x_start + s * step / 3600.0)
-        low, high = period_range(image)
-        # The axis runs to the length of the recording, which is as far as the
-        # spectrum beside it can see; the periods beyond the segment, which the
-        # spectrogram itself cannot resolve, are shaded, as they are on a spectrum.
-        top = max(high, float(np.log10(max(len(values) * step, 10**high))))
-        # A little room at both ends keeps the end ticks off the neighbouring rows.
-        vb.setYRange(low, top, padding=0.04)
-        if top > high:
-            shade_unresolved(plot, high, "y")
-        return (
-            f"segments of {format_period(image.segment_s)}, {params.overlap * 100:.0f} % overlap, "
-            f"{params.window} · resolves periods up to {format_period(10**high)}"
-        )
 
     def _schedule_stretch(self, *args) -> None:
         self._stretch_timer.start()
@@ -1396,31 +1310,22 @@ class InstanceWindow(QMainWindow):
         spectrum = welch(prepared, params)
         panel.spectrum = spectrum
         self._mark_peak(panel, spectrum)
-        curve = add_spectrum_curve(
-            plot, spectrum, pg.mkPen(colors.trace, width=1.2), panel.period_axis
-        )
+        curve = add_spectrum_curve(plot, spectrum, pg.mkPen(colors.trace, width=1.2), "x")
         panel.spec_items.append(curve)
-        x, y = spectrum_xy(spectrum, panel.period_axis)
-        log_power = x if panel.period_axis == "y" else y
+        _x, log_power = spectrum_xy(spectrum, "x")
         finite = log_power[np.isfinite(log_power)]
         lo, hi = (float(finite.min()), float(finite.max())) if len(finite) else (-1.0, 1.0)
         if hi <= lo:
             hi = lo + 1.0
         pad = 0.05 * (hi - lo)
-        if panel.period_axis == "y":
-            vb.setXRange(lo - pad, hi + pad, padding=0)
-            # The period axis is the spectrogram's; the spectrum's own periods
-            # may stop short of it when the stretch on screen is shorter than
-            # a segment of the whole recording.
-        else:
-            vb.setYRange(lo - pad, hi + pad, padding=0)
-            low, high = period_range(spectrum)
-            vb.setXRange(low, high, padding=0.01)
-        if spectrum.segment_s < len(prepared) or panel.period_axis == "y":
+        vb.setYRange(lo - pad, hi + pad, padding=0)
+        low, high = period_range(spectrum)
+        vb.setXRange(low, high, padding=0.01)
+        if spectrum.segment_s < len(prepared):
             panel.spec_items.append(
-                shade_unresolved(plot, float(np.log10(spectrum.segment_s)), panel.period_axis)
+                shade_unresolved(plot, float(np.log10(spectrum.segment_s)), "x")
             )
-        caption = caption_for(spectrum, panel.unit, compact=panel.period_axis == "y")
+        caption = caption_for(spectrum, panel.unit)
         panel.spec_note.setHtml(
             f'<span style="font-size:8pt; color:{colors.text};">{caption}</span>'
         )
@@ -1562,13 +1467,6 @@ class InstanceWindow(QMainWindow):
             self._status.setText(HINT)
             return
         parts = [f"{stamp:%Y-%m-%d %H:%M:%S}"]
-        for position, feature, plot in self._image_plots:
-            if plot.getViewBox().sceneBoundingRect().contains(pos):
-                log_period = plot.getViewBox().mapSceneToView(pos).y()
-                parts.append(
-                    f"{instance_title(self.rows.iloc[position])} · {feature} · spectrogram at a "
-                    f"period of {format_period(10**log_period)}"
-                )
         offset = self.info.transient_offset
         for position, frame in enumerate(self.frames):
             title = instance_title(self.rows.iloc[position])
@@ -1629,7 +1527,7 @@ class InstanceWindow(QMainWindow):
                 if spectrum is None:
                     return f"{title} · {panel.feature}: no spectrum on screen"
                 point = panel.spec_plot.getViewBox().mapSceneToView(pos)
-                log_period = point.y() if panel.period_axis == "y" else point.x()
+                log_period = point.x()
                 periods = np.log10(spectrum.periods)
                 k = int(np.clip(np.searchsorted(periods, log_period), 0, len(periods) - 1))
                 unit = f" {panel.unit}²/Hz" if panel.unit and panel.unit != "-" else ""

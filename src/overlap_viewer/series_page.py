@@ -5,8 +5,8 @@ swapped. The faults page fixes a fault class and gives each **feature** a
 section, every instance of that fault drawn inside it in the color of its well;
 the features page fixes a sensor and gives each **fault class** a section, the
 instances of that class drawn inside it in the color of the class. Everything
-between the choice and the picture is the same: the same two layouts, the same
-three domains, the same window of hours around an onset, the same
+between the choice and the picture is the same: the same three arrangements,
+the same three domains, the same window of hours around an onset, the same
 normalization, the same transforms, the same hover.
 
 So that machinery lives here, and a page supplies only what differs — which
@@ -15,15 +15,20 @@ status bar should call it. A *section* is a heading, the sensor its plots draw,
 and the instances that belong in it; the layouts below know nothing else about
 why those instances are together.
 
-Two layouts, chosen in the *Layout* box. **Small multiples** give every
+Three arrangements, chosen in the *Layout* box. **Small multiples** give every
 instance a small plot of its own, laid out in a grid, each with its own value
 axis and its label periods shaded behind the trace: two dozen shapes can be
 read at a glance, and the eye compares them one against the next. **Overlaid**
 draws them all on one set of axes, which says how far apart the levels are and
 little else once there are more than a handful — the reason the grid is the
-default. Each series can be scaled to its own level (a z-score over the
-instance, as Rabelo's pipeline does) so that shapes can be compared where the
-readings themselves cannot.
+default. **Overall** is not a third placement but a reduction before them: the
+instances of a group are pooled into one curve, and the overlaid arrangement
+draws the result. It is offered off the time axis only; there is no common
+clock to draw a pooled time series against.
+
+Each series can be scaled to its own level (a z-score over the instance, as
+Rabelo's pipeline does) so that shapes can be compared where the readings
+themselves cannot.
 """
 
 from dataclasses import dataclass, field
@@ -49,7 +54,7 @@ from PySide6.QtWidgets import (
 
 from overlap_viewer import theme
 from overlap_viewer.config import MAX_SMALL_MULTIPLES, plausible_range
-from overlap_viewer.dataset import DatasetInfo, well_label
+from overlap_viewer.dataset import DatasetInfo, join_groups, merge_instances, well_label
 from overlap_viewer.faults import (
     ALIGNMENT_AXES,
     ALIGNMENT_NAMES,
@@ -72,7 +77,15 @@ from overlap_viewer.labels import (
     state_name,
 )
 from overlap_viewer.palette import background_color, bar_color, tint, unknown_background
-from overlap_viewer.spectral import Histogram, Spectrum, format_period, histogram, prepare, welch
+from overlap_viewer.spectral import (
+    Histogram,
+    Spectrum,
+    average_spectra,
+    format_period,
+    histogram,
+    prepare,
+    welch,
+)
 from overlap_viewer.spectral_items import (
     TransformControls,
     add_center_lines,
@@ -81,6 +94,7 @@ from overlap_viewer.spectral_items import (
     add_stacked_bars,
     add_step_outline,
     caption_for,
+    histogram_fill,
     power_axis,
     power_label,
     set_log_period_axis,
@@ -90,7 +104,13 @@ from overlap_viewer.spectral_items import (
     spectrum_xy,
 )
 
-LAYOUTS = ("Small multiples", "Overlaid")
+# The three arrangements of the same sections. *Overall* is not a third way of
+# placing the plots but a reduction before them: the instances of a group are
+# pooled into one curve, which the overlaid arrangement then draws. It says
+# nothing in the time domain — the instances are cut from different months, and
+# a pooled time series would be a line across a calendar of gaps — so it is
+# greyed there.
+LAYOUTS = ("Small multiples", "Overlaid", "Overall")
 VALUE_AXES = ("Per instance", "Shared")
 # What every plot shows of the stretch selected: the readings against time, their
 # distribution, or their spectrum.
@@ -103,6 +123,14 @@ ALIGN_TIP = (
     "its fault, the first labeled with its steady state, or the first sample of the recording. An "
     "instance whose labels never reach the state chosen cannot be aligned on it and is left out, "
     "greyed in the list."
+)
+JOIN_TIP = (
+    "Before pooling, read the instances of a well that overlap in time as the single recording "
+    "they were cut from, wherever their labels agree on the shared stretch. Without it the "
+    "samples two windows share are counted twice, which inflates a histogram exactly where a "
+    "well was recorded twice; with it every instant is counted once, and a sensor one window "
+    "missed is filled in by the window it overlaps. Instances whose labels disagree there stay "
+    "apart, as they do everywhere else in the viewer."
 )
 # Why the box is greyed: off the time axis nothing is drawn against the hours
 # from the onset, and with both hour boxes at *all* the whole recording is
@@ -163,6 +191,55 @@ class Section:
     members: list[int]
 
 
+def merge_overlapping(series: list[Series], group_of) -> list[Series]:
+    """Read the instances of a well that overlap in time as the single recording they were cut from.
+
+    Only ever within one well and one group: two windows of different wells
+    share no instant, and two of different fault classes are being counted
+    apart on purpose. Inside that, the rule is the viewer's own — the groups
+    are ``dataset.join_groups``, so windows whose labels disagree where they
+    overlap stay apart, and the frames are merged by ``merge_instances``, so
+    every instant is kept once and what one window says nothing about the
+    others fill in.
+
+    This is what keeps a pooled histogram from counting the samples two
+    windows share twice, which would inflate it at exactly the levels a well
+    was recorded twice at.
+    """
+    merged: list[Series] = []
+    order: dict = {}
+    for i, one in enumerate(series):
+        order.setdefault((group_of(one), one.well), []).append(i)
+    for members in order.values():
+        if len(members) == 1:
+            merged.append(series[members[0]])
+            continue
+        parts = [series[i] for i in members]
+        starts = np.array([part.frame.index[0] for part in parts], dtype="datetime64[ns]")
+        ends = np.array([part.frame.index[-1] for part in parts], dtype="datetime64[ns]")
+        for group in join_groups(starts, ends, [part.runs for part in parts]):
+            chain = [parts[k] for k in group]
+            if len(chain) == 1:
+                merged.append(chain[0])
+                continue
+            frame = merge_instances([part.frame for part in chain])
+            head = chain[0]
+            merged.append(
+                Series(
+                    head.well,
+                    head.position,
+                    f"{len(chain)} instances joined",
+                    frame,
+                    head.onset,
+                    relative_hours(frame.index, head.onset),
+                    head.color,
+                    head.fault,
+                    [],
+                )
+            )
+    return merged
+
+
 class SeriesPage(QWidget):
     """Sections of instances, drawn in one of three domains and one of two layouts.
 
@@ -204,6 +281,9 @@ class SeriesPage(QWidget):
         # (plot, series) -> the fullest bin of its histogram and its share, for
         # the marker on the plot and the reading in the status bar.
         self._peaks_by_plot: dict[tuple[int, int], tuple[float, float]] = {}
+        # While the instances are pooled: the series that stands for a group,
+        # and the ones it stands for, so the status bar can say so.
+        self._pool: dict[int, list[int]] = {}
         self._hover = -1
         self._x_range: tuple[float, float] | None = None
 
@@ -257,6 +337,10 @@ class SeriesPage(QWidget):
         self._layout_box.setToolTip(layout_tip)
         self._layout_box.currentIndexChanged.connect(self._on_layout_changed)
         bar.addWidget(self._layout_box)
+        self._join = QCheckBox("Join overlapping")
+        self._join.setToolTip(JOIN_TIP)
+        self._join.toggled.connect(self._on_layout_changed)
+        self._overall_only: list = [bar.addWidget(self._join)]
         self._grid_only: list = []
         self._grid_only.append(bar.addWidget(QLabel(" Columns ")))
         self._columns = QSpinBox()
@@ -328,12 +412,35 @@ class SeriesPage(QWidget):
 
     def _sync_layout_controls(self) -> None:
         """Show the controls only the grid, or only the domain chosen, has a use for."""
+        # First, since it can move the layout off Overall and the rest reads it.
+        self._sync_overall_control()
         for action in self._grid_only:
             action.setVisible(self.small_multiples)
+        for action in self._overall_only:
+            action.setVisible(self.overall)
         self._controls.show_spectral(self.domain == "spectrum")
         self._controls.show_bins(self.domain == "distribution")
         self._parameter_separator.setVisible(self.domain != "time")
         self._sync_alignment_control()
+
+    def _sync_overall_control(self) -> None:
+        """Grey *Overall* in the time domain, and leave it if the domain moves there.
+
+        Pooling the readings of instances cut from different months says
+        something about their distribution and about their spectrum, and
+        nothing at all about their time series: there is no common clock to
+        draw them against, and no useful one to invent.
+        """
+        item = self._layout_box.model().item(LAYOUTS.index("Overall"))
+        allowed = self.domain != "time"
+        flags = item.flags()
+        item.setFlags(
+            flags | Qt.ItemFlag.ItemIsEnabled if allowed else flags & ~Qt.ItemFlag.ItemIsEnabled
+        )
+        if not allowed and self.overall:
+            self._layout_box.blockSignals(True)
+            self._layout_box.setCurrentIndex(LAYOUTS.index("Overlaid"))
+            self._layout_box.blockSignals(False)
 
     def _sync_alignment_control(self) -> None:
         """Grey *Align at* wherever the anchor has nothing left to change.
@@ -378,6 +485,22 @@ class SeriesPage(QWidget):
     @property
     def small_multiples(self) -> bool:
         return self._layout_box.currentIndex() == 0
+
+    @property
+    def overall(self) -> bool:
+        """Whether the instances of a group are pooled into one curve."""
+        return self._layout_box.currentIndex() == LAYOUTS.index("Overall")
+
+    @property
+    def joined(self) -> bool:
+        """Whether overlapping instances are read as one recording before they are pooled."""
+        return self._join.isChecked()
+
+    def set_layout(self, name: str) -> None:
+        """Arrange the plots as the box would."""
+        if name not in LAYOUTS:
+            raise ValueError(f"unknown layout {name!r}; expected one of {LAYOUTS}")
+        self._layout_box.setCurrentIndex(LAYOUTS.index(name))
 
     @property
     def per_instance_axis(self) -> bool:
@@ -433,6 +556,24 @@ class SeriesPage(QWidget):
     def before_replot(self) -> None:
         """Called before the plots are laid out again, for a page's own bookkeeping."""
 
+    def pool_key(self, series: Series):
+        """Which group an instance is pooled into when *Overall* is on.
+
+        The faults page pools everything it draws into one curve per feature;
+        the features page keeps the classes apart, since telling them apart is
+        the whole of what it is for.
+        """
+        return "everything"
+
+    def pool_headline(self, members: list[int]) -> str:
+        """What the status bar calls a pooled curve, in place of naming one instance."""
+        wells = {self._series[i].well for i in members}
+        recordings = "recording" if len(members) == 1 else "recordings"
+        return (
+            f"{len(members)} {recordings} pooled from "
+            f"{len(wells)} well{'s' if len(wells) > 1 else ''}"
+        )
+
     # -- drawing
 
     def _replot(self, *args, keep_range: bool = True) -> None:
@@ -452,6 +593,11 @@ class SeriesPage(QWidget):
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         try:
             self._series = self.load_series()
+            if self.overall and self.joined:
+                # Before anything is counted: the windows of a well that
+                # overlap become the one recording they were cut from, so a
+                # shared sample is not counted once per window that holds it.
+                self._series = merge_overlapping(self._series, self.pool_key)
             self._lay_out()
         finally:
             QApplication.restoreOverrideCursor()
@@ -719,6 +865,7 @@ class SeriesPage(QWidget):
         self._plot_series = []
         self._spectra_by_plot = {}
         self._peaks_by_plot = {}
+        self._pool = {}
         self._hover = -1
         sections = self.sections()
         if not sections:
@@ -915,8 +1062,47 @@ class SeriesPage(QWidget):
                         inside = inside[(inside >= hist_bounds[0]) & (inside <= hist_bounds[1])]
                     if len(inside):
                         rows.append((i, values, codes, float(inside.min()), float(inside.max())))
-            prepared[section.key] = rows
+            prepared[section.key] = self._pool_rows(rows) if self.overall else rows
         return prepared, normalize
+
+    def _pool_rows(self, rows: list) -> list:
+        """Fold the rows of one section into one per group, for *Overall*.
+
+        A distribution pools by putting the readings together: a histogram of
+        the union is a histogram, whatever order the samples arrive in. A
+        spectrum does not, and cannot be taken over the concatenation — a
+        transform reads consecutive samples as one second apart, so the months
+        between two instances would become a step — so the estimates are
+        averaged band by band instead, which is what Welch's method already
+        does one level down.
+
+        The group keeps the position of its first member, whose color and
+        whose section it takes; ``_pool`` remembers the rest so that the status
+        bar can say how many recordings and how many wells are behind the
+        curve.
+        """
+        groups: dict = {}
+        for row in rows:
+            groups.setdefault(self.pool_key(self._series[row[0]]), []).append(row)
+        folded = []
+        for members in groups.values():
+            head = members[0][0]
+            self._pool[head] = [row[0] for row in members]
+            if self.domain == "spectrum":
+                pooled = average_spectra([row[1] for row in members])
+                if pooled is not None:
+                    folded.append((head, pooled))
+            else:
+                folded.append(
+                    (
+                        head,
+                        np.concatenate([row[1] for row in members]),
+                        np.concatenate([row[2] for row in members]),
+                        min(row[3] for row in members),
+                        max(row[4] for row in members),
+                    )
+                )
+        return folded
 
     def _shared_edges(self, rows) -> np.ndarray | None:
         """Bins spanning the readings of every series of one section, for histograms on one axis."""
@@ -969,7 +1155,11 @@ class SeriesPage(QWidget):
                     share = 100.0 * result.counts / result.total
                     top = max(top, float(share.max()))
                     curve = add_step_outline(
-                        plot, result.edges, share, pg.mkPen(self._series[i].color, width=1.2)
+                        plot,
+                        result.edges,
+                        share,
+                        pg.mkPen(self._series[i].color, width=1.2),
+                        fill=self._series[i].color,
                     )
                     self._curves[i].append(curve)
                     self._mark_peak(plot, i, result, self._series[i].color)
@@ -1205,16 +1395,26 @@ class SeriesPage(QWidget):
         for i, curves in self._curves.items():
             if i >= len(self._series):
                 continue
-            color = QColor(self._series[i].color)
-            if index >= 0 and i != index:
+            base = self._series[i].color
+            color = QColor(base)
+            faded = index >= 0 and i != index
+            if faded:
                 color.setAlpha(FADE_ALPHA)
                 pen = pg.mkPen(color, width=1.0)
             elif i == index:
                 pen = pg.mkPen(color, width=2.6)
             else:
                 pen = pg.mkPen(color, width=1.2)
+            # A histogram outline carries a wash under it, which has to fade
+            # with its line or the faded curve stays the loudest thing on the
+            # plot. Setting a fill brush on a curve that has no fill level —
+            # a trace, a spectrum — does nothing, so this needs no test.
+            fill = histogram_fill(base)
+            if faded:
+                fill.setAlpha(max(fill.alpha() * FADE_ALPHA // 255, 8))
             for curve in curves:
                 curve.setPen(pen)
+                curve.setFillBrush(pg.mkBrush(fill))
 
     def _on_mouse_moved(self, pos) -> None:
         """Name the line nearest the pointer, and read the instance at that moment."""
@@ -1245,7 +1445,10 @@ class SeriesPage(QWidget):
 
     def _describe(self, index: int, plot, hours: float | None) -> str:
         series = self._series[index]
-        parts = [self.series_headline(series)]
+        members = self._pool.get(index)
+        # A pooled curve stands for many instances, so naming the one whose
+        # position it happens to carry would be a lie.
+        parts = [self.pool_headline(members) if members else self.series_headline(series)]
         if hours is not None and self.domain != "time":
             # Off the time axis the coordinate under the pointer is a reading or a period.
             x = hours

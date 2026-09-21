@@ -146,7 +146,7 @@ def sampling_of(kinds: np.ndarray, step_s: float = 1.0) -> Sampling:
 def describe_sampling(sampling: Sampling) -> str:
     """One clause about how a series was measured, for a status bar or a caption.
 
-    ``measured 12 % (one every 33 s) · interpolated 80 % · held 8 %``, the
+    ``measured 12 % (one every 33 s), interpolated 80 %, held 8 %``, the
     parts that are zero left out.
     """
     if sampling.n_valid == 0:
@@ -158,7 +158,7 @@ def describe_sampling(sampling: Sampling) -> str:
         parts.append(f"interpolated {sampling.n_interpolated / sampling.n_valid:.0%}")
     if sampling.n_held:
         parts.append(f"held {sampling.n_held / sampling.n_valid:.0%}")
-    return " · ".join(parts)
+    return ", ".join(parts)
 
 
 def format_spacing(seconds: float) -> str:

@@ -1,6 +1,7 @@
-"""Loading with feedback: the catalogue behind a progress dialog, instances behind a cache."""
+"""Loading with feedback: the start-up and the passes behind progress dialogs, instances behind a cache."""
 
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -77,14 +78,69 @@ def _progress_dialog(text: str, parent: QWidget | None):
     return dialog, progress
 
 
+class LaunchProgress:
+    """One bar over the whole start-up, from the command to the window.
+
+    Building the main window is most of a launch: every page lays out every
+    well and every instance of the catalogue before anything is shown, which
+    on 3W 2.0.0 is several seconds of nothing on screen. This dialog reports
+    each step, and takes over the catalogue scan of a first launch, so that
+    one window says everything that happens between the command and the
+    viewer. There is no Cancel: the alternative to launching is quitting.
+    """
+
+    def __init__(self, steps: int):
+        self._steps = steps
+        self._done = 0
+        self._dialog = QProgressDialog("Starting the viewer…", "", 0, steps, None)
+        self._dialog.setWindowTitle("3W Overlap Viewer")
+        self._dialog.setCancelButton(None)
+        self._dialog.setMinimumDuration(0)
+        self._dialog.setMinimumWidth(460)
+        self._dialog.setAutoClose(False)
+        self._dialog.setAutoReset(False)
+        self._dialog.setValue(0)
+        self._dialog.show()
+        QApplication.processEvents()
+
+    def step(self, text: str) -> None:
+        """Announce the step about to start; the bar shows the steps done so far."""
+        self._dialog.setMaximum(self._steps)
+        self._dialog.setValue(min(self._done, self._steps))
+        self._dialog.setLabelText(text)
+        self._done += 1
+        QApplication.processEvents()
+
+    def scanning(self, done: int, total: int, name: str) -> bool:
+        """The catalogue scan's callback: the bar follows the files while the scan lasts."""
+        self._dialog.setMaximum(total)
+        self._dialog.setValue(done)
+        self._dialog.setLabelText(
+            f"Scanning the instances of the dataset…\nReading {name}\n({done} of {total} instances)"
+        )
+        QApplication.processEvents()
+        return True
+
+    def close(self) -> None:
+        self._dialog.close()
+        self._dialog.deleteLater()
+
+
 def catalogue_with_progress(
-    info: DatasetInfo, use_cache: bool = True, parent: QWidget | None = None
+    info: DatasetInfo,
+    use_cache: bool = True,
+    parent: QWidget | None = None,
+    progress: Callable[[int, int, str], bool] | None = None,
 ) -> pd.DataFrame:
     """Load the catalogue, showing a cancellable progress dialog if the scan takes long.
 
     Raises ``dataset.ScanCancelled`` when the user cancels. A catalogue served
-    from the cache never shows the dialog.
+    from the cache never shows the dialog. Given a ``progress`` callback, the
+    scan reports to it instead of to a dialog of its own (the start-up passes
+    its launch bar).
     """
+    if progress is not None:
+        return load_catalogue(info, use_cache=use_cache, progress=progress)
     dialog, progress = _progress_dialog("Scanning the instances of the dataset…", parent)
     try:
         return load_catalogue(info, use_cache=use_cache, progress=progress)
@@ -145,8 +201,8 @@ def profiles_with_progress(
 ) -> Profiles:
     """Load the profile of every sensor of every instance and bar, behind a progress dialog.
 
-    The pass reads every file in full — about a minute and a half for the
-    1,119 instances of 3W 2.0.0 — and is cached, so the dialog shows once.
+    The pass reads every file in full (about a minute and a half for the
+    1,119 instances of 3W 2.0.0) and is cached, so the dialog shows once.
     Raises ``dataset.ScanCancelled`` when the user cancels.
     """
     dialog, progress = _progress_dialog(

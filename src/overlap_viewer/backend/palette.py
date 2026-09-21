@@ -1,7 +1,7 @@
 """Colors: fault hues tinted by reach, label shading, legend entries. No Qt here.
 
 The hues themselves belong to the theme in force (see ``theme``); what is here
-is how they combine — the ladder of tints that says how far a fault developed,
+is how they combine: the ladder of tints that says how far a fault developed,
 and the key that names every color drawn. The theme is read on every call rather
 than captured, so switching mode and rebuilding is enough to repaint everything.
 
@@ -34,8 +34,8 @@ def to_hex(rgb: tuple[float, float, float]) -> str:
 def tint(color: str, strength: float, base: str | None = None) -> str:
     """Mix one color toward the ground it is drawn on, ``strength`` 1.0 keeping it untouched.
 
-    That ground is the plotting background of the theme in force — white in
-    light mode, near-black in dark mode — so a weaker tint always means less of
+    That ground is the plotting background of the theme in force (white in
+    light mode, near-black in dark mode), so a weaker tint always means less of
     the hue and more of the background, whichever way round the two are. Mixing
     toward white regardless would make the faintest step of the ladder the
     loudest thing on a dark plot.

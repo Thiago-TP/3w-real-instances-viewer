@@ -75,9 +75,9 @@ from overlap_viewer.frontend.legend import LegendBar
 from overlap_viewer.frontend.passes import Passes
 
 HINT = (
-    "Hover a bar to see the instance and the instances it overlaps · click a bar to open their "
-    "time series · click a color in the key to show only that fault's wells · drag to pan · "
-    "Ctrl + wheel to zoom · F1 for help"
+    "Hover a bar to see the instance and the instances it overlaps | click a bar to open their "
+    "time series | click a color in the key to show only that fault's wells | drag to pan | "
+    "Ctrl + wheel to zoom | F1 for help"
 )
 
 LANE_PX = 26  # height of one stack level on screen
@@ -133,7 +133,7 @@ DESCRIPTOR_MODE_TIP = (
 
 
 def faults_of(data: WellData, index: int, info: DatasetInfo) -> str:
-    """The fault behind one bar — or every fault, ``+``-joined, when a joined bar mixes folders."""
+    """The fault behind one bar, or every fault, ``+``-joined, when a joined bar mixes folders."""
     return " + ".join(
         info.fault_name(fault_class)
         for fault_class in sorted({fault_class for fault_class, _ in data.colors[index]})
@@ -172,13 +172,13 @@ def describe_instance(
         ]
         if len(members) > 4:
             names.append(f"+{len(members) - 4} more")
-        what = f"joins {len(members)} instances: {', '.join(names)} · " + " + ".join(
+        what = f"joins {len(members)} instances: {', '.join(names)} | " + " + ".join(
             legend_label(fault_class, reach, info.fault_names)
             for fault_class, reach in data.colors[index]
         )
     else:
         fault_class = int(row["fault_class"])
-        reach = "" if fault_class == 0 else f" · {REACH_LABELS[row['reach']]}"
+        reach = "" if fault_class == 0 else f" | {REACH_LABELS[row['reach']]}"
         what = f"{info.fault_name(fault_class)}{reach}"
     start, end = pd.Timestamp(row["start"]), pd.Timestamp(row["end"])
     end_fmt = "%H:%M:%S" if end.date() == start.date() else "%Y-%m-%d %H:%M:%S"
@@ -198,10 +198,10 @@ def describe_instance(
     else:
         overlap = f"overlaps no other {noun}"
     flagged = implausible_of(availability, data, index)
-    warning = f" · ⚠ readings outside the plausible range: {', '.join(flagged)}" if flagged else ""
+    warning = f" | ⚠ readings outside the plausible range: {', '.join(flagged)}" if flagged else ""
     return (
-        f"{instance_title(row)} · {what} · {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} "
-        f"({row['hours']:.1f} h, {int(row['n_samples']):,} samples) · stack level {int(row['lane']) + 1} · {overlap}"
+        f"{instance_title(row)} | {what} | {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} "
+        f"({row['hours']:.1f} h, {int(row['n_samples']):,} samples) | stack level {int(row['lane']) + 1} | {overlap}"
         f"{warning}"
     )
 
@@ -234,7 +234,7 @@ def describe_sensor_in_bar(
         parts.append(f"frozen in {shares[FROZEN]:.0%}")
     if shares[ABSENT] > 0:
         parts.append(f"absent from {shares[ABSENT]:.0%}")
-    return ", ".join(parts) + (" · ⚠ readings outside the plausible range" if flagged else "")
+    return ", ".join(parts) + (" | ⚠ readings outside the plausible range" if flagged else "")
 
 
 class ElidedLabel(QLabel):
@@ -449,19 +449,19 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         if data.joined_view and n_bars < instances:
             still = data.n_overlapping
             counts = (
-                f"{instances} instances joined into {n_bars} bar{'s' if n_bars > 1 else ''} · "
+                f"{instances} instances joined into {n_bars} bar{'s' if n_bars > 1 else ''} | "
                 f"{still} still overlap{'s' if still == 1 else ''} another"
                 + (" (labels disagree)" if still else "")
             )
         else:  # nothing to join on this well: the plain count says it all
             counts = (
-                f"{data.n_instances} instance{'s' if data.n_instances > 1 else ''} · "
+                f"{data.n_instances} instance{'s' if data.n_instances > 1 else ''} | "
                 f"{data.n_overlapping} overlap another"
             )
         summary = (
-            f"{counts} · deepest pile-up {data.n_lanes} · "
+            f"{counts} | deepest pile-up {data.n_lanes} | "
             f"{bursts.recorded_hours:,.1f} h in {n_blocks} burst{'s' if n_blocks > 1 else ''} over "
-            f"{days:,.0f} day{'s' if round(days) != 1 else ''} ({share:.1%}) · {first:%Y-%m-%d} → {last:%Y-%m-%d}"
+            f"{days:,.0f} day{'s' if round(days) != 1 else ''} ({share:.1%}) | {first:%Y-%m-%d} → {last:%Y-%m-%d}"
         )
         return (
             f'<span style="font-size:10pt; font-weight:bold;">{data.label}</span>'
@@ -681,8 +681,8 @@ class TimelinesPage(QWidget):
             "the history of that sensor on every well, an era of absence or a scattering of it; "
             "how much of what it recorded was actually measured, the rest being the straight "
             "lines the historian drew between measurements; one descriptor of the sensor's "
-            "series — autocorrelation time, signal-to-noise ratio, Gaussianity, skewness, "
-            "kurtosis — ranked among the bars on show; how many of its live sensors the 3W "
+            "series (autocorrelation time, signal-to-noise ratio, Gaussianity, skewness, "
+            "kurtosis), ranked among the bars on show; how many of its live sensors the 3W "
             "Toolkit's CleanSignals rule would keep, at the Toolkit's default thresholds, full for "
             "all of them and faint for few (hover a bar for which it discards, and why); or what "
             "the Instances map made of it. The sensor and Toolkit colorings read every instance in "
@@ -757,8 +757,8 @@ class TimelinesPage(QWidget):
     def _on_join_toggled(self, *args) -> None:
         """Join or unjoin the instances, keeping the well the reader was looking at in view.
 
-        The same wells, in the same order, are drawn either way — only the bars
-        inside them change — so throwing the reader back to the first well of a
+        The same wells, in the same order, are drawn either way (only the bars
+        inside them change), so throwing the reader back to the first well of a
         long grid loses the very comparison the tick was made to see.
         """
         anchor = self._scroll_anchor()
@@ -797,7 +797,7 @@ class TimelinesPage(QWidget):
         )
         n_over = sum(1 for well in shown if well.n_overlapping > 0)
         n_overlapping = sum(well.n_overlapping for well in shown)
-        version = f"3W {self.info.version} · " if self.info.version else ""
+        version = f"3W {self.info.version} | " if self.info.version else ""
         instances = f"{version}{len(self._catalogue)} real instances on {len(shown)} wells"
         if self._join.isChecked():
             bars = sum(well.n_instances for well in shown)
@@ -922,7 +922,7 @@ class TimelinesPage(QWidget):
             parts.append(f"rank {rank:.2f} among the {len(self._descriptor_ranks)} bars on show")
         if not measured and choice.inflated:
             parts.append(GRID_CAVEAT)
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def set_map_results(self, results) -> None:
         """Take what the Instances map computed, and offer its colorings."""
@@ -1150,7 +1150,7 @@ class TimelinesPage(QWidget):
         if sensor is not None and kind == "descriptor":
             choice = self.descriptor_choice
             where = "on the measurements" if self.descriptor_measured else "on the grid"
-            caveat = f" — {GRID_CAVEAT}" if choice.inflated and not self.descriptor_measured else ""
+            caveat = f", {GRID_CAVEAT}" if choice.inflated and not self.descriptor_measured else ""
             self._state_key.set_text(
                 "ramp",
                 f"{sensor}: {choice.name.lower()} {where}, ranked among the bars on show from "
@@ -1303,17 +1303,17 @@ class TimelinesPage(QWidget):
         text = describe_instance(plot.data, index, self.info, self._availability)
         sensor = self.sensor_coloring
         if sensor is not None and self.coloring_kind == "descriptor":
-            text += " · " + self.describe_descriptor_in_bar(plot.data, index)
+            text += " | " + self.describe_descriptor_in_bar(plot.data, index)
         elif sensor is not None:
-            text += " · " + describe_sensor_in_bar(
+            text += " | " + describe_sensor_in_bar(
                 self._availability, plot.data, index, sensor, self.coloring_kind == "measured"
             )
         elif self.coloring_kind in MAP_KINDS:
-            text += " · " + self.describe_map_in_bar(plot.data, index)
+            text += " | " + self.describe_map_in_bar(plot.data, index)
         elif self.coloring_kind == "cleaned":
-            text += " · " + self.describe_cleaning_in_bar(plot.data, index)
+            text += " | " + self.describe_cleaning_in_bar(plot.data, index)
         elif self.coloring_kind == "model":
-            text += " · " + self.describe_model_in_bar(plot.data, index)
+            text += " | " + self.describe_model_in_bar(plot.data, index)
         self.status.emit(text)
         data = plot.data
         self._legend.highlight(
@@ -1342,7 +1342,7 @@ class TimelinesPage(QWidget):
 
     def shown_source(self) -> str:
         """Where the file list came from, for its provenance."""
-        parts = [f"the Timelines page · {self._filter.currentText()}"]
+        parts = [f"the Timelines page | {self._filter.currentText()}"]
         if self._fault_filter is not None:
             parts.append(f"wells that recorded {self.info.fault_name(self._fault_filter)}")
-        return " · ".join(parts)
+        return " | ".join(parts)

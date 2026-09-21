@@ -2,15 +2,15 @@
 
 The oldest tool of multivariate process monitoring, and the one Melo's thesis
 and his BibMon package build on: fit a principal-component model on normal
-operation, then follow two statistics along a recording — Hotelling's T², the
+operation, then follow two statistics along a recording (Hotelling's T², the
 distance of a sample inside the model's plane, and Q (the squared prediction
-error), its distance off the plane — and call a sample anomalous when either
+error), its distance off the plane), and call a sample anomalous when either
 exceeds the limit normal operation sets. The limits are the 99th percentile
 of each statistic over the training samples.
 
 Two ways of fitting are offered. ``--fit well`` (the default) fits one model
 per well on every sample of the well's *Normal Operation* instances (class 0)
-and scores every instance of the well with it — the setting a detector would
+and scores every instance of the well with it, the setting a detector would
 run in, one reference per well, so that a well without normal instances is
 skipped. ``--fit instance`` fits on the samples labeled normal inside each
 instance and scores that instance alone, so every instance is its own
@@ -223,8 +223,8 @@ def main(argv=None) -> int:
         kind="detection",
         labels={0: "normal", 1: "anomalous"},
         description=(
-            f"Hotelling's T² and the squared prediction error Q of a principal-component model — {how} "
-            "— over the analog sensors live in every training instance (readings outside the "
+            f"Hotelling's T² and the squared prediction error Q of a principal-component model ({how} "
+            ") over the analog sensors live in every training instance (readings outside the "
             "plausible range masked, gaps filled forward then backward, standardized on the training "
             f"samples); the components kept explain {VARIANCE_KEPT:.0%} of the training variance. A "
             f"sample is anomalous when T² or Q exceeds the {LIMIT_QUANTILE:.0%} quantile of its "

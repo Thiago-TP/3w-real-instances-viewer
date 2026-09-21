@@ -140,8 +140,8 @@ class FlowLayout(QLayout):
 def row_breaks(entries: list[LegendEntry]) -> list[bool]:
     """Which entries must start a new row of the key.
 
-    A fault with more than one entry is a gradient — the same hue at two or
-    three tints — and its steps are only readable side by side, so the group
+    A fault with more than one entry is a gradient (the same hue at two or
+    three tints) and its steps are only readable side by side, so the group
     starts a row and whatever follows it starts the next. Faults with a single
     entry simply flow.
 
@@ -247,7 +247,7 @@ class LegendBar(QWidget):
 
     fault_clicked = Signal(int)
 
-    TITLE = "Bar color — fault folder (severity reach)"
+    TITLE = "Bar color: fault folder (severity reach)"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -390,7 +390,7 @@ class LegendBar(QWidget):
         self._more.setText(f"+{missing} more" if missing > 0 else "")
         self._more.setVisible(missing > 0)
         self._hint.setText(
-            f"{len(self._entries)} colors — hover a bar, or click to open"
+            f"{len(self._entries)} colors; hover a bar, or click to open"
             if self._collapsed and not popping
             else ""
         )

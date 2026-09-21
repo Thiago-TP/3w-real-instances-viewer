@@ -13,7 +13,7 @@ the dataset as a whole recorded, and the sensors can be ordered by that.
 the first matrix answers: how often two sensors carry a reading *at the same
 instant*. Two sensors can each cover half a recording and never overlap, and a
 pair with little coverage is one no model can lean on and a correlation nobody
-should trust — Rabelo's figure 2.10.
+should trust: Rabelo's figure 2.10.
 
 Hovering anything puts the figures behind it in the status bar and in a tooltip
 where the pointer is, a printed availability map writing that figure inside
@@ -106,19 +106,19 @@ WEIGHTS = ("Share of samples", "Share of instances")
 COUNTS = ("Both live", "Both recorded")
 
 HINT = (
-    "Hover a cell for the figures behind it · click a fault class or a well to see its instances "
-    "one by one, an instance to open its time series with that sensor drawn · every column is a "
-    "sensor, every row what the Rows box says · F1 for help"
+    "Hover a cell for the figures behind it | click a fault class or a well to see its instances "
+    "one by one, an instance to open its time series with that sensor drawn | every column is a "
+    "sensor, every row what the Rows box says | F1 for help"
 )
 PAIR_HINT = (
     "Every cell is a pair of sensors: the share of the samples in which both carry a reading at "
-    "the same instant · hover one for the figures behind it · the diagonal is each sensor's own "
-    "coverage · F1 for help"
+    "the same instant | hover one for the figures behind it | the diagonal is each sensor's own "
+    "coverage | F1 for help"
 )
 CORR_HINT = (
     "Every cell is a pair of sensors: how they move together over the samples of the instances "
-    "on show, pooled · blue positive, amber negative, full at ±1 · hover one for all three "
-    "coefficients · Smoothing shows what a moving average does to them · F1 for help"
+    "on show, pooled | blue positive, amber negative, full at ±1 | hover one for all three "
+    "coefficients | Smoothing shows what a moving average does to them | F1 for help"
 )
 
 
@@ -139,8 +139,8 @@ SMOOTH_TIP = (
     "A moving average of this many samples applied to every series before the coefficients are "
     "taken, computed for every length in one pass. Melo's figures 4.11 and 4.26 show a process's "
     "coefficients rising as the window grows, the noise hiding the relations. On 3W the pooled "
-    "coefficients hardly move with it — the whole dataset's global coefficient goes from 0.420 to "
-    "0.424 between none and five minutes — because they are set by the levels the sensors sit at "
+    "coefficients hardly move with it (the whole dataset's global coefficient goes from 0.420 to "
+    "0.424 between none and five minutes), because they are set by the levels the sensors sit at "
     "from one instance to the next; the historian's lines between measurements matter inside one "
     "instance, at the scale of seconds, where the Dispersion page looks."
 )
@@ -458,7 +458,7 @@ class AvailabilityPage(QWidget):
             "Count the bars the timelines draw when joined: the instances of a well that overlap "
             "with labels that agree, read as the single recording they were cut from, in which a "
             "sample two windows share is counted once and a sensor one window missed is filled in "
-            "by another — which the pair map feels the most, two sensors that never share a "
+            "by another, which the pair map feels the most: two sensors that never share a "
             "sample inside one window often sharing plenty inside the recording the windows were "
             "cut from. The footers of the files cannot say which instants two windows share, so "
             "the first tick reads the data, behind a progress dialog, and keeps the result in the "
@@ -844,7 +844,7 @@ class AvailabilityPage(QWidget):
             for fault in sorted(counts.index):
                 name = self.info.fault_name(int(fault))
                 self._subject.addItem(
-                    f"{fault} · {name} ({_plural(int(counts[fault]), 'instance')})", int(fault)
+                    f"{fault}. {name} ({_plural(int(counts[fault]), 'instance')})", int(fault)
                 )
         index = self._subject.findData(wanted) if wanted is not None else -1
         self._subject.setCurrentIndex(max(index, 0))
@@ -863,7 +863,7 @@ class AvailabilityPage(QWidget):
                 self._scope.insertSeparator(self._scope.count())
             for fault in sorted(faults.index):
                 self._scope.addItem(
-                    f"{fault} · {self.info.fault_name(int(fault))} "
+                    f"{fault}. {self.info.fault_name(int(fault))} "
                     f"({_plural(int(faults[fault]), 'instance')})",
                     ("class", int(fault)),
                 )
@@ -911,7 +911,7 @@ class AvailabilityPage(QWidget):
             keys = [int(k) for k in bars["fault_class"]]
             order = sorted(set(keys))
             table = availability.grouped(keys, order)
-            rows = [HeatmapRow(f"{k} · {info.fault_name(k)}", fault_color(k)) for k in order]
+            rows = [HeatmapRow(f"{k}. {info.fault_name(k)}", fault_color(k)) for k in order]
             ids = [("class", k) for k in order]
             total_label = f"All real {noun}s"
         elif mode == "Wells":
@@ -938,7 +938,7 @@ class AvailabilityPage(QWidget):
                 )
                 ids.append(("bar", position))
             what = well_label(int(subject)) if column == "well" else info.fault_name(int(subject))
-            total_label = f"{what} · all {_plural(len(positions), noun)}"
+            total_label = f"{what}: all {_plural(len(positions), noun)}"
         total = availability.total("total", mask=mask)
         table = table.stacked(total)
         rows.append(HeatmapRow(total_label, None, emphasized=True))
@@ -1072,7 +1072,7 @@ class AvailabilityPage(QWidget):
                 "pooled over the well's instances, so its shut-ins and restarts move every sensor "
                 "together"
             )
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def _corr_values(self, row: int, column: int) -> dict[str, float]:
         corr = self._corr
@@ -1101,12 +1101,12 @@ class AvailabilityPage(QWidget):
                 strongest = f"strongest with {corr.sensors[partner]}: Pearson {rho[partner]:+.2f}"
             else:
                 strongest = "too few co-valid samples with any other sensor"
-            return f"{name} · {own:,} samples in the scope · {strongest}"
+            return f"{name} | {own:,} samples in the scope | {strongest}"
         a = corr.sensors[self._corr_order[row]]
         b = corr.sensors[self._corr_order[column]]
         values = self._corr_values(row, column)
         if values["pairs"] < MIN_PAIRS:
-            return f"{a} × {b} · only {int(values['pairs']):,} co-valid samples: nothing to say"
+            return f"{a} × {b} | only {int(values['pairs']):,} co-valid samples: nothing to say"
         parts = [f"{a} × {b}", f"Pearson {values['Pearson']:+.2f}"]
         if "Mutual information" in values:
             parts.append(f"mutual-information coefficient {values['Mutual information']:.2f}")
@@ -1121,8 +1121,8 @@ class AvailabilityPage(QWidget):
             and np.isfinite(corr.pearson[w][self._corr_order[row], self._corr_order[column]])
         ]
         if others:
-            parts.append("Pearson at other smoothings — " + ", ".join(others))
-        return " · ".join(parts)
+            parts.append("Pearson at other smoothings: " + ", ".join(others))
+        return " | ".join(parts)
 
     def _corr_tooltip(self, row: int, column: int) -> str:
         """The tooltip of a cell, a row or a column of the correlation matrix."""
@@ -1152,9 +1152,9 @@ class AvailabilityPage(QWidget):
             if k not in ("pairs", self.coefficient)
         ]
         if rest:
-            lines.append(f'<span style="color:{colors.muted};">{" · ".join(rest)}</span>')
+            lines.append(f'<span style="color:{colors.muted};">{" | ".join(rest)}</span>')
         lines.append(
-            f'<span style="color:{colors.muted};">{int(values["pairs"]):,} co-valid samples · '
+            f'<span style="color:{colors.muted};">{int(values["pairs"]):,} co-valid samples | '
             f"smoothing {WINDOW_NAMES[self.smoothing]}</span>"
         )
         return "<br>".join(lines)
@@ -1240,11 +1240,11 @@ class AvailabilityPage(QWidget):
         elif mode == "Wells":
             what = "well"
         else:
-            what = f"{noun} of {self._rows[-1].label.split(' · ')[0]}"
+            what = f"{noun} of {self._rows[-1].label.split(': ')[0]}"
         unit = f"its {noun}s" if self.by_instances else "its samples"
         parts = [
             (
-                f"Per {what}: the share of {unit} in which each sensor is live, frozen or absent · "
+                f"Per {what}: the share of {unit} in which each sensor is live, frozen or absent | "
                 "▲ a reading outside the plausible range"
             ),
             f"{shown:,} real {noun}{'s' if shown != 1 else ''}, {samples:,} samples",
@@ -1273,7 +1273,7 @@ class AvailabilityPage(QWidget):
             )
         else:
             parts.append("a sample two overlapping instances share is counted in both")
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def _pair_title_text(self) -> str:
         table = self._pair_table
@@ -1290,7 +1290,7 @@ class AvailabilityPage(QWidget):
                 "the same instant"
             ),
             (
-                f"{scope.split(' (')[0]} · {_plural(table.n_bars, noun)}, "
+                f"{scope.split(' (')[0]} | {_plural(table.n_bars, noun)}, "
                 f"{table.n_samples:,} samples"
             ),
             rule,
@@ -1303,14 +1303,14 @@ class AvailabilityPage(QWidget):
                 "overlapping instances read as the recordings they were cut from, so a sensor one "
                 "window missed is filled in by another"
             )
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def summary(self) -> str:
         """One line for the status bar: what the whole catalogue recorded."""
         availability = self.availability
         if availability is None:
             return ""
-        version = f"3W {self.info.version} · " if self.info.version else ""
+        version = f"3W {self.info.version} | " if self.info.version else ""
         if self.correlations_on and self._corr is not None:
             corr = self._corr
             linear, nonlinear = corr.global_coefficients(self.smoothing)
@@ -1320,7 +1320,7 @@ class AvailabilityPage(QWidget):
                 figures += f", nonlinear {nonlinear:.2f}"
             return (
                 f"{version}{present} sensors with co-valid samples over {corr.n_instances} "
-                f"{'bars' if self.joined else 'instances'} · {figures} "
+                f"{'bars' if self.joined else 'instances'} | {figures} "
             )
         if self.pairs and self._pair_table is not None:
             table = self._pair_table
@@ -1329,7 +1329,7 @@ class AvailabilityPage(QWidget):
             off = ~np.eye(n, dtype=bool)
             never = int((table.samples[off] == 0).sum() // 2)
             return (
-                f"{version}{n} sensors · {total} pairs · {never} never carry a reading at the "
+                f"{version}{n} sensors | {total} pairs | {never} never carry a reading at the "
                 f"same instant "
             )
         total = availability.total()
@@ -1349,11 +1349,11 @@ class AvailabilityPage(QWidget):
             filled = float(total.filled[0, analog].sum())
             if genuine + filled > 0:
                 measured = (
-                    f" · {genuine / (genuine + filled):.1%} of the live samples of the analog "
+                    f" | {genuine / (genuine + filled):.1%} of the live samples of the analog "
                     "sensors are measurements"
                 )
         return (
-            f"{version}{_plural(n, noun)} on {wells} wells · {s} sensors, {never} never recorded · "
+            f"{version}{_plural(n, noun)} on {wells} wells | {s} sensors, {never} never recorded | "
             f"{_plural(flagged, noun)} with readings outside the plausible range{measured} "
         )
 
@@ -1399,7 +1399,7 @@ class AvailabilityPage(QWidget):
         shares = table.shares[row, column]
         counts = table.instances[row, column]
         noun = "bar" if self.joined else "instance"
-        parts = [f"{self._rows[row].label} · {name}" + (f" [{unit}]" if unit else "")]
+        parts = [f"{self._rows[row].label} | {name}" + (f" [{unit}]" if unit else "")]
         if n_instances == 1:
             n_total = int(table.n_samples[row])
             for code, word in ((LIVE, "live"), (FROZEN, "frozen"), (ABSENT, "absent")):
@@ -1431,7 +1431,7 @@ class AvailabilityPage(QWidget):
         cleaned = self._cleaning_clause(row, column)
         if cleaned:
             parts.append(cleaned)
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def _cleaning_clause(self, row: int, column: int) -> str:
         """What the Toolkit's rule would do to this cell, when the rule is on."""
@@ -1460,7 +1460,7 @@ class AvailabilityPage(QWidget):
                 parts.append(
                     f"╲ CleanSignals would discard {name} in {count} of {_plural(n, noun)}"
                 )
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def _measured_clause(self, row: int, column: int) -> str:
         """How much of one cell's live signal was measured, when the split is on and known."""
@@ -1513,7 +1513,7 @@ class AvailabilityPage(QWidget):
                     f"between {lo_s:.4g} and {hi_s:.4g}; discarded in "
                     f"{int(cleaning.discarded[:, j].sum())} {noun}s"
                 )
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def _describe_row(self, row: int) -> str:
         kind, key = self._ids[row]
@@ -1522,17 +1522,17 @@ class AvailabilityPage(QWidget):
             entry = bars.iloc[int(key)]
             view = self._view_of(int(entry["well"]))
             return describe_instance(view, int(entry["bar"]), info, self._plain) + (
-                " · click to open its time series"
+                " | click to open its time series"
             )
         if kind == "class":
             part = bars[bars["fault_class"] == key]
-            head = f"{key} · {info.fault_name(int(key))}"
-            tail = " · click to see them one by one"
+            head = f"{key}. {info.fault_name(int(key))}"
+            tail = " | click to see them one by one"
         elif kind == "well":
             part = bars[bars["well"] == key]
             faults = sorted(int(f) for f in part["fault_class"].unique())
-            head = f"{well_label(int(key))} · fault classes {', '.join(map(str, faults))}"
-            tail = " · click to see them one by one"
+            head = f"{well_label(int(key))} | fault classes {', '.join(map(str, faults))}"
+            tail = " | click to see them one by one"
         else:
             part = bars if self._mask is None else bars[self._mask]
             head = self._rows[row].label
@@ -1540,8 +1540,8 @@ class AvailabilityPage(QWidget):
         wells = part["well"].nunique()
         noun = "bar" if self.joined else "real instance"
         return (
-            f"{head} · {_plural(len(part), noun)} on {_plural(wells, 'well')} · "
-            f"{int(part['n_samples'].sum()):,} samples · {part['hours'].sum():,.0f} h recorded{tail}"
+            f"{head} | {_plural(len(part), noun)} on {_plural(wells, 'well')} | "
+            f"{int(part['n_samples'].sum()):,} samples | {part['hours'].sum():,.0f} h recorded{tail}"
         )
 
     def shown_files(self) -> list[tuple[int, str]]:
@@ -1565,8 +1565,8 @@ class AvailabilityPage(QWidget):
     def shown_source(self) -> str:
         """Where the file list came from, for its provenance."""
         what = self._rows[-1].label if self._rows else self.mode
-        return f"the Availability page · rows: {self.mode} · {what}" + (
-            " · joined bars" if self.joined else ""
+        return f"the Availability page | rows: {self.mode} | {what}" + (
+            " | joined bars" if self.joined else ""
         )
 
     def _describe_pair(self, row: int, column: int) -> str:
@@ -1578,7 +1578,7 @@ class AvailabilityPage(QWidget):
             own = table.shares[j, j]
             described = info.sensor_descriptions.get(name, "")
             partners = int((table.samples[j] > 0).sum()) - int(table.samples[j, j] > 0)
-            return " · ".join(
+            return " | ".join(
                 part
                 for part in (
                     f"{name}" + (f" [{info.unit(name)}]" if info.unit(name) else ""),
@@ -1596,7 +1596,7 @@ class AvailabilityPage(QWidget):
         samples = int(table.samples[row, column])
         if row == column:
             return (
-                f"{a} · its own coverage: {share:.1%} of the samples on show, {samples:,} of "
+                f"{a} | its own coverage: {share:.1%} of the samples on show, {samples:,} of "
                 f"{table.n_samples:,}"
             )
         own_a, own_b = table.shares[row, row], table.shares[column, column]
@@ -1604,9 +1604,9 @@ class AvailabilityPage(QWidget):
         overlap = f"{share / min(own_a, own_b):.0%}" if min(own_a, own_b) > 0 else "none"
         noun = "bar" if self.joined else "instance"
         return (
-            f"{a} × {b} · both in {share:.1%} of the samples on show ({samples:,}) · "
-            f"{a} alone in {own_a:.1%}, {b} alone in {own_b:.1%} · "
-            f"{overlap} of the scarcer one's samples carry the other · "
+            f"{a} × {b} | both in {share:.1%} of the samples on show ({samples:,}) | "
+            f"{a} alone in {own_a:.1%}, {b} alone in {own_b:.1%} | "
+            f"{overlap} of the scarcer one's samples carry the other | "
             f"{_plural(bars, noun)} carry both"
         )
 
@@ -1653,11 +1653,11 @@ class AvailabilityPage(QWidget):
         if drawn[ABSENT] > 0:
             rest.append(f"{drawn[ABSENT]:.1%} absent")
         if rest:
-            lines.append(f'<span style="color:{colors.muted};">{" · ".join(rest)}</span>')
+            lines.append(f'<span style="color:{colors.muted};">{" | ".join(rest)}</span>')
         if n > 1:
             lines.append(
                 f'<span style="color:{colors.muted};">{other[LIVE]:.1%} of '
-                f"{'the samples' if by_bars else f'the {noun}s'} · {counts[LIVE]} live, "
+                f"{'the samples' if by_bars else f'the {noun}s'} | {counts[LIVE]} live, "
                 f"{counts[FROZEN]} frozen, {counts[ABSENT]} absent of {n}</span>"
             )
         measured = self._measured_clause(row, column)
@@ -1715,7 +1715,7 @@ class AvailabilityPage(QWidget):
         head = self._rows[row].label
         rest = self._describe_row(row)
         if rest.startswith(head):  # the description opens with the label it belongs to
-            rest = rest[len(head) :].lstrip(" ·")
+            rest = rest[len(head) :].lstrip(" |")
         tail = f'<br><span style="color:{colors.muted};">{rest}</span>' if rest else ""
         return f"<b>{head}</b>{tail}"
 
@@ -1754,7 +1754,7 @@ class AvailabilityPage(QWidget):
                 " of the samples carry both"
             ),
             (
-                f'<span style="color:{colors.muted};">{a} alone {own_a:.1%} · {b} alone '
+                f'<span style="color:{colors.muted};">{a} alone {own_a:.1%} | {b} alone '
                 f"{own_b:.1%}</span>"
             ),
             (

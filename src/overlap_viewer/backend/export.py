@@ -4,8 +4,8 @@ The Toolkit reads a dataset through ``ParquetDatasetConfig``
 (``ThreeWToolkit.dataset.parquet_dataset``); with ``split="list"`` it loads
 exactly the files named in ``file_list``, each a path relative to the dataset
 root, ``"4/WELL-00014_20170918230000.parquet"``, and refuses any it cannot
-find under the root. So the instances a page of the viewer has on show — the
-wells filtered, the instances ticked, the bars of a joined view — can be
+find under the root. So the instances a page of the viewer has on show (the
+wells filtered, the instances ticked, the bars of a joined view) can be
 handed to the Toolkit as they stand: this module writes them as the JSON of
 that configuration, which loads back with
 ``ParquetDatasetConfig(**json.load(open(path)))``.

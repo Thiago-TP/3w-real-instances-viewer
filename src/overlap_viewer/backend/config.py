@@ -1,7 +1,7 @@
 """Constants of the viewer: dataset conventions, the color ladder, layout, cache location.
 
-Everything the dataset itself can state — event names and labels, variable
-units, the transient offset — is read from the 3W ``dataset.ini`` at run time
+Everything the dataset itself can state (event names and labels, variable
+units, the transient offset) is read from the 3W ``dataset.ini`` at run time
 (see ``dataset.DatasetInfo``); the values here are the fallbacks used when the
 file is missing, plus everything that is a choice of this viewer rather than a
 property of the data.
@@ -86,7 +86,7 @@ LABEL_COLUMNS = ("class", "state")
 # joint behavior an expert reads to recognize it. Each entry reproduces the
 # variable set of the corresponding example figure of the 3W Dataset 2.0.0
 # paper (https://doi.org/10.1038/s41597-026-07225-z), which is why only the
-# events illustrated there — figures 3 to 7 — have a signature: the remaining
+# events illustrated there (figures 3 to 7) have a signature: the remaining
 # ones have no published reference set to copy.
 FAULT_SIGNATURES: dict[int, tuple[str, ...]] = {
     0: ("ABER-CKP", "ESTADO-SDV-P", "ESTADO-W1", "T-TPT"),  # figure 7
@@ -95,6 +95,52 @@ FAULT_SIGNATURES: dict[int, tuple[str, ...]] = {
     6: ("ABER-CKP", "P-MON-CKP", "P-PDG", "P-TPT"),  # figure 4
     8: ("P-MON-CKP", "P-PDG", "P-TPT", "T-TPT"),  # figure 5
 }
+
+# Where the paper publishes no figure, Vargas's thesis works through one
+# instance of the event and names the variables it moves; those are offered
+# as a best effort, in the same convention of four, read off the text of the
+# section rather than copied from a figure, and marked as such wherever they
+# are offered. Flow Instability is described as "the same variables as severe
+# slugging". Scaling in PCK moves the same variables as a quick restriction of
+# the same valve, but nothing steps the choke opening, so the opening is left
+# out and the temperature downstream of the choke, which the text names, comes
+# in. Hydrate in Service Line has no worked instance at all, and its own
+# instruments (P-JUS-BS, QBS) are never recorded in the real instances of
+# 3W 2.0.0, so the production-line hydrate's set stands in for it.
+BEST_EFFORT_SIGNATURES: dict[int, tuple[str, ...]] = {
+    1: ("P-MON-CKP", "P-TPT", "T-JUS-CKP", "T-TPT"),  # thesis, section 2.3.1 and figure 3
+    4: ("P-MON-CKP", "P-PDG", "P-TPT", "T-JUS-CKP"),  # thesis, section 2.3.4
+    5: ("P-MON-CKP", "P-TPT", "T-JUS-CKP", "T-TPT"),  # thesis, section 2.3.5 and figure 7
+    7: ("P-MON-CKP", "P-TPT", "T-JUS-CKP", "T-TPT"),  # thesis, section 2.3.7 and figure 9
+    9: ("P-MON-CKP", "P-PDG", "P-TPT", "T-TPT"),  # no source; the production-line set
+}
+
+# Where each best effort comes from, for the help and the tooltips to say.
+BEST_EFFORT_SOURCES: dict[int, str] = {
+    1: "the instance the thesis works through (section 2.3.1, figure 3)",
+    4: "the thesis, which describes the event as moving the same variables as severe slugging "
+    "(section 2.3.4)",
+    5: "the instance the thesis works through (section 2.3.5, figure 7)",
+    7: "the instance the thesis works through (section 2.3.7, figure 9)",
+    9: "no source: the event has no published example, and the service line's own instruments "
+    "(P-JUS-BS, QBS) are never recorded in the real instances of 3W 2.0.0, so the set of the "
+    "production-line hydrate stands in",
+}
+
+
+def signature_of(fault: int) -> tuple[tuple[str, ...], bool] | None:
+    """The variables that identify ``fault``, and whether a published figure backs them.
+
+    ``(variables, True)`` reproduces a figure of the 2.0.0 article,
+    ``(variables, False)`` is the best effort above, ``None`` a fault the
+    viewer knows nothing about.
+    """
+    if fault in FAULT_SIGNATURES:
+        return FAULT_SIGNATURES[fault], True
+    if fault in BEST_EFFORT_SIGNATURES:
+        return BEST_EFFORT_SIGNATURES[fault], False
+    return None
+
 
 # Filename prefix of the instances recorded on a physical well. Simulated and
 # hand-drawn instances have no well to overlap on and are ignored.
@@ -117,6 +163,7 @@ REAL_PREFIX = "WELL-"
 #   negative reading of either is impossible; 106 files carry a negative
 #   pressure, usually for the whole recording, and one well a choke opening of
 #   -99.99 %, a sentinel. Zero is left alone: frozen at zero is another defect.
+#   A percentage has a ceiling too, so an opening is capped at 100.
 # - Temperature band. The floor is below every genuine reading (T-TPT reaches
 #   -33.8 °C during a blowdown, which is real) and the ceiling twice the hottest
 #   one (127.7 °C); the band catches the sentinels -999 and -99.99 and T-PDG

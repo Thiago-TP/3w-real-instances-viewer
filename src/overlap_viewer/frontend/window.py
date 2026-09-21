@@ -8,6 +8,7 @@ window owns what they share: the theme, the rescan, the help, the status bar the
 pages write to, and the instance windows the pages open.
 """
 
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
@@ -52,7 +53,15 @@ HELP_TABS = {
 
 
 class MainWindow(QMainWindow):
-    """The pages side by side as tabs, under the toolbar they share, over the status bar they share."""
+    """The pages side by side as tabs, under the toolbar they share, over the status bar they share.
+
+    ``progress``, when given, is told what the window is doing while it is
+    built (the page being made, then the page being laid out), for the bar of
+    the start-up: building the pages over the whole catalogue is most of a
+    launch, and it happens before anything is on screen.
+    """
+
+    PAGE_TITLES = ("Timelines", "Availability", "Faults", "Features", "Instances", "Dispersion")
 
     def __init__(
         self,
@@ -62,9 +71,11 @@ class MainWindow(QMainWindow):
         columns: int = 2,
         frames: FrameCache | None = None,
         theme_mode: str = "system",
+        progress: Callable[[str], None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
+        report = progress or (lambda text: None)
         self.info = info
         self._frames = frames or FrameCache()
         # The passes over the data, read once and shared: a page that asks for
@@ -78,20 +89,22 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
+        report("Building the Timelines page…")
         self.timelines = TimelinesPage(
             info, gap_hours=gap_hours, columns=columns, passes=self._passes
         )
+        report("Building the Availability page…")
         self.availability = AvailabilityPage(info, passes=self._passes)
+        report("Building the Faults page…")
         self.faults = FaultsPage(info, self._frames, passes=self._passes)
+        report("Building the Features page…")
         self.features = FeaturesPage(info, self._frames, passes=self._passes)
+        report("Building the Instances page…")
         self.map = MapPage(info, passes=self._passes)
+        report("Building the Dispersion page…")
         self.dispersion = DispersionPage(info, passes=self._passes)
-        self._tabs.addTab(self.timelines, "Timelines")
-        self._tabs.addTab(self.availability, "Availability")
-        self._tabs.addTab(self.faults, "Faults")
-        self._tabs.addTab(self.features, "Features")
-        self._tabs.addTab(self.map, "Instances")
-        self._tabs.addTab(self.dispersion, "Dispersion")
+        for title, page in zip(self.PAGE_TITLES, self.pages):
+            self._tabs.addTab(page, title)
         self._tabs.setTabToolTip(0, "Every real instance of every well, laid out in time")
         self._tabs.setTabToolTip(
             1, "What the sensors recorded, per fault class, per well, or instance by instance"
@@ -114,7 +127,12 @@ class MainWindow(QMainWindow):
         )
         self._tabs.currentChanged.connect(self._on_page_changed)
         self.setCentralWidget(self._tabs)
+        self._catalogue = None
         self._wells: list[WellData] = []
+        # Pages a theme switch left to be laid out when next shown, and what
+        # the Instances map last computed, to hand to a page laid out late.
+        self._stale: set = set()
+        self._map_results = None
 
         self._status = ElidedLabel(self.timelines.hint())
         self.statusBar().addWidget(self._status, 1)
@@ -132,7 +150,7 @@ class MainWindow(QMainWindow):
         self.map.results_changed.connect(self._on_map_results)
 
         self._restyle()
-        self.set_catalogue(catalogue)
+        self.set_catalogue(catalogue, progress=report)
 
         # A ``system`` mode has to keep up with the desktop changing its mind.
         # Queued, because installing a theme sets the color scheme itself and
@@ -156,6 +174,7 @@ class MainWindow(QMainWindow):
 
     def _on_map_results(self, results) -> None:
         """What the Instances map computed, handed to the pages that color and sort by it."""
+        self._map_results = results
         self.timelines.set_map_results(results)
         self.faults.set_map_results(results)
         self.features.set_map_results(results)
@@ -172,7 +191,7 @@ class MainWindow(QMainWindow):
         else:
             scored = len(results.agreements)
             self._status.setText(
-                f"{results.outputs.describe()} · {scored} of the {len(self._catalogue)} real "
+                f"{results.outputs.describe()} | {scored} of the {len(self._catalogue)} real "
                 "instances of this catalogue scored"
             )
 
@@ -219,8 +238,8 @@ class MainWindow(QMainWindow):
         bar.addAction(rescan)
         export = QAction("Export file list…", self)
         export.setToolTip(
-            "Write the instances the current page has on show — the wells filtered, the instances "
-            "ticked, the bars of a joined view — as the JSON of a 3W Toolkit ParquetDatasetConfig "
+            "Write the instances the current page has on show (the wells filtered, the instances "
+            "ticked, the bars of a joined view) as the JSON of a 3W Toolkit ParquetDatasetConfig "
             "with split='list', which the Toolkit loads with "
             "ParquetDatasetConfig(**json.load(open(path))); its provenance is written beside it."
         )
@@ -228,8 +247,8 @@ class MainWindow(QMainWindow):
         bar.addAction(export)
         load_model = QAction("Load model outputs…", self)
         load_model.setToolTip(
-            "Open a folder of model outputs — model.json beside one <class>/<instance>.parquet per "
-            "instance scored, with a timestamp index and a label column (see the help) — and draw "
+            "Open a folder of model outputs (model.json beside one <class>/<instance>.parquet per "
+            "instance scored, with a timestamp index and a label column; see the help) and draw "
             "them onto the data: a band under the class band of every instance window, an "
             "agreement figure per instance that colors the Timelines and the Instances map and "
             "sorts the instance lists, and the model's labels as a shading of the Faults and "
@@ -245,8 +264,22 @@ class MainWindow(QMainWindow):
 
     # -- data
 
-    def set_catalogue(self, catalogue) -> None:
-        """Take a new catalogue: split it into wells once, and every page rebuilds from them."""
+    def set_catalogue(
+        self,
+        catalogue,
+        progress: Callable[[str], None] | None = None,
+        lazy: bool = False,
+    ) -> None:
+        """Take a new catalogue: split it into wells once, and every page rebuilds from them.
+
+        ``progress`` is told which page is being laid out, for the bar of the
+        start-up. ``lazy`` lays out the page on show alone and leaves the
+        others for when they are next shown, which is what a theme switch
+        wants: the same catalogue in new colors, and five hidden pages that
+        need not be drawn now.
+        """
+        if catalogue is not self._catalogue:
+            self._map_results = None  # computed on the old catalogue
         self._catalogue = catalogue
         if self._help is not None:  # its instance counts describe the old catalogue
             self._help.close()
@@ -254,12 +287,24 @@ class MainWindow(QMainWindow):
             self._help = None
         self._wells = split_wells(catalogue)
         self._passes.set_wells(self._wells)
-        for page in self.pages:
-            page.set_catalogue(catalogue, self._wells)
-        if self._passes.model is not None:
-            for page in (self.timelines, self.faults, self.features, self.map):
-                page.set_model_results(self._passes.model)
+        current = self._tabs.currentWidget()
+        self._stale = set()
+        for title, page in zip(self.PAGE_TITLES, self.pages):
+            if lazy and page is not current:
+                self._stale.add(page)
+                continue
+            if progress is not None:
+                progress(f"Laying out the {title} page…")
+            self._lay_out(page)
         self._refresh_summary()
+
+    def _lay_out(self, page) -> None:
+        """Lay one page out over the catalogue, and hand it what the others hold for it."""
+        page.set_catalogue(self._catalogue, self._wells)
+        if self._passes.model is not None and hasattr(page, "set_model_results"):
+            page.set_model_results(self._passes.model)
+        if self._map_results is not None and hasattr(page, "set_map_results"):
+            page.set_map_results(self._map_results)
 
     def _refresh_summary(self, *args) -> None:
         self._dataset_label.setText(self._tabs.currentWidget().summary())
@@ -271,6 +316,13 @@ class MainWindow(QMainWindow):
 
     def _on_page_changed(self, index: int) -> None:
         page = self._tabs.widget(index)
+        if page in self._stale:  # a theme switch left it for now
+            self._stale.discard(page)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self._lay_out(page)
+            finally:
+                QApplication.restoreOverrideCursor()
         self._status.setText(page.hint())
         self._refresh_summary()
 
@@ -284,8 +336,10 @@ class MainWindow(QMainWindow):
         """Switch to ``light``, ``dark`` or ``system``, and repaint every open window.
 
         The plots cannot be recolored in place: pyqtgraph reads its background
-        and its foreground when an item is built, so the pages are built again
-        from the same catalogue, which is the path a rescan already takes.
+        and its foreground when an item is built, so the pages are laid out
+        again from the same catalogue, the page on show now and the others
+        when they are next shown. Laying every page out at once took seven
+        seconds on 3W 2.0.0, five of them for pages nobody was looking at.
         """
         self._theme_mode = mode
         styling.save_mode(mode)
@@ -294,14 +348,18 @@ class MainWindow(QMainWindow):
             self._theme.setCurrentIndex(theme.MODES.index(mode))
             self._theme.blockSignals(False)
         before = theme.current()
-        if styling.apply(mode) is before:
-            return  # e.g. System on a light desktop, chosen while already light
-        self._restyle()
-        for page in self.pages:
-            page.apply_theme()
-        for window in list(self._windows):
-            window.apply_theme()
-        self.set_catalogue(self._catalogue)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            if styling.apply(mode) is before:
+                return  # e.g. System on a light desktop, chosen while already light
+            self._restyle()
+            for page in self.pages:
+                page.apply_theme()
+            for window in list(self._windows):
+                window.apply_theme()
+            self.set_catalogue(self._catalogue, lazy=True)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _on_system_scheme(self, *args) -> None:
         """Follow the desktop switching between light and dark, while ``system`` is chosen."""
@@ -377,7 +435,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export failed", f"{type(error).__name__}: {error}")
             return
         self._status.setText(
-            f"{len(set(files))} files written to {path}, their provenance to {note.name} · load "
+            f"{len(set(files))} files written to {path}, their provenance to {note.name} | load "
             "with ParquetDatasetConfig(**json.load(open(path)))"
         )
 

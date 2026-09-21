@@ -3,8 +3,8 @@
 One call settles both halves of the viewer's appearance, so that the windows and
 the plots inside them can never be painted from two different ideas of what the
 background is. ``apply`` also tells Qt which color scheme it is in, which is what
-makes the pieces this application does not paint itself — the window frames, the
-native folder dialog, the message boxes — follow along.
+makes the pieces this application does not paint itself (the window frames, the
+native folder dialog, the message boxes) follow along.
 
 A mode is ``light``, ``dark``, or ``system`` for the desktop's own choice. The
 choice is remembered between runs; ``--theme`` overrides it for one run.
@@ -103,16 +103,16 @@ def qt_palette(colors: Theme) -> QPalette:
     return palette
 
 
-def style_sheet(colors: Theme) -> str:
-    """The few rules the palette cannot state: separators, frames, tooltip border."""
-    return f"""
-        QToolTip {{ color: {colors.tooltip_text}; background-color: {colors.tooltip};
-                    border: 1px solid {colors.border}; }}
-        QToolBar {{ border: none; border-bottom: 1px solid {colors.border}; }}
-        QToolBar::separator {{ background-color: {colors.border}; width: 1px; margin: 4px 6px; }}
-        QStatusBar::item {{ border: none; }}
-        QTabWidget::pane {{ border: 1px solid {colors.border}; }}
-    """
+# There is deliberately no application stylesheet. One used to state the few
+# rules a palette cannot (a toolbar's bottom line, its separators, the tab
+# pane's frame, no frame around status-bar items, the tooltip border), and it
+# cost at three points: setting it polishes every widget again, close to two
+# seconds with the pages built; every widget created under it is polished
+# through the stylesheet engine, which slows every page's layout; and a widget
+# under a stylesheet does not follow a palette change until it is polished
+# again, so a theme switch left the chrome in the old mode's text color unless
+# the sheet was set once more. Fusion draws all of those from the palette by
+# itself, close enough, and follows ``QApplication.setPalette`` at once.
 
 
 def apply(mode: str) -> Theme:
@@ -126,5 +126,4 @@ def apply(mode: str) -> Theme:
     app = QApplication.instance()
     if app is not None:
         app.setPalette(qt_palette(colors))
-        app.setStyleSheet(style_sheet(colors))
     return colors

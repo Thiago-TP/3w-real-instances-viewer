@@ -7,9 +7,9 @@ that comparison for any fault and every well at once, on a time axis that
 starts where the event begins in each instance, so that the shapes line up
 whatever the clock said.
 
-One fault is chosen and each **feature** gets a section; the drawing itself —
+One fault is chosen and each **feature** gets a section; the drawing itself (
 the three arrangements, the three domains, the window of hours around the
-onset, the normalization, the transforms, the hover — is
+onset, the normalization, the transforms, the hover) is
 ``series_page.SeriesPage``, which the features page is the other half of.
 
 The instances of a fault are listed on the right with the moment each can be
@@ -47,10 +47,11 @@ from overlap_viewer.algorithms.faults import (
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.availability import ABSENT, Availability
 from overlap_viewer.backend.config import (
-    FAULT_SIGNATURES,
+    BEST_EFFORT_SOURCES,
     MAX_OVERLAID_INSTANCES,
     MAX_SMALL_MULTIPLES,
     REACH_LABELS,
+    signature_of,
 )
 from overlap_viewer.backend.dataset import DatasetInfo, WellData, well_label
 from overlap_viewer.backend.labels import segments_from_json
@@ -60,8 +61,8 @@ from overlap_viewer.frontend.series_page import LIST_WIDTH, Section, Series, Ser
 
 HINT = (
     "Every plot is one real instance of the fault, in the color of its well, on a time axis that "
-    "starts where the event begins in it · hover a trace to name it and read it · tick features "
-    "on the left and instances on the right · Ctrl + wheel to zoom, the wheel scrolls · F1 for help"
+    "starts where the event begins in it | hover a trace to name it and read it | tick features "
+    "on the left and instances on the right | Ctrl + wheel to zoom, the wheel scrolls | F1 for help"
 )
 
 DOMAIN_TIP = (
@@ -70,11 +71,11 @@ DOMAIN_TIP = (
     "readings, as a share of the instance's samples so that instances of different length "
     "compare, stacked by label period in the class colors in the grid, an area in the color of "
     "the well when overlaid, so that where two distributions sit on top of one another reads as "
-    "a deeper shade, with a triangle over the fullest bin of each — the value that "
+    "a deeper shade, with a triangle over the fullest bin of each: the value that "
     "instance spends most of its time at, which the mean and the median both miss once the fault "
     "has skewed the readings or split them in two. Spectrum: the power spectral density against "
     "the period, both "
-    "logarithmic, the mean and the trend removed first — overlaid, the spectra of two dozen "
+    "logarithmic, the mean and the trend removed first. Overlaid, the spectra of two dozen "
     "instances read together where their traces did not, since the question is whether their "
     "peaks line up."
 )
@@ -84,7 +85,7 @@ LAYOUT_TIP = (
     "set of axes, which says how far apart their levels are and little else once there "
     "are more than a handful. Overall pools every instance drawn into a single curve per "
     "feature, across every well at once: one distribution, or one spectrum, of the fault as the "
-    "dataset holds it. It is offered off the time axis only — instances cut from different "
+    "dataset holds it. It is offered off the time axis only: instances cut from different "
     "months have no common clock to be drawn against."
 )
 NORMALIZE_TIP = (
@@ -270,7 +271,7 @@ class FaultsPage(SeriesPage):
             # The name alone: how many instances on how many wells is what the
             # status bar says about the fault chosen, and the box is narrow enough
             # to leave the toolbar's other controls on screen.
-            self._fault.addItem(f"{fault} · {self.info.fault_name(int(fault))}", int(fault))
+            self._fault.addItem(f"{fault}. {self.info.fault_name(int(fault))}", int(fault))
         index = self._fault.findData(wanted)
         self._fault.setCurrentIndex(max(index, 0))
         self._fault.blockSignals(False)
@@ -414,13 +415,13 @@ class FaultsPage(SeriesPage):
         onset = entry["onset"]
         when = f"{onset:%Y-%m-%d %H:%M}" if onset is not None else "no onset in the labels"
         mark = " ⚠" if entry["implausible"] else ""
-        return f"{entry['title']}{mark} · {when}"
+        return f"{entry['title']}{mark} | {when}"
 
     def _item_tooltip(self, entry: dict) -> str:
         fault = self.fault
-        reach = "" if fault == 0 else f" · {REACH_LABELS[entry['reach']]}"
+        reach = "" if fault == 0 else f" | {REACH_LABELS[entry['reach']]}"
         text = (
-            f"{well_label(entry['well'])} · {self.info.fault_name(fault)}{reach}\n"
+            f"{well_label(entry['well'])} | {self.info.fault_name(fault)}{reach}\n"
             f"{entry['start']:%Y-%m-%d %H:%M:%S} → {entry['end']:%Y-%m-%d %H:%M:%S} "
             f"({entry['hours']:.1f} h)"
         )
@@ -450,8 +451,10 @@ class FaultsPage(SeriesPage):
         recorded = {}
         for j, name in enumerate(availability.sensors):
             recorded[name] = int((availability.state[rows, j] != ABSENT).sum()) if n else 0
-        signature = [name for name in FAULT_SIGNATURES.get(fault, ()) if recorded.get(name, 0) > 0]
-        # With no published signature to tick, the sensor the most instances of
+        known = signature_of(fault)
+        variables, published = known if known is not None else ((), False)
+        signature = [name for name in variables if recorded.get(name, 0) > 0]
+        # With no signature to tick at all, the sensor the most instances of
         # the fault recorded: the first in the alphabet is as likely as not to
         # be one none of them has, which would open the page on empty plots.
         best = sorted(recorded, key=lambda name: (-recorded[name], name))
@@ -471,17 +474,25 @@ class FaultsPage(SeriesPage):
         self._signature.blockSignals(True)
         self._signature.setEnabled(bool(signature))
         self._signature.setChecked(bool(signature))
-        if signature:
+        name = self.info.fault_name(fault)
+        if signature and published:
             self._signature.setToolTip(
-                f"Signature of {self.info.fault_name(fault)}: {', '.join(FAULT_SIGNATURES[fault])}. "
-                "Ticks exactly these variables."
+                f"Signature of {name}: {', '.join(variables)}, the variables of the figure the 3W "
+                "paper illustrates the event with. Ticks exactly these."
+            )
+        elif signature:
+            self._signature.setToolTip(
+                f"Best-effort signature of {name}: {', '.join(variables)}. The 3W paper publishes "
+                f"no figure of this event; the set comes from {BEST_EFFORT_SOURCES[fault]}. Ticks "
+                "exactly these."
+            )
+        elif known is not None:
+            self._signature.setToolTip(
+                f"None of the signature variables of {name} ({', '.join(variables)}) was recorded "
+                "by any instance of the fault."
             )
         else:
-            self._signature.setToolTip(
-                "The 3W paper publishes a signature only for the events it illustrates: Normal "
-                "Operation, Spurious Closure of DHSV, Severe Slugging, Quick Restriction in PCK and "
-                "Hydrate in Production Line."
-            )
+            self._signature.setToolTip("The viewer knows no signature for this event.")
         self._signature.blockSignals(False)
 
     def selected_features(self) -> list[str]:
@@ -492,11 +503,10 @@ class FaultsPage(SeriesPage):
         return next(iter(self.selected_features()), None)
 
     def _signature_features(self) -> list[str]:
-        fault = self.fault
+        known = signature_of(self.fault)
+        variables = known[0] if known is not None else ()
         return [
-            name
-            for name in FAULT_SIGNATURES.get(fault, ())
-            if name in self._checks and self._checks[name].isEnabled()
+            name for name in variables if name in self._checks and self._checks[name].isEnabled()
         ]
 
     def _apply_signature(self, checked: bool) -> None:
@@ -560,7 +570,7 @@ class FaultsPage(SeriesPage):
             parts.append(f"the earliest {MAX_OVERLAID_INSTANCES} were ticked to start with")
         if self.small_multiples and drawn > MAX_SMALL_MULTIPLES:
             parts.append(f"the grid draws the first {MAX_SMALL_MULTIPLES} of them")
-        self._instance_note.setText(" · ".join(parts) + ".")
+        self._instance_note.setText(" | ".join(parts) + ".")
         self._note.setText(parts[0])
 
     # -- what the shared machinery asks of this page
@@ -608,16 +618,16 @@ class FaultsPage(SeriesPage):
 
     def series_headline(self, series: Series) -> str:
         return (
-            f"{well_label(series.well)} · {series.title} · {self.info.fault_name(self.fault)} · "
+            f"{well_label(series.well)} | {series.title} | {self.info.fault_name(self.fault)} | "
             f"{ALIGNMENT_NAMES[self.alignment].lower()} at {series.onset:%Y-%m-%d %H:%M:%S}"
         )
 
     def pool_headline(self, members: list[int]) -> str:
-        return f"{self.info.fault_name(self.fault)} · {super().pool_headline(members)}"
+        return f"{self.info.fault_name(self.fault)} | {super().pool_headline(members)}"
 
     def shown_source(self) -> str:
         """Where a file list from this page came from, for its provenance."""
-        return f"the Faults page · {self.info.fault_name(self.fault)} · the instances ticked"
+        return f"the Faults page | {self.info.fault_name(self.fault)} | the instances ticked"
 
     def summary(self) -> str:
         """One line for the status bar: the fault, its instances and wells, how many are drawn."""
@@ -627,10 +637,10 @@ class FaultsPage(SeriesPage):
         n = len(self._instances)
         wells = len({entry["well"] for entry in self._instances})
         aligned = sum(1 for entry in self._instances if entry["onset"] is not None)
-        version = f"3W {self.info.version} · " if self.info.version else ""
+        version = f"3W {self.info.version} | " if self.info.version else ""
         return (
-            f"{version}{self.info.fault_name(fault)} · {n} real instances on {wells} wells · "
-            f"{aligned} alignable at the {ALIGNMENT_NAMES[self.alignment].lower()} · "
+            f"{version}{self.info.fault_name(fault)} | {n} real instances on {wells} wells | "
+            f"{aligned} alignable at the {ALIGNMENT_NAMES[self.alignment].lower()} | "
             f"{len(self.drawn_series())} drawn "
         )
 

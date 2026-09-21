@@ -633,7 +633,7 @@ class PairTable:
         """Sensor positions laid out so that the sensors recorded together sit together.
 
         Ordered by coverage the matrix ranks its sensors; ordered like this it
-        shows its blocks — the sets of sensors a well carries or lacks
+        shows its blocks: the sets of sensors a well carries or lacks
         together, which is what says which subsets of the dataset a model could
         be built on at all.
 
@@ -757,7 +757,7 @@ class PairCoverage:
         live_only : bool
             When set, a bar counts for a pair only if both sensors are *live*
             in it, so that a dead instrument and a sensor below the
-            availability threshold contribute nothing — the page's own
+            availability threshold contribute nothing: the page's own
             vocabulary. Unset, every sample carrying both readings counts,
             which is how Rabelo counts.
         """

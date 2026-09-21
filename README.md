@@ -40,16 +40,16 @@ The GUI indicates to the user when a measurement is outside its plausible range.
 Each kind of measurement has its own range, as shown below, found by a survey of every instance of
 3W 2.0.0 ([`backend/config.py`](src/overlap_viewer/backend/config.py)): a magnitude past 1×10⁸ is a
 sentinel value or an instrument off by orders of magnitude in every case surveyed, a negative
-pressure or choke opening is physically impossible, and the temperature band is wide enough to hold
-a genuine blowdown (as cold as −33.8 °C) while still catching the sentinels (−999, 30,000 °C). Valve
-openings and flow rates are held to the magnitude rule only, since neither has a fixed sentinel-free
-band of its own the way pressure and temperature do.
+pressure or choke opening is physically impossible and so is an opening above 100 %, and the
+temperature band is wide enough to hold a genuine blowdown (as cold as −33.8 °C) while still
+catching the sentinels (−999, 30,000 °C). Flow rates are held to the magnitude rule only, having no
+sentinel-free band of their own the way pressure and temperature do.
 
 | Physical quantity | Unit  | Plausible Min. | Plausible Max. |
 | ----------------- | ----- | -------------- | -------------- |
 | Pressure          | Pa    | 0              | 1×10⁸        |
 | Temperature       | °C   | −50           | 250            |
-| Valve opening     | %     | 0              | 1×10⁸        |
+| Valve opening     | %     | 0              | 100            |
 | Flow rate         | m³/s | −1×10⁸      | 1×10⁸        |
 
 ## Running
@@ -78,7 +78,8 @@ The first launch reads the time span and labels of every real instance, and what
 recorded from the footer of each file (about 7 s for the 1,119 instances of 3W 2.0.0, behind a
 progress dialog), and caches the result under the platform cache directory
 (`~/.cache/overlap-viewer/` on Linux). Later launches validate the cache against the files' sizes
-and modification times and start instantly; any changed, added or removed file triggers a fresh
+and modification times and open in a few seconds, a progress bar naming each page as it is built
+and laid out; any changed, added or removed file triggers a fresh
 scan, as does the *Rescan dataset* button, and so does a version of the viewer that records more
 about each instance than the cache holds (the label runs the join reads, and the sensor figures the
 availability page reads, were added this way). Three figures the footers cannot give are read from
@@ -126,7 +127,7 @@ functions are documented in detail in the [source `README`](src/README.md).
 ├── main.py                   runs the viewer from a checkout without installing
 ├── docs/
 │   ├── gui/                  one detailed README per page, linked from the table above
-│   ├── assets/               screenshots, taken again by scripts/screenshots.py · the platform schematics the help shows
+│   ├── assets/               screenshots, taken again by scripts/screenshots.py, the platform schematics the help shows
 │   └── papers/               the 3W data articles, the thesis and the graduation project the help draws on
 ├── examples/                 one explained example of every file the viewer reads or writes, with its provenance
 ├── scripts/                  what produces the examples and the figures, outside the GUI: export_file_list.py, pca_control_chart.py, screenshots.py

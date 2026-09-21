@@ -1,8 +1,8 @@
 """The profile of every sensor of every instance, and of every bar of the joined view. No Qt here.
 
 One pass over the data, cached like the merged sensor figures, answers for
-every sensor of every real instance — and of every bar the joined view draws,
-read as the merged recording it is — how it was measured
+every sensor of every real instance (and of every bar the joined view draws,
+read as the merged recording it is): how it was measured
 (``algorithms.interpolation``: how many samples are measurements, how many
 the historian filled in, how far apart the measurements are) and what it
 amounts to (``algorithms.descriptors``: moments, quantiles, autocorrelation
@@ -147,8 +147,8 @@ def profile_series(
 
     Readings outside ``bounds`` are taken out first and counted: a gauge
     reporting 10¹² Pa would otherwise own every moment. An enumerated
-    variable (a valve state) is not tested for interpolation — every reading
-    of it counts as a measurement — since a valve held in one position for
+    variable (a valve state) is not tested for interpolation (every reading
+    of it counts as a measurement), since a valve held in one position for
     hours is a fact about the well, not a line the historian drew.
     """
     y = np.asarray(values, dtype=float).copy()
@@ -355,7 +355,7 @@ class Profiles:
 
         ``keys`` are ``(fault_class, file)`` pairs, or ``(well, bar)`` pairs
         for the bars of a joined view. The columns follow ``sensors`` when
-        given — a sensor not profiled stays NaN — and this table's own
+        given (a sensor not profiled stays NaN) and this table's own
         sensors otherwise.
         """
         values = self.table[column].to_numpy(dtype=float)

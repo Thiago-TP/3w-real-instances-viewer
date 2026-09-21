@@ -4,8 +4,8 @@ Most sensors of the dataset were read every ten seconds or every two minutes,
 and the 1 Hz samples between two readings are the straight line the historian
 drew (``algorithms.interpolation``). A trace drawn as one solid line shows
 that line as if it were signal. Here the samples that were measured are drawn
-as dots in the full color, and the line through every sample — which, between
-two measurements, is exactly the historian's line — in the same color but
+as dots in the full color, and the line through every sample (which, between
+two measurements, is exactly the historian's line), in the same color but
 faint. Dense dots are a sensor read every second; sparse dots on a faint line
 are a sensor read every two minutes and filled in between, and the eye tells
 the two apart at any zoom. A sensor measured at every sample keeps the plain

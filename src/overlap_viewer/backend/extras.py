@@ -16,7 +16,7 @@ other.
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 from dataclasses import dataclass
 
 
@@ -65,14 +65,18 @@ def install_command(name: str) -> str:
 
 
 def missing(name: str) -> str | None:
-    """``None`` when the group imports; otherwise one sentence saying what to install.
+    """``None`` when the group is installed; otherwise one sentence saying what to install.
 
-    The answer is cached: an import that failed once at start-up would fail
-    again, and the controls ask on every rebuild.
+    Installed means the modules can be found, not that they have been
+    imported: importing umap-learn costs seven seconds of start-up (numba
+    compiling) and scikit-learn one more, and the controls only need to know
+    whether to grey themselves. The feature that uses a group imports it when
+    it is first asked for. The answer is cached, since the controls ask on
+    every rebuild.
     """
     if name not in _checked:
         extra = EXTRAS[name]
-        absent = [m for m in extra.modules if not _imports(m)]
+        absent = [m for m in extra.modules if not _installed(m)]
         _checked[name] = (
             None
             if not absent
@@ -85,16 +89,15 @@ def missing(name: str) -> str | None:
 
 
 def available(name: str) -> bool:
-    """Whether every module of the group imports."""
+    """Whether every module of the group is installed."""
     return missing(name) is None
 
 
-def _imports(module: str) -> bool:
+def _installed(module: str) -> bool:
     try:
-        importlib.import_module(module)
-    except ImportError:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):  # a parent package missing, or a name already unloaded
         return False
-    return True
 
 
 def forget() -> None:

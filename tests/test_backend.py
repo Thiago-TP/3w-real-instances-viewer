@@ -31,6 +31,8 @@ from overlap_viewer.backend.availability import (
     sensor_state,
 )
 from overlap_viewer.backend.config import (
+    BEST_EFFORT_SIGNATURES,
+    BEST_EFFORT_SOURCES,
     DEFAULT_FAULT_NAMES,
     DEFAULT_SENSOR_UNITS,
     DEFAULT_TRANSIENT_CAPABLE,
@@ -41,6 +43,7 @@ from overlap_viewer.backend.config import (
     asset_path,
     cache_dir,
     plausible_range,
+    signature_of,
 )
 from overlap_viewer.backend.labels import (
     Segment,
@@ -581,6 +584,16 @@ def test_help_text_covers_the_dataset():
         assert help_text.FAULTS[fault].figure, f"fault {fault} has a signature but names no figure"
         # ... and the figure is reproduced, with its own caption and credit.
         assert help_text.FAULTS[fault].illustration in help_text.FIGURES
+    # Every other event has a best-effort signature, sourced, of the same four-variable
+    # convention, and the two tables never overlap: a published figure is never second-guessed.
+    assert set(BEST_EFFORT_SIGNATURES).isdisjoint(FAULT_SIGNATURES)
+    assert set(BEST_EFFORT_SIGNATURES) | set(FAULT_SIGNATURES) == set(DEFAULT_FAULT_NAMES)
+    assert set(BEST_EFFORT_SOURCES) == set(BEST_EFFORT_SIGNATURES)
+    for fault, variables in BEST_EFFORT_SIGNATURES.items():
+        assert len(variables) == 4 and set(variables) <= set(DEFAULT_SENSOR_UNITS)
+    assert signature_of(3) == (FAULT_SIGNATURES[3], True)
+    assert signature_of(4) == (BEST_EFFORT_SIGNATURES[4], False)
+    assert signature_of(42) is None
     for entry in help_text.FAULTS.values():
         assert entry.what and entry.signature and entry.source
     # Every variable has its position in the paper's schematic, and no two share one.
@@ -725,7 +738,7 @@ def test_sensor_states_and_plausible_ranges():
 
     assert plausible_range("Pa") == (0.0, EXTREME_VALUE_LIMIT)
     assert plausible_range("°C") == (-50.0, 250.0)
-    assert plausible_range("%") == (0.0, EXTREME_VALUE_LIMIT)
+    assert plausible_range("%") == (0.0, 100.0)
     assert (
         plausible_range("m³/s")
         == plausible_range("")
@@ -734,6 +747,9 @@ def test_sensor_states_and_plausible_ranges():
     assert outside_range(-1.0, 5.0, plausible_range("Pa"))  # a negative absolute pressure
     assert outside_range(1.0, 1.3e8, plausible_range("Pa"))  # 1,300 bar
     assert not outside_range(0.0, 4.9e7, plausible_range("Pa"))  # zero is left alone
+    assert outside_range(-99.99, 40.0, plausible_range("%"))  # the choke's sentinel
+    assert outside_range(10.0, 150.0, plausible_range("%"))  # an opening past fully open
+    assert not outside_range(0.0, 100.0, plausible_range("%"))  # shut to fully open
     assert outside_range(-999.0, 20.0, plausible_range("°C"))  # a sentinel
     assert not outside_range(-33.8, 127.7, plausible_range("°C"))  # the real extremes of 3W
     assert not outside_range(np.nan, np.nan, plausible_range("Pa"))  # nothing recorded
@@ -1214,7 +1230,7 @@ def test_a_histogram_counts_the_implausible_only_when_it_is_asked_to():
     assert loose is not None
     assert loose.total == 220 and loose.left_out == 0
     assert loose.edges[-1] == pytest.approx(9.0e12)
-    # The fullest bin is still the one the real readings fall in — though with
+    # The fullest bin is still the one the real readings fall in, though with
     # the bins now stretched over five orders of magnitude it is a wide one,
     # which is the honest picture of a sensor reporting 10¹² Pa.
     assert loose.peak[1] == 200

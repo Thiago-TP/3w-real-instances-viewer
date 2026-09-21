@@ -5,8 +5,8 @@ clean_signals``) decides, per event and per sensor, whether a signal is to be
 believed. It is fitted on the dataset: for every sensor it takes the mean and
 the standard deviation of the signal in every event, and puts bounds at the
 quartiles of those figures plus or minus a multiple of the interquartile
-range — three, by default. In an event whose mean or whose standard deviation
-falls outside the bounds, the sensor is discarded (set to missing) — the
+range (three by default). In an event whose mean or whose standard deviation
+falls outside the bounds, the sensor is discarded (set to missing): the
 signal is frozen, or stuck at a level no other event shows. The lower bound
 on the standard deviation is floored at an absolute 1e-6, so that a signal
 that never moves is discarded whatever the others do. A sensor that is
@@ -18,7 +18,7 @@ every sensor in every event, which the profile pass provides for every
 instance and for every bar of the joined view, so it costs nothing to apply
 and its thresholds can be moved. One difference is kept on purpose: the
 profiles describe the plausible readings, so a sensor whose readings are
-instrument garbage is not discarded here by a mean of 10⁴² — it wears the
+instrument garbage is not discarded here by a mean of 1e42; it wears the
 amber mark of an implausible reading instead, which says more.
 """
 
@@ -180,8 +180,8 @@ def clean_signals(
 class Cleaned:
     """The rule applied to the instances, or to the bars of the joined view, and looked up by key.
 
-    ``keys`` name the events as the profile table does — ``(fault_class,
-    file)`` or ``(well, bar)`` — and ``live`` is ``(events, sensors)``: where
+    ``keys`` name the events as the profile table does (``(fault_class,
+    file)`` or ``(well, bar)``) and ``live`` is ``(events, sensors)``: where
     the sensor has readings that move, which is what ``kept_share`` counts
     over.
     """

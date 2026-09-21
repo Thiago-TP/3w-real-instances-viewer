@@ -15,9 +15,9 @@ out an empty box.
 Each figure is framed on what it has to show rather than on one window size:
 the availability matrix is eleven rows and no taller, the correlation matrix
 holds the analog sensors alone, and the color key is grabbed as a widget of its
-own. A few are set up before they are taken — a fault that oscillates, a sensor
+own. A few are set up before they are taken (a fault that oscillates, a sensor
 that is not a flat valve opening, a pointer resting on a cell so that the status
-line reads it — because the default state of a page is not always the state that
+line reads it) because the default state of a page is not always the state that
 shows what the page is for; every such choice is commented where it is made.
 
 The passes over the data are cached (``~/.cache/overlap-viewer`` or the platform
@@ -119,7 +119,7 @@ def main(argv=None) -> int:
     app.setOrganizationName(styling.SETTINGS[0])
     app.setApplicationName(styling.SETTINGS[1])
     app.setStyle("Fusion")
-    print(f"platform: {app.platformName()} · fonts: {len(QFontDatabase.families())}", flush=True)
+    print(f"platform: {app.platformName()} | fonts: {len(QFontDatabase.families())}", flush=True)
 
     window = build_window(parse_args(["--raw-dir", str(opts.raw_dir), "--theme", "light"]))
     if window is None:
@@ -184,7 +184,7 @@ def main(argv=None) -> int:
     # -- Features --------------------------------------------------------------
     # Not the time-series grid: one instance recorded for days stretches the
     # shared hour axis and leaves every trace a sliver against the left edge.
-    # The pooled distribution is the view the page was built for anyway — one
+    # The pooled distribution is the view the page was built for anyway, one
     # curve per fault class, in the class colors, over the one sensor.
     if page(window.features, "features", wait=6.0):
         window.features.set_domain("distribution")

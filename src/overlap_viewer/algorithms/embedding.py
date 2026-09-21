@@ -1,13 +1,13 @@
 """Where every instance stands among the others: a representation, an embedding, clusterings, typicality, novelty.
 
-The unit here is the **instance** (or, in the joined view, the bar — the
+The unit here is the **instance** (or, in the joined view, the bar, the
 merged recording), never the window a pipeline cuts: 1,119 points, one per
 real instance of 3W 2.0.0, which is what a reader can hold in view and click
 on. An instance becomes a point through a **representation**:
 
 - its **descriptors** (``backend.profiles``): per sensor the moments, the
   quantiles, the autocorrelation time, the signal-to-noise ratio, the
-  Gaussianity slope, and how it was measured — either on the 1 Hz grid or on
+  Gaussianity slope, and how it was measured, either on the 1 Hz grid or on
   the measurements alone, which is the honest version wherever the
   historian's lines matter (``algorithms.interpolation``);
 - the same descriptors **less the levels**, when the shape of the signals is
@@ -18,16 +18,16 @@ on. An instance becomes a point through a **representation**:
 The first two give a matrix of standardized columns; the third a matrix of
 distances. From either, an **embedding** puts the points on a plane: PCA (or,
 for distances, classical MDS), in numpy; t-SNE and UMAP through their
-libraries, which are optional extras. A **clustering** groups the points —
+libraries, which are optional extras. A **clustering** groups the points (
 k-means, a Gaussian mixture, agglomerative, DBSCAN, the short list Siqueira's
-notebooks work through — and is scored by its silhouette and by how far it
+notebooks work through) and is scored by its silhouette and by how far it
 agrees with the fault classes and with the wells (adjusted Rand index,
 normalised mutual information). **Typicality** is an instance's distance to
 the medoid of its class in the representation: how ordinary an instance of
 its class it is. **Novelty** is a label audit: a one-class model of the normal
 instances scores every instance, and an instance whose label disagrees with
-the verdict — a fault that looks normal, a normal instance that looks
-anomalous — is listed for a reader to look at.
+the verdict (a fault that looks normal, a normal instance that looks
+anomalous) is listed for a reader to look at.
 
 Everything a library computes is an *analysis of the catalogue*, light enough
 to run on every change of a box; nothing here is a model of the process, and
@@ -150,8 +150,8 @@ def feature_matrix(
     ``min_coverage`` of the points; an enumerated variable contributes its
     mean alone, the share of the time the valve was open. ``measured`` reads
     the descriptors taken on the measurements rather than on the grid
-    (``backend.profiles``). Missing cells — the sensor absent or frozen in
-    that instance — take the column's median, and ``imputed`` remembers how
+    (``backend.profiles``). Missing cells (the sensor absent or frozen in
+    that instance) take the column's median, and ``imputed`` remembers how
     much of each point was made up that way. Columns that never move are
     dropped; the rest are standardized.
     """
@@ -177,7 +177,7 @@ def feature_matrix(
             values = profiles.matrix(keys, joined, field_name + suffix, [name])[:, 0]
             values = np.where(live[:, j], values, np.nan)
             blocks.append(_transform(field_name, values))
-            columns.append(f"{name} · {field_name}")
+            columns.append(f"{name} | {field_name}")
         for field_name in sampling:
             if field_name == "genuine_share":
                 genuine = profiles.matrix(keys, joined, "n_genuine", [name])[:, 0]
@@ -186,7 +186,7 @@ def feature_matrix(
                 values = profiles.matrix(keys, joined, "spacing_s", [name])[:, 0]
             values = np.where(live[:, j], values, np.nan)
             blocks.append(_transform(field_name, values))
-            columns.append(f"{name} · {field_name}")
+            columns.append(f"{name} | {field_name}")
     if not blocks:
         return Representation(keys, np.zeros((len(keys), 0)), [], None, np.ones(len(keys)))
     raw = np.column_stack(blocks)
@@ -194,10 +194,10 @@ def feature_matrix(
     imputed = missing.mean(axis=1)
     X, kept = standardize(impute(raw))
     kept_columns = [columns[k] for k in kept]
-    kept_sensors = sorted({column.split(" · ")[0] for column in kept_columns}, key=sensors.index)
+    kept_sensors = sorted({column.split(" | ")[0] for column in kept_columns}, key=sensors.index)
     note = (
-        f"{len(kept_sensors)} sensors live in at least {min_coverage:.0%} of the points · "
-        f"{len(kept_columns)} columns · {imputed.mean():.0%} of the cells imputed"
+        f"{len(kept_sensors)} sensors live in at least {min_coverage:.0%} of the points | "
+        f"{len(kept_columns)} columns | {imputed.mean():.0%} of the cells imputed"
     )
     return Representation(keys, X, kept_columns, None, imputed, kept_sensors, note)
 
@@ -298,7 +298,7 @@ def embed(rep: Representation, method: str) -> tuple[np.ndarray, str]:
         if rep.metric:
             coords, explained = classical_mds(rep.distances)
             return coords, (
-                f"principal coordinates of the distances · "
+                f"principal coordinates of the distances | "
                 f"{explained[0]:.0%} + {explained[1]:.0%} of the spread"
             )
         coords, explained = pca(rep.X)
@@ -315,7 +315,7 @@ def embed(rep: Representation, method: str) -> tuple[np.ndarray, str]:
             random_state=RANDOM_STATE,
         )
         coords = model.fit_transform(rep.distances if rep.metric else rep.X)
-        return coords, f"t-SNE, perplexity {perplexity:g} · the axes have no unit"
+        return coords, f"t-SNE, perplexity {perplexity:g} | the axes have no unit"
     import umap
 
     neighbors = int(min(15, max(2, n - 1)))
@@ -326,7 +326,7 @@ def embed(rep: Representation, method: str) -> tuple[np.ndarray, str]:
         random_state=RANDOM_STATE,
     )
     coords = model.fit_transform(rep.distances if rep.metric else rep.X)
-    return np.asarray(coords, dtype=float), f"UMAP, {neighbors} neighbours · the axes have no unit"
+    return np.asarray(coords, dtype=float), f"UMAP, {neighbors} neighbours | the axes have no unit"
 
 
 def embedding_available(method: str) -> str | None:
@@ -413,7 +413,7 @@ class ClusterScores:
             parts.append(f"vs classes ARI {self.ari_class:.2f}, NMI {self.nmi_class:.2f}")
         if np.isfinite(self.ari_well):
             parts.append(f"vs wells ARI {self.ari_well:.2f}, NMI {self.nmi_well:.2f}")
-        return " · ".join(parts)
+        return " | ".join(parts)
 
 
 def cluster_scores(
@@ -474,7 +474,7 @@ class Typicality:
 def typicality(rep: Representation, classes: Sequence[int]) -> Typicality:
     """The distance of every point to the medoid of its class, and its rank there.
 
-    The medoid is the member whose distances to the others sum lowest — the
+    The medoid is the member whose distances to the others sum lowest: the
     most central instance the class actually has, which a mean need not be.
     """
     classes = np.asarray(list(classes))

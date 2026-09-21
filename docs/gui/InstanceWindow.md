@@ -30,11 +30,14 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   are greyed out). By default only the first feature in alphabetical order among the recorded ones
   is plotted; opened from the availability page, the sensor clicked is.
 - **Signature** ticks, in one click, the handful of variables whose joint behaviour identifies the
-  event — the ones the 3W paper puts on its example figures. Only the five events it illustrates
-  have one (Normal Operation, Spurious Closure of DHSV, Severe Slugging, Quick Restriction in PCK,
-  Hydrate in Production Line); for any other the box is disabled and says why. The screenshot above
-  is the severe-slugging signature: four variables cycling in phase, as figure 6 of the paper
-  describes.
+  event. For the five events the 3W paper illustrates (Normal Operation, Spurious Closure of DHSV,
+  Severe Slugging, Quick Restriction in PCK, Hydrate in Production Line) they are the variables of
+  its example figure; for the other five they are a best effort read off the instance the thesis
+  works through, in the same convention of four, and the tooltip says so and names the source
+  (Hydrate in Service Line, which no document illustrates and whose own instruments are never
+  recorded in the real instances, borrows the production-line set). The box is disabled only when
+  none of them was recorded. The screenshot above is the severe-slugging signature: four variables
+  cycling in phase, as figure 6 of the paper describes.
 - All plots **share the time axis**, and the plots of one feature **share their value axis** across
   instances, so the same reading is at the same height everywhere.
 - A **crosshair** follows the pointer through every plot; the status bar gives the time under it and,

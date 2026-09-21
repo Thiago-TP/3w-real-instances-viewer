@@ -4,14 +4,14 @@ Melo's exploratory methodology (doctoral thesis, section 4.2.5) reads the
 relation between two variables off their scatter plot, and on 3W that plot
 is where the historian's lines show themselves: the cloud of two series is
 mostly the trajectories of two interpolations, straight segments between the
-few instants that were measured — "spurious dynamics" that no pooled
+few instants that were measured: "spurious dynamics" that no pooled
 coefficient betrays (the correlation matrix hardly moves with smoothing) and
 every scatter plot does. So the view draws the cloud three ways: every
 sample as a dot, the density of the samples behind the dots, and the
 measurements alone, the readings the historian archived.
 
-A scope — every real instance, one fault class or one well, as instances or
-as the joined bars — is read once per smoothing window and kept for the
+A scope (every real instance, one fault class or one well, as instances or
+as the joined bars) is read once per smoothing window and kept for the
 session. Every instance contributes an even subsample of its rows, ``BUDGET``
 rows in all, each row carrying every analog sensor, its label period, which
 of its readings were measured and when it was, so that changing the pair of
@@ -32,7 +32,7 @@ from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
 from overlap_viewer.backend.labels import column_as_float
 
 # Rows kept over a whole scope, spread evenly over its instances; and the
-# most of them drawn as dots — the density draws them all.
+# most of them drawn as dots; the density draws them all.
 BUDGET = 400_000
 MAX_DOTS = 150_000
 BINS = 120

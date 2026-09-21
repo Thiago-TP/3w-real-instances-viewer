@@ -3,8 +3,8 @@
 The ``class`` column of a 3W instance is 0 for normal operation, the fault
 number while the fault is installed (its steady state) and the fault number
 plus the transient offset while it installs itself; missing values are
-unlabeled stretches. Everything a plot needs from that column — the runs of
-constant value, their names, the reach of the instance — is computed here.
+unlabeled stretches. Everything a plot needs from that column (the runs of
+constant value, their names, the reach of the instance) is computed here.
 """
 
 import json
@@ -206,7 +206,7 @@ def merge_label_runs(
 
     Each stretch is returned with the entry of ``sources`` belonging to the
     track that supplied it (``None`` where nothing is known), so a drawing of
-    the merged recording can keep saying which file a label came from — the
+    the merged recording can keep saying which file a label came from: the
     fault folder, for this viewer, and so the hue of the shading. A stretch
     labeled *normal* by a Normal Operation file therefore stays that file's
     color inside a merged recording that goes on to develop a fault.

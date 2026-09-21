@@ -1,8 +1,8 @@
 """The help window: what the fault classes, the variables and the colors mean.
 
-One window with a tab per question a reader of these plots actually has — what
+One window with a tab per question a reader of these plots actually has (what
 is this event, what is this variable, what is this well status, how do I work
-the viewer — rendered as rich text so the swatches can carry the very colors
+the viewer), rendered as rich text so the swatches can carry the very colors
 the plots draw. Both windows open it, on the tab that suits them.
 """
 
@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.config import (
+    BEST_EFFORT_SIGNATURES,
+    BEST_EFFORT_SOURCES,
     EXTREME_VALUE_LIMIT,
     FAULT_SIGNATURES,
     PLAUSIBLE_RANGES,
@@ -64,7 +66,7 @@ SWATCH_SIZE = (22, 16)
 
 PAPER = (
     "Vargas et al., <i>3W Dataset 2.0.0: a realistic and public dataset with rare undesirable real "
-    'events in oil wells</i>, 2025 — <a href="https://doi.org/10.1038/s41597-026-07225-z">'
+    'events in oil wells</i>, 2025, <a href="https://doi.org/10.1038/s41597-026-07225-z">'
     "doi.org/10.1038/s41597-026-07225-z</a>"
 )
 
@@ -73,7 +75,7 @@ SOURCES = (
     "Sources: "
     "the <b>2.0.0 data article</b> (" + PAPER + "); "
     "the <b>1.0.0 data article</b>, Vargas et al., <i>A realistic and public dataset with rare "
-    'undesirable real events in oil wells</i>, 2019 — <a href="https://doi.org/10.1016/j.petrol.'
+    'undesirable real events in oil wells</i>, 2019, <a href="https://doi.org/10.1016/j.petrol.'
     '2019.106223">doi.org/10.1016/j.petrol.2019.106223</a>; and the <b>doctoral thesis</b> of '
     "R. E. V. Vargas, which the two articles condense."
 )
@@ -202,7 +204,7 @@ def fault_page(
     parts.append(
         '<p class="sub">Normal-operation instances are never tinted: they have no event to develop.'
         " The example above uses one fault's hue; every fault has its own. Stretches the experts"
-        " left unlabeled are drawn in a neutral grey under a diagonal hatch — a texture rather than"
+        " left unlabeled are drawn in a neutral grey under a diagonal hatch, a texture rather than"
         " one more shade, since two of the fault hues are themselves grey. A bar the overview has"
         " joined from instances of several folders is striped with every folder's color.</p>"
     )
@@ -213,7 +215,7 @@ def fault_page(
         entry = FAULTS.get(number)
         name = info.fault_name(number)
         hue = fault_color(number)
-        parts.append(f'<hr><h3><font color="{hue}">■</font> {number} — {name}</h3>')
+        parts.append(f'<hr><h3><font color="{hue}">■</font> {number}. {name}</h3>')
 
         codes = [f"<b>{number}</b> once the event is installed (steady state)"]
         if number in TRANSIENT_CAPABLE:
@@ -224,10 +226,10 @@ def fault_page(
             codes.append("no transient period in the dataset")
         if number == 0:
             codes = ["<b>0</b> throughout"]
-        line = " · ".join(codes)
+        line = "; ".join(codes)
         if counts is not None:
             n = counts.get(number, 0)
-            line += f" · <b>{n}</b> real instance{'s' if n != 1 else ''} in this dataset"
+            line += f"; <b>{n}</b> real instance{'s' if n != 1 else ''} in this dataset"
         parts.append(f'<p class="sub">class label: {line}</p>')
 
         if entry is None:
@@ -241,7 +243,7 @@ def fault_page(
         if window:
             parts.append(
                 '<p class="sub">The analysts who monitor the wells confirm an occurrence of this '
-                f"event over a window of about <b>{window}</b> — the span its evidence needs to "
+                f"event over a window of about <b>{window}</b>, the span its evidence needs to "
                 "become conclusive to a reader, and a fair default to put on screen.</p>"
             )
         if number in FAULT_SIGNATURES:
@@ -250,6 +252,14 @@ def fault_page(
                 f'<p class="sub">Signature variables, from {entry.figure} of the paper: '
                 f"<b>{variables}</b>. The Signature box of an instance window ticks exactly "
                 "these; the figure is reproduced below.</p>"
+            )
+        elif number in BEST_EFFORT_SIGNATURES:
+            variables = ", ".join(BEST_EFFORT_SIGNATURES[number])
+            parts.append(
+                f'<p class="sub">Best-effort signature variables: <b>{variables}</b>. The paper '
+                f"publishes no figure of this event; the set comes from "
+                f"{BEST_EFFORT_SOURCES[number]}. The Signature box of an instance window ticks "
+                "exactly these, and says they are a best effort.</p>"
             )
         if figures is not None and entry.illustration:
             parts.append(figures.html(entry.illustration))
@@ -263,10 +273,13 @@ def fault_page(
 
 def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
     """The variables: where each one is measured and what it is good for."""
-    signature_of: dict[str, list[str]] = {}
+    signatures_of: dict[str, list[str]] = {}
     for fault, variables in FAULT_SIGNATURES.items():
         for variable in variables:
-            signature_of.setdefault(variable, []).append(info.fault_name(fault))
+            signatures_of.setdefault(variable, []).append(info.fault_name(fault))
+    for fault, variables in BEST_EFFORT_SIGNATURES.items():
+        for variable in variables:
+            signatures_of.setdefault(variable, []).append(f"{info.fault_name(fault)} (best effort)")
 
     parts = [
         "<h2>Variables</h2>",
@@ -284,8 +297,8 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
         (
             "<p>The <b>position</b> of a variable is the number that marks its sensor in the "
             "figure above (table 2 of the paper). Variables that share the figure before the "
-            "point are measured at the same spot of the production system — 2 is the production "
-            "choke, 14 the downhole gauge, 15 the tree transducer — and the figure after the point "
+            "point are measured at the same spot of the production system (2 is the production "
+            "choke, 14 the downhole gauge, 15 the tree transducer), and the figure after the point "
             "tells the measurements taken there apart.</p>"
         ),
         '<table cellspacing="0" cellpadding="5" width="100%">',
@@ -303,9 +316,9 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
             what.append(described)
         if entry is not None and entry.note:
             what.append(f'<span class="sub">{entry.note}</span>')
-        if name in signature_of:
+        if name in signatures_of:
             what.append(
-                f'<span class="sub">Signature variable of: {", ".join(signature_of[name])}.</span>'
+                f'<span class="sub">Signature variable of: {", ".join(signatures_of[name])}.</span>'
             )
         where = entry.where if entry is not None else '<span class="muted">not documented</span>'
         position = entry.position if entry is not None and entry.position else "&mdash;"

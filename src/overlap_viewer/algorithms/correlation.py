@@ -169,7 +169,7 @@ class CorrelationPass:
             if len(X):
                 stride = max(1, int(np.ceil(len(X) / self.per_instance)))
                 # A copy: a strided view would keep the whole smoothed frame alive
-                # for every instance and every window — gigabytes over a dataset.
+                # for every instance and every window, gigabytes over a dataset.
                 self._rows[w].append(X[::stride].copy())
         self.fed += 1
 

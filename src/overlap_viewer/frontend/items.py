@@ -126,7 +126,7 @@ class WheelToParent:
     Declining the event in the view box is not enough: pyqtgraph's
     ``GraphicsView`` accepts every wheel event whether or not the scene used
     it, so the scroll area never saw one and the page stopped scrolling as soon
-    as the pointer crossed a plot — over an axis, a title or a margin as much
+    as the pointer crossed a plot, over an axis, a title or a margin as much
     as over the plotting area, since those belong to no view box at all.
     Declining alone is not enough either: a scroll area is not the parent
     widget of the plots but their grandparent through its viewport, and Qt only
@@ -303,7 +303,7 @@ class SeamsItem(pg.GraphicsObject):
 
     A merged block is drawn as the single continuous recording its instances
     were cut from, so nothing else says where one window ended and the next
-    began — and that is worth seeing, since a seam is where the labels of two
+    began, and that is worth seeing, since a seam is where the labels of two
     windows were reconciled.
 
     Drawn in device pixels, and thinned: a seam that would land within

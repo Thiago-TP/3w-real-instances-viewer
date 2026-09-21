@@ -37,6 +37,8 @@ starts where the event begins in each instance, so that the shapes line up whate
   four dozen of them; **All** and **None** and the checkboxes choose. Readings outside the
   plausible range are left out of the value axis, so one broken gauge does not flatten every other
   line; the instance carrying them wears a ⚠ in the list.
-- **Features** work as in the instance window: **Signature** ticks the variables the 3W paper puts
-  on its example figure of the event, for the five events it illustrates, and features no instance
-  of the fault recorded are greyed out.
+- **Features** work as in the instance window: **Signature** ticks the variables whose joint
+  behaviour identifies the event: those of the 3W paper's example figure for the five events it
+  illustrates, and for the other five a best effort read off the instance the thesis works through
+  (the tooltip says which, and where the set comes from). Features no instance of the fault
+  recorded are greyed out.

@@ -201,7 +201,7 @@ class Histogram:
 
         The value the stretch spends most of its time at, which is what a
         reader looks for first and what the mean and the median both miss when
-        the distribution is skewed or has two humps — and a fault moving the
+        the distribution is skewed or has two humps, and a fault moving the
         readings makes both. ``(nan, 0)`` when nothing was counted; a tie goes
         to the lower bin, so the answer does not depend on how the counts were
         summed.
@@ -331,7 +331,7 @@ def average_spectra(spectra: list[Spectrum], n_bins: int = 160) -> Spectrum | No
     This is how the spectra of a set of instances are pooled, and it is what
     Welch's method already does one level down: average the densities of
     several stretches of the same process rather than transform their
-    concatenation. Concatenating is not an option here — the instances are cut
+    concatenation. Concatenating is not an option here: the instances are cut
     from different months, and a transform reads consecutive samples as one
     second apart, so every gap between two of them would become a step and the
     seams would spread power across the whole axis.

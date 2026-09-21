@@ -51,7 +51,12 @@ from overlap_viewer.algorithms.spectral import (
 )
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.availability import implausible_sensors, outside_range
-from overlap_viewer.backend.config import FAULT_SIGNATURES, REACH_LABELS, plausible_range
+from overlap_viewer.backend.config import (
+    BEST_EFFORT_SOURCES,
+    REACH_LABELS,
+    plausible_range,
+    signature_of,
+)
 from overlap_viewer.backend.dataset import DatasetInfo, WellData, instance_title, merge_instances
 from overlap_viewer.backend.labels import (
     FeatureStats,
@@ -131,7 +136,7 @@ STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch vie
 # was dropped: it earned its place only over a merged recording of days, where
 # the slugging period drifts, and everywhere else it said what the spectrum
 # beside it already said while taking a row of its own from every feature of
-# every block — which is the scarce thing in a window that stacks them.
+# every block, which is the scarce thing in a window that stacks them.
 VIEWS = ("distribution", "spectrum")
 VIEW_NAMES = {"distribution": "Distribution", "spectrum": "Spectrum"}
 VIEW_TIPS = {
@@ -147,8 +152,8 @@ VIEW_TIPS = {
         "The power spectral density of the trace against the period, both logarithmic, over the "
         "stretch of time on screen: Welch's estimate with the window chosen, the mean and the "
         "linear trend removed first, the missing samples interpolated. The caption gives the "
-        "dominant period and its share of the power — a few percent for a normal instance, half "
-        "or more for an oscillating one — and one cycle of that period is laid against the trace, "
+        "dominant period and its share of the power (a few percent for a normal instance, half "
+        "or more for an oscillating one), and one cycle of that period is laid against the trace, "
         "so the claim can be checked against the waves. It takes a row under the trace, the "
         "period along the bottom. With 'Measurements only' ticked it is the Lomb-Scargle "
         "periodogram of the measurements at their own instants, the historian's lines left out."
@@ -156,8 +161,8 @@ VIEW_TIPS = {
 }
 
 HINT = (
-    "Tick features to add their plots · drag to pan · Ctrl + wheel to zoom (the wheel alone "
-    "scrolls) · plots share the time axis, and the plots of one feature share their value axis"
+    "Tick features to add their plots | drag to pan | Ctrl + wheel to zoom (the wheel alone "
+    "scrolls) | plots share the time axis, and the plots of one feature share their value axis"
 )
 
 
@@ -285,7 +290,7 @@ class InstanceWindow(QMainWindow):
 
         # The group is fixed here and never grows: the bars the overview would
         # have shown for this click, and the instances behind them. The two
-        # drawings of it are built now, from the well's instance table alone —
+        # drawings of it are built now, from the well's instance table alone:
         # nothing outside this window is read again or written to, so joining
         # here moves neither the grid nor another window.
         shown = Blocks.of(data, data.group(index))
@@ -350,7 +355,7 @@ class InstanceWindow(QMainWindow):
 
         others = len(self.rows) - 1
         self.setWindowTitle(
-            f"{self.well.label} · {instance_title(self.rows.iloc[self.clicked])}"
+            f"{self.well.label} | {instance_title(self.rows.iloc[self.clicked])}"
             + (
                 f" and {others} overlapping {self._noun}{'s' if others > 1 else ''}"
                 if others
@@ -454,22 +459,27 @@ class InstanceWindow(QMainWindow):
     def _fault_of(self, position: int) -> int:
         return int(self.rows.iloc[position]["fault_class"])
 
-    def _signature_for_group(self) -> tuple[int, tuple[str, ...]] | None:
-        """The documented signature this window can offer, if any.
+    def _signature_for_group(self) -> tuple[int, tuple[str, ...], bool] | None:
+        """The signature this window can offer, if any: the fault, its variables, published or not.
 
-        The clicked block decides, since the window was opened from it — the
+        The clicked block decides, since the window was opened from it: the
         event a merged one develops furthest, which is the event its bar is
-        outlined with. Only when that fault has no published signature does the
+        outlined with. Only when that fault has no signature at all does the
         window fall back to another fault present, and only if exactly one such
         fault is, so the box never silently mixes two events' variables.
         """
         clicked = self._fault_of(self.clicked)
-        if clicked in FAULT_SIGNATURES:
-            return clicked, FAULT_SIGNATURES[clicked]
-        others = {self._fault_of(i) for i in range(len(self.rows))} & set(FAULT_SIGNATURES)
+        known = signature_of(clicked)
+        if known is not None:
+            return clicked, *known
+        others = {
+            fault
+            for fault in {self._fault_of(i) for i in range(len(self.rows))}
+            if signature_of(fault) is not None
+        }
         if len(others) == 1:
             fault = others.pop()
-            return fault, FAULT_SIGNATURES[fault]
+            return fault, *signature_of(fault)
         return None
 
     def _signature_features(self) -> list[str]:
@@ -622,7 +632,7 @@ class InstanceWindow(QMainWindow):
                 "merging those whose labels agree where they overlap: one series over one set of "
                 "bands, a dashed line where each further instance begins, and far less Unknown in "
                 "the label band than the instances carry apart. Exactly the instances on screen "
-                "are merged, and this window alone changes — the overview and any other instance "
+                "are merged, and this window alone changes: the overview and any other instance "
                 "window are left as they are."
             )
         elif self._plain is None:
@@ -717,8 +727,9 @@ class InstanceWindow(QMainWindow):
     def _build_signature_check(self) -> QWidget:
         """The one-click selection of the variables that identify the event.
 
-        Only the events the 3W paper illustrates have a published signature, so
-        the box is disabled — and says why — for the others.
+        The events the 3W paper illustrates have a published signature; the
+        others a best effort read off the thesis, which the tooltip says. The
+        box is disabled (and says why) when there is nothing to tick.
         """
         self._signature_check = QCheckBox("Signature")
         self._signature_check.toggled.connect(self._apply_signature)
@@ -726,18 +737,24 @@ class InstanceWindow(QMainWindow):
         if self._signature is None:
             self._signature_check.setEnabled(False)
             self._signature_check.setToolTip(
-                "The 3W paper publishes a signature only for the events it illustrates "
-                "(figures 3 to 7): Normal Operation, Spurious Closure of DHSV, Severe Slugging, "
-                "Quick Restriction in PCK and Hydrate in Production Line. This window shows none "
-                "of them."
+                "The viewer knows no signature for the events this window shows."
             )
             return self._signature_check
-        fault, variables = self._signature
+        fault, variables, published = self._signature
         name = self.info.fault_name(fault)
         missing = [v for v in variables if v not in available]
         # The box says only "Signature"; the event it belongs to is in the tooltip,
         # where it costs the panel no width.
-        text = f"Signature of {name}: {', '.join(variables)}. These variables identify the event."
+        if published:
+            text = (
+                f"Signature of {name}: {', '.join(variables)}, the variables of the figure the "
+                "3W paper illustrates the event with."
+            )
+        else:
+            text = (
+                f"Best-effort signature of {name}: {', '.join(variables)}. The 3W paper publishes "
+                f"no figure of this event; the set comes from {BEST_EFFORT_SOURCES[fault]}."
+            )
         if missing:
             text += f"\nNot recorded here, so left out: {', '.join(missing)}."
         if not available:
@@ -796,9 +813,9 @@ class InstanceWindow(QMainWindow):
         if self.merged:
             shown += f", merged from {sum(len(members) for members in self.members)} instances"
         return (
-            f'<span style="font-size:11pt;"><b>{self.well.label}</b> · {what}</span><br>'
-            f'<span style="color:{theme.current().muted};">{first:%Y-%m-%d %H:%M:%S} → {last:%Y-%m-%d %H:%M:%S} · {span_h:.1f} h spanned · '
-            f"{shared_h:.1f} h recorded by two or more {noun}s · {shown}</span>"
+            f'<span style="font-size:11pt;"><b>{self.well.label}</b> | {what}</span><br>'
+            f'<span style="color:{theme.current().muted};">{first:%Y-%m-%d %H:%M:%S} → {last:%Y-%m-%d %H:%M:%S} | {span_h:.1f} h spanned | '
+            f"{shared_h:.1f} h recorded by two or more {noun}s | {shown}</span>"
         )
 
     def _instance_html(self, position: int) -> str:
@@ -820,7 +837,7 @@ class InstanceWindow(QMainWindow):
             reach = "" if fault_class == 0 else f" ({REACH_LABELS[row['reach']]})"
             what = f"{self.info.fault_name(fault_class)}{reach}"
         merged = len(self.members[position])
-        joined = f"{merged} instances merged · " if merged > 1 else ""
+        joined = f"{merged} instances merged | " if merged > 1 else ""
         start, end = pd.Timestamp(row["start"]), pd.Timestamp(row["end"])
         end_fmt = "%H:%M:%S" if end.date() == start.date() else "%Y-%m-%d %H:%M:%S"
         partners = sum(
@@ -839,14 +856,14 @@ class InstanceWindow(QMainWindow):
         # window clips at the right; a warning clipped away is no warning.
         warning = (
             f'<span style="font-size:9pt; color:{colors.warning};">&nbsp;⚠ outside the '
-            f"plausible range: {', '.join(flagged)} ·</span>"
+            f"plausible range: {', '.join(flagged)} |</span>"
             if flagged
             else ""
         )
         discarded = self._discarded_sensors(position)
         cleaning = (
             f'<span style="font-size:9pt; color:{colors.muted};">&nbsp;╲ the Toolkit\'s '
-            f"CleanSignals would discard {', '.join(discarded)} ·</span>"
+            f"CleanSignals would discard {', '.join(discarded)} |</span>"
             if discarded
             else ""
         )
@@ -858,14 +875,14 @@ class InstanceWindow(QMainWindow):
                 else f"not scored by {self._model_results.name}"
             )
             cleaning += (
-                f'<span style="font-size:9pt; color:{colors.muted};">&nbsp;{verdict} ·</span>'
+                f'<span style="font-size:9pt; color:{colors.muted};">&nbsp;{verdict} |</span>'
             )
         return (
             f'<span style="font-size:10pt;"><b>{instance_title(row)}</b></span>{badge}'
             f"&nbsp;&nbsp;{squares}{warning}{cleaning}"
-            f'<span style="font-size:9pt; color:{colors.muted};"> {what} · {joined}'
-            f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · "
-            f"{row['hours']:.1f} h · {int(row['n_samples']):,} samples · level {int(row['lane']) + 1} · "
+            f'<span style="font-size:9pt; color:{colors.muted};"> {what} | {joined}'
+            f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} | "
+            f"{row['hours']:.1f} h | {int(row['n_samples']):,} samples | level {int(row['lane']) + 1} | "
             f"overlaps {partners} shown</span>"
         )
 
@@ -1020,8 +1037,8 @@ class InstanceWindow(QMainWindow):
         The view sizes its central item from its own resize events. Building
         the rows again makes that item resize itself to what the new rows
         prefer, which is their floor; and when the widget itself does not
-        change size — which is whenever the stack fits, the scroll area then
-        holding it at the viewport — no resize follows to put the item back.
+        change size (which is whenever the stack fits, the scroll area then
+        holding it at the viewport), no resize follows to put the item back.
         The stack would be drawn into the top of the window with every plot at
         its minimum and the room below it left empty, so the view's own resize
         handler is called to restore the item to the widget it sits in. It
@@ -1143,7 +1160,7 @@ class InstanceWindow(QMainWindow):
             add_trace(plot, x, y, colors.trace, 1.0, kinds)
             note = format_delta(stats.delta, unit) + (" (flat)" if stats.flat else "")
             if kinds is not None and not stats.flat:
-                note += " · " + describe_sampling(sampling_of(kinds))
+                note += " | " + describe_sampling(sampling_of(kinds))
             # A reading no instrument could have produced is drawn in the
             # warning color over the trace, sample by sample, so that the
             # stretch that is garbage is seen for what it is, and called out
@@ -1153,12 +1170,12 @@ class InstanceWindow(QMainWindow):
             if outside_range(stats.low, stats.high, bounds):
                 self._mark_implausible(plot, x, y, bounds)
                 warning = (
-                    f' · <span style="color:{colors.warning};">⚠ readings outside '
+                    f' | <span style="color:{colors.warning};">⚠ readings outside '
                     f"{bounds[0]:g} to {bounds[1]:g} {unit}</span>"
                 ).replace("  ", " ")
             AnchoredText(
                 f'<span style="font-size:8pt; color:{colors.text};">'
-                f"{note} · coverage {stats.coverage:.1f} %{warning}</span>"
+                f"{note} | coverage {stats.coverage:.1f} %{warning}</span>"
             ).attach(plot)
         else:
             AnchoredText(
@@ -1202,7 +1219,7 @@ class InstanceWindow(QMainWindow):
         plot = self._new_side_plot(row, col=0, colspan=span)
         plot.getAxis("left").setWidth(AXIS_WIDTH)
         set_log_period_axis(plot, "bottom", "period")
-        power_axis(plot, "left", f"{panel.feature} · {power_label(panel.unit)}")
+        power_axis(plot, "left", f"{panel.feature} | {power_label(panel.unit)}")
         plot.getViewBox().setMouseEnabled(x=True, y=True)
         plot.setMinimumHeight(PLOT_MIN_PX + AXIS_PX)
         self._layout_widget.ci.layout.setRowStretchFactor(row, 1)
@@ -1475,7 +1492,7 @@ class InstanceWindow(QMainWindow):
         A block of one instance is read from its frame, as it always was. A
         merged one is read from the label runs the catalogue already holds for
         its instances, which say the same as the merged ``class`` column and
-        also say which file supplied each stretch — so a normal period labeled
+        also say which file supplied each stretch, so a normal period labeled
         by a Normal Operation file keeps that file's color even where the
         merged recording goes on to develop a fault.
         """
@@ -1555,11 +1572,11 @@ class InstanceWindow(QMainWindow):
             for start, end, label in pieces:
                 verdict = agrees(run.value, label, kind, offset)
                 if verdict is None:
-                    color, text = tint(colors.live, 0.45), f"{verdict_name} · no label to compare"
+                    color, text = tint(colors.live, 0.45), f"{verdict_name} | no label to compare"
                 elif verdict:
-                    color, text = colors.live, f"{verdict_name} · agrees with the label"
+                    color, text = colors.live, f"{verdict_name} | agrees with the label"
                 else:
-                    color, text = colors.warning, f"{verdict_name} · disagrees with the label"
+                    color, text = colors.warning, f"{verdict_name} | disagrees with the label"
                 a, b = self.timemap.to_x([start, end])
                 segments.add(a, b, color, text, False)
         return segments if segments.x0 else None
@@ -1646,11 +1663,11 @@ class InstanceWindow(QMainWindow):
                 if feature in frame.columns:
                     value = frame[feature].iloc[i]
                     values.append(f"{feature} = {'—' if pd.isna(value) else f'{value:.4g}'}")
-            reading = f" · {', '.join(values)}" if values else ""
+            reading = f" | {', '.join(values)}" if values else ""
             parts.append(
                 f"{title}: {label_name(klass, self.info.fault_names, offset)} / {state_name(state)}{reading}"
             )
-        self._status.setText("  ·  ".join(parts))
+        self._status.setText("  |  ".join(parts))
 
     def _describe_side(self, pos) -> str:
         """What the pointer is over in the side views: a bin and its count, or a period and its power."""
@@ -1662,11 +1679,11 @@ class InstanceWindow(QMainWindow):
             ):
                 result = panel.histogram
                 if result is None:
-                    return f"{title} · {panel.feature}: no readings on screen"
+                    return f"{title} | {panel.feature}: no readings on screen"
                 value = panel.hist_plot.getViewBox().mapSceneToView(pos).y()
                 k = int(np.searchsorted(result.edges, value, side="right")) - 1
                 if not 0 <= k < len(result.edges) - 1:
-                    return f"{title} · {panel.feature}: outside the bins"
+                    return f"{title} | {panel.feature}: outside the bins"
                 counts = result.counts
                 share = 100.0 * counts[k] / result.total if result.total else 0.0
                 stacks = ", ".join(
@@ -1675,9 +1692,9 @@ class InstanceWindow(QMainWindow):
                     if stack[k]
                 )
                 return (
-                    f"{title} · {panel.feature} from {result.edges[k]:.4g} to "
+                    f"{title} | {panel.feature} from {result.edges[k]:.4g} to "
                     f"{result.edges[k + 1]:.4g} {panel.unit}: {counts[k]:,} samples ({share:.1f} %)"
-                    + (f" · {stacks}" if stacks else "")
+                    + (f" | {stacks}" if stacks else "")
                 ).replace("  ", " ")
             if (
                 panel.spec_plot is not None
@@ -1685,14 +1702,14 @@ class InstanceWindow(QMainWindow):
             ):
                 spectrum = panel.spectrum
                 if spectrum is None:
-                    return f"{title} · {panel.feature}: no spectrum on screen"
+                    return f"{title} | {panel.feature}: no spectrum on screen"
                 point = panel.spec_plot.getViewBox().mapSceneToView(pos)
                 log_period = point.x()
                 periods = np.log10(spectrum.periods)
                 k = int(np.clip(np.searchsorted(periods, log_period), 0, len(periods) - 1))
                 unit = f" {panel.unit}²/Hz" if panel.unit and panel.unit != "-" else ""
                 return (
-                    f"{title} · {panel.feature} · period {format_period(10**log_period)}: "
+                    f"{title} | {panel.feature} | period {format_period(10**log_period)}: "
                     f"power {spectrum.power[k]:.3g}{unit} at {format_period(spectrum.periods[k])}"
                 )
         return ""

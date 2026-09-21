@@ -1,8 +1,8 @@
 """The Qt pieces of the signal views, shared by the instance window and the faults page.
 
 ``TransformControls`` is the toolbar widget holding every parameter a view
-takes — the segment length, the overlap, the window function, the number of
-bins — so that the two windows offer the same widgets and mean the same thing
+takes (the segment length, the overlap, the window function, the number of
+bins), so that the two windows offer the same widgets and mean the same thing
 by them. ``LogPeriodAxisItem`` labels an axis of log10 seconds in the units a
 person says a period in. The rest are the builders both windows draw with: a
 histogram as stacked bars or as a filled step outline, a spectrum curve, the
@@ -65,13 +65,13 @@ DEFAULT_OVERLAP_PCT = 50  # Rabelo's windows overlap by half
 DEFAULT_BINS = 40
 CLAMP_TIP = (
     "Count only the readings inside the plausible range, which is what a "
-    "histogram is normally asked for: one gauge reporting a pressure of 10¹² Pa would otherwise "
-    "put every genuine reading into the first bin. Untick to see the garbage itself — the bins "
+    "histogram is normally asked for: one gauge reporting a pressure of 1e12 Pa would otherwise "
+    "put every genuine reading into the first bin. Untick to see the garbage itself: the bins "
     "beyond the range sit on an amber ground, and the axis opens to hold them."
 )
 GENUINE_TIP = (
     "Count and transform the measurements only, leaving out the samples the historian filled in "
-    "between them — the straight lines it drew from one reading to the next, and the readings it "
+    "between them: the straight lines it drew from one reading to the next, and the readings it "
     "carried forward. A histogram then counts what was read; a spectrum becomes the Lomb-Scargle "
     "periodogram of the readings at their own instants, which needs no grid and is the honest "
     "spectrum of a series measured every ten seconds or every two minutes. Most sensors of 3W "
@@ -573,19 +573,19 @@ def caption_for(spectrum: Spectrum, unit: str, compact: bool = False) -> str:
                 f"peak {format_period(period)}<br>explains {share * 100:.0f} % of the variance"
                 if compact
                 else (
-                    f"dominant period {format_period(period)} · a sinusoid of it explains "
+                    f"dominant period {format_period(period)}, a sinusoid of it explains "
                     f"{share * 100:.0f} % of the variance"
                 )
             )
         else:
             line = "no dominant period"
         segments = f"Lomb-Scargle over {spectrum.n_points:,} measurements"
-        return f"{line}<br>{segments}" if compact else f"{line} · {segments}"
+        return f"{line}<br>{segments}" if compact else f"{line}, {segments}"
     if np.isfinite(period):
         line = (
             f"peak {format_period(period)}<br>{share * 100:.0f} % of the power"
             if compact
-            else f"dominant period {format_period(period)} · {share * 100:.0f} % of the power"
+            else f"dominant period {format_period(period)}, {share * 100:.0f} % of the power"
         )
     else:
         line = "no dominant period"
@@ -594,7 +594,7 @@ def caption_for(spectrum: Spectrum, unit: str, compact: bool = False) -> str:
         if spectrum.n_segments == 1
         else f"{spectrum.n_segments} segments of {format_period(spectrum.segment_s)}"
     )
-    return f"{line}<br>{segments}" if compact else f"{line} · {segments}"
+    return f"{line}<br>{segments}" if compact else f"{line}, {segments}"
 
 
 def format_width(width: float, unit: str) -> str:

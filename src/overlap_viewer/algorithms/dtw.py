@@ -9,7 +9,7 @@ sensor, within one class, for the Instances map.
 Two things are done to a series before the distance is taken. It is
 **z-scored**, so that the levels of two wells do not swamp their shapes
 (what the toolkit's scaler does). And it is **decimated** to a few hundred
-blocks — each block the mean of the readings inside it — because DTW costs the
+blocks (each block the mean of the readings inside it) because DTW costs the
 product of the two lengths and a six-hour instance has 21,600 samples: the
 decimation is a matter of cost, the blocks stay proportional to the length of
 the instance, and a shape a few minutes long survives it. This is not the

@@ -22,31 +22,31 @@ src/overlap_viewer/
 ├── app.py                command line and start-up
 ├── __main__.py           python -m overlap_viewer
 ├── backend/              what the data is — pandas, numpy and pyarrow only
-│   ├── config.py         dataset fallbacks · plausible ranges · the tint ladder · signatures · layout · cache
-│   ├── dataset.py        dataset.ini · instance catalogue and its cache · sensor figures from the footers, from merged recordings and pair by pair · overlaps and joins per well
+│   ├── config.py         dataset fallbacks, plausible ranges, the tint ladder, signatures, layout, cache
+│   ├── dataset.py        dataset.ini, instance catalogue and its cache, sensor figures from the footers, from merged recordings and pair by pair, overlaps and joins per well
 │   ├── profiles.py       the pass that profiles every sensor of every instance and bar: how it was measured, what it amounts to, cached
-│   ├── labels.py         label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts · a stamp at a frame's own resolution
+│   ├── labels.py         label kinds and names, runs, their agreement and their merge, feature statistics, coverage counts, a stamp at a frame's own resolution
 │   ├── timemap.py        gap-compressed (or calendar) time axis in hours
-│   ├── availability.py   the three states of a sensor in a bar · the measured/filled split of the live share · groups folded into shares of samples or of bars · the pair map of a scope
+│   ├── availability.py   the three states of a sensor in a bar, the measured/filled split of the live share, groups folded into shares of samples or of bars, the pair map of a scope
 │   ├── extras.py         the optional dependency groups: what each enables, whether it is installed, how it is installed
 │   ├── export.py         the Toolkit file list: a ParquetDatasetConfig of the instances on show, with its provenance
 │   ├── model_outputs.py  the model-output format: model.json beside per-instance parquet files, its loader, the agreement with the labels
 │   ├── theme.py          every color of the light and of the dark mode
-│   ├── palette.py        fault hues tinted by reach · legend entries
+│   ├── palette.py        fault hues tinted by reach, legend entries
 │   └── help_text.py      what the help says: classes, variables, statuses, availability, usage, sources
 ├── algorithms/           what is computed from the data — numpy only; anything heavier is an optional extra
-│   ├── faults.py         where the event begins in an instance · z-scores · the plausible extent of a series
-│   ├── interpolation.py  which samples are measurements and which the historian drew: held, interpolated, genuine · the spacing of the measurements
+│   ├── faults.py         where the event begins in an instance, z-scores, the plausible extent of a series
+│   ├── interpolation.py  which samples are measurements and which the historian drew: held, interpolated, genuine, the spacing of the measurements
 │   ├── descriptors.py    what a series amounts to: moments, quantiles, autocorrelation time, signal-to-noise ratio, Zhang's Gaussianity test
 │   ├── cleaning.py       the Toolkit's CleanSignals rule on the profiles: bounds at the quartiles, the sensors discarded and dropped
 │   ├── embedding.py      the Instances map: representations, PCA and MDS in numpy, t-SNE and UMAP, the clusterings and their scores, typicality, the one-class audit
 │   ├── dtw.py            the DTW distance between the decimated, z-scored series of one sensor (the `dtw` extra)
 │   ├── correlation.py    how the sensors move together over a scope: Pearson exact over the pooled samples, the mutual-information and nonlinear coefficients, per smoothing window
 │   ├── dispersion.py     two sensors against each other over a scope: an even subsample of every instance with its label periods and measurements, the pair, its density
-│   └── spectral.py       the signal views: a series prepared · Welch's density and the dominant period · the Lomb-Scargle periodogram of the measurements · histograms stacked by label, with their peak
+│   └── spectral.py       the signal views: a series prepared, Welch's density and the dominant period, the Lomb-Scargle periodogram of the measurements, histograms stacked by label, with their peak
 └── frontend/             how it is shown — PySide6 and pyqtgraph
-    ├── styling.py            installing a theme into Qt and pyqtgraph · the saved mode
-    ├── loading.py            progress dialogs · cache of loaded instances
+    ├── styling.py            installing a theme into Qt and pyqtgraph, the saved mode
+    ├── loading.py            progress dialogs, cache of loaded instances
     ├── passes.py             the passes over the data, read once behind a dialog and shared by every page
     ├── traces.py             a time series drawn as measurements (dots) and the historian's lines (faint) between them
     ├── items.py              pyqtgraph items: segments, instance bars and their marks, time axis, anchored text
@@ -91,7 +91,9 @@ choices.
 
 Notable constants: `DEFAULT_FAULT_NAMES`, `DEFAULT_TRANSIENT_OFFSET`, `DEFAULT_SENSOR_UNITS`,
 `WELL_STATES`, `FAULT_SIGNATURES` (the sensors that reproduce the 2.0.0 paper's example figures per
-fault), `REAL_PREFIX = "WELL-"`, `PLAUSIBLE_RANGES` and `EXTREME_VALUE_LIMIT` (the plausibility
+fault) with `BEST_EFFORT_SIGNATURES` and `BEST_EFFORT_SOURCES` for the five events it does not
+illustrate (read off the thesis; `signature_of(fault)` returns either set and whether a published
+figure backs it), `REAL_PREFIX = "WELL-"`, `PLAUSIBLE_RANGES` and `EXTREME_VALUE_LIMIT` (the plausibility
 survey's results), `REACH_TINTS`/`REACH_LABELS`/`BACKGROUND_TINTS` (the tint ladder `palette.py`
 uses), layout numbers (`DEFAULT_GAP_HOURS`, `BAR_HEIGHT`, `MAX_OVERLAID_INSTANCES`, …),
 `RAW_DIR_ENV = "OVERLAP_VIEWER_RAW_DATA_DIR"` and `RAW_DIR_CANDIDATES`, `PACKAGE_DIR`/`PROJECT_DIR`/
@@ -480,23 +482,30 @@ appearance mode (`light`/`dark`/`system`) via `QSettings`.
 - `saved_mode(default="system")` / `save_mode(mode)` — read/write the remembered mode.
 - `resolve(mode)` — tells Qt which color scheme to use, and reads back which theme name that
   resolves to (handling `"system"` by asking Qt's style hints).
-- `qt_palette(colors)` / `style_sheet(colors)` — a `Theme` turned into a `QPalette` and the handful of
-  rules a palette cannot express.
+- `qt_palette(colors)` — a `Theme` turned into a fully specified `QPalette`, every role stated so
+  that no widget falls back to the other mode's default. There is deliberately no application
+  stylesheet: the module comment says what one cost (a two-second polish of every widget on each
+  switch, slower widget creation, and a palette change that did not reach the chrome).
 - `apply(mode)` — the single entry point: resolves the mode, activates it in `backend.theme`,
   configures pyqtgraph, and sets the application's palette and stylesheet.
 
 ### `loading.py`
 
-Wraps the backend's data-reading passes with cancellable Qt progress dialogs, and caches loaded
-instance frames in memory.
+Wraps the backend's data-reading passes with cancellable Qt progress dialogs, puts one bar over
+the whole start-up, and caches loaded instance frames in memory.
 
 - `FrameCache` — an LRU-ish cache of loaded instance DataFrames capped by total row count
   (`FRAME_CACHE_ROWS`); `get(path)` returns a cached frame or loads and inserts it.
 - `progress_dialog(text, parent)` — a modal, non-auto-closing `QProgressDialog` plus a progress
   callback that returns `False` once cancelled.
+- `LaunchProgress(steps)` — the dialog of the start-up, with no Cancel: `step(text)` announces each
+  step (the catalogue, every page built, every page laid out), `scanning(done, total, name)` is the
+  callback a first launch's catalogue scan reports to, `close()` takes it down before the window
+  shows. `app.build_window(args, launch=True)` drives it.
 - `catalogue_with_progress` / `joined_stats_with_progress` / `pair_counts_with_progress` /
   `profiles_with_progress` — the four cached passes, each gated by a progress dialog, raising
-  `dataset.ScanCancelled` on cancel.
+  `dataset.ScanCancelled` on cancel; the first also takes an outside `progress` callback, which the
+  launch bar passes.
 
 ### `passes.py`
 
@@ -694,8 +703,9 @@ measurements-only filtering, label-period filters, and hover/click on individual
   `_load_cloud()` reads every analog sensor of every instance in scope via
   `algorithms.dispersion.DispersionPass`, progress-dialog-gated and cached by scope and smoothing.
   `_redraw()` draws the density image (a log-scaled 2D histogram) and, per color group, a
-  `ScatterPlotItem` of the dot cloud (subsampled to `MAX_DOTS`). `describe(index)`,
-  `shown_files()`.
+  `ScatterPlotItem` of the dot cloud (subsampled to `MAX_DOTS`). `_light_instance(instance)`
+  brings every drawn dot of one instance forward and fades the groups while a dot of it is
+  hovered. `describe(index)`, `shown_files()`.
 
 ### `instance_window.py`
 
@@ -724,7 +734,9 @@ rescan, help, status bar, the passes, model-output loading, file-list export) an
 - `MainWindow(QMainWindow)` — builds all six pages sharing one `Passes` and `FrameCache`, and wires
   each page's `status`/`summary_changed`/`open_requested` signals. `set_model_outputs(outputs)`
   loads model outputs into `Passes` and distributes `ModelResults` to every page and open instance
-  window. `set_theme_mode(mode)` persists the mode and rebuilds every page (pyqtgraph bakes colors in
-  at build time, so a theme change cannot be repainted in place). `open_instances(data, index)`
+  window. `set_theme_mode(mode)` persists the mode and lays the page on show out again, leaving
+  the other pages stale until they are next shown (`set_catalogue(lazy=True)`, `_on_page_changed`):
+  pyqtgraph bakes colors in at build time, so a theme change cannot be repainted in place, and
+  laying every page out at once was most of a nine-second switch. `open_instances(data, index)`
   constructs and tracks an `InstanceWindow`. `_export_file_list()` writes the current page's
   `shown_files()` via `backend.export.write_file_list`.

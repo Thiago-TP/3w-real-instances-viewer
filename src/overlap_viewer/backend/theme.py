@@ -3,8 +3,8 @@
 The viewer draws in two systems at once. The plots are pyqtgraph's, whose
 background and foreground are global configuration read when an item is built;
 the windows around them are Qt's, painted from the application palette. Left to
-their own defaults the two disagree — white plots inside the dark windows a dark
-desktop hands out, each with the text color the other one wanted — so both
+their own defaults the two disagree (white plots inside the dark windows a dark
+desktop hands out, each with the text color the other one wanted), so both
 halves are settled here, together, as one ``Theme``. A mode is therefore a
 single object, and switching is a single call.
 
@@ -52,8 +52,8 @@ class Theme:
     crosshair: str
     trace: str  # a time series line; saturated, it sits on tinted shading
     # An unlabeled stretch is a neutral grey under these strokes. The shade
-    # alone would read as one more class — two of the fault hues are themselves
-    # grey — so the texture, not the color, is what says "nothing is known here".
+    # alone would read as one more class (two of the fault hues are themselves
+    # grey), so the texture, not the color, is what says "nothing is known here".
     hatch: str
     unknown: str
     note_fill: str  # the boxed note pinned in the corner of a plot
@@ -76,8 +76,8 @@ class Theme:
     # outline of a histogram over stacks in the fault's own hue. They are
     # therefore separated by register rather than by hue, which ten fault hues
     # leave no room for. Every well color sits on the far side of every fault
-    # hue in luminance — deeper than all of them here, paler than all of them
-    # in the dark mode — which is the same band the trace color already keeps
+    # hue in luminance (deeper than all of them here, paler than all of them
+    # in the dark mode), which is the same band the trace color already keeps
     # to, and for the same reason: a line has to stay legible over every
     # shading it can be drawn on.
     wells: tuple[str, ...]
@@ -190,7 +190,7 @@ LIGHT = Theme(
 # categorical palette chosen to read as ink on paper (the browns and the blues
 # above all) sinks into a dark ground, and every neutral that was a step toward
 # white becomes a step toward black, so that the ladder of tints keeps its
-# direction — away from the background the color is drawn on.
+# direction, away from the background the color is drawn on.
 DARK = Theme(
     name="dark",
     dark=True,

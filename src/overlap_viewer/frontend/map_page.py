@@ -1,8 +1,8 @@
 """The Instances map: every real instance as one point, placed by what its sensors amount to.
 
 The other pages look at the instances one well, one fault or one sensor at a
-time. This one looks at all of them at once, from above: each instance — or,
-with *Join overlapping instances* ticked, each bar of the joined view — is a
+time. This one looks at all of them at once, from above: each instance (or,
+with *Join overlapping instances* ticked, each bar of the joined view) is a
 point, placed on the plane by an embedding of its **representation**
 (``algorithms.embedding``): the descriptors of its sensors, taken on the 1 Hz
 grid or on the measurements alone; the same less the levels; or the DTW
@@ -16,8 +16,8 @@ Two things the map computes are handed to the other pages: the clusters and
 the typicality become bar colorings of the Timelines, and the typicality and
 the novelty score become sort keys of the instance lists of the Faults and
 Features pages. What is on the right is the **label audit**: the instances
-whose label disagrees with the one-class verdict — a fault instance that looks
-normal, a normal instance that looks anomalous — class by class, each a click
+whose label disagrees with the one-class verdict (a fault instance that looks
+normal, a normal instance that looks anomalous), class by class, each a click
 away.
 
 The representation needs the profiles of the instances (``backend.profiles``),
@@ -64,9 +64,9 @@ from overlap_viewer.frontend.passes import Passes
 from overlap_viewer.frontend.series_page import LIST_WIDTH
 
 HINT = (
-    "Every point is one real instance, or one joined bar · hover a point to name it, click it to "
-    "open its time series · the boxes choose what places the points, what colors them and how "
-    "they are grouped · the list on the right is the label audit · F1 for help"
+    "Every point is one real instance, or one joined bar | hover a point to name it, click it to "
+    "open its time series | the boxes choose what places the points, what colors them and how "
+    "they are grouped | the list on the right is the label audit | F1 for help"
 )
 
 COLORINGS = ("Fault class", "Well", "Cluster", "Typicality", "Novelty", "Model agreement")
@@ -88,8 +88,8 @@ REPRESENTATION_TIP = (
 MODE_TIP = (
     "Which descriptors: those taken on the 1 Hz grid, which is what a pipeline reads, or those "
     "taken on the measurements alone. On the grid the straight lines the historian drew between "
-    "measurements make every series look smoother than the process — the signal-to-noise ratio "
-    "and the autocorrelation time in particular — so the map drawn from the grid is a map of the "
+    "measurements make every series look smoother than the process (the signal-to-noise ratio "
+    "and the autocorrelation time in particular), so the map drawn from the grid is a map of the "
     "lines as much as of the wells."
 )
 EMBEDDING_TIP = (
@@ -101,8 +101,8 @@ EMBEDDING_TIP = (
 COLORING_TIP = (
     "What colors a point: the fault folder of the instance, its well, the cluster a clustering "
     "put it in, how typical an instance of its class it is (full for the medoid, faint for the "
-    "farthest), the verdict of the one-class model — blue looks normal, amber looks anomalous, "
-    "with a dark ring where the verdict disagrees with the label — or, once model outputs are "
+    "farthest), the verdict of the one-class model (blue looks normal, amber looks anomalous, "
+    "with a dark ring where the verdict disagrees with the label) or, once model outputs are "
     "loaded, how far they agree with the instance's labels, full for all of the compared time, "
     "faint for none, grey where the model scored nothing."
 )
@@ -111,7 +111,7 @@ CLUSTERING_TIP = (
     "(average linkage) and DBSCAN on the distances, DBSCAN reading its radius from the data and "
     "leaving isolated points out. The status line scores the result: the silhouette (1 for tight, "
     "well-separated clusters), and the agreement with the fault classes and with the wells as "
-    "the adjusted Rand index and the normalised mutual information — 1 for a clustering that is "
+    "the adjusted Rand index and the normalised mutual information: 1 for a clustering that is "
     "the classes, or the wells, under other names, near 0 for one unrelated to them. On 3W the "
     "wells usually win."
 )
@@ -487,7 +487,7 @@ class MapPage(QWidget):
             counts = self._catalogue["fault_class"].value_counts()
             for fault in sorted(counts.index):
                 self._class.addItem(
-                    f"{fault} · {self.info.fault_name(int(fault))} ({int(counts[fault])})",
+                    f"{fault}. {self.info.fault_name(int(fault))} ({int(counts[fault])})",
                     int(fault),
                 )
         index = self._class.findData(wanted_class) if wanted_class is not None else -1
@@ -612,7 +612,7 @@ class MapPage(QWidget):
         note = (
             f"DTW of {sensor} within {self.info.fault_name(int(fault))}: {len(kept)} instances, "
             f"each z-scored and averaged into {N_BLOCKS} blocks, window {WINDOW_SHARE:.0%}"
-            + (f" · {left_out} left out, the sensor flat or missing in them" if left_out else "")
+            + (f" | {left_out} left out, the sensor flat or missing in them" if left_out else "")
         )
         return kept, em.distance_representation([p.key for p in kept], D, note)
 
@@ -652,10 +652,10 @@ class MapPage(QWidget):
         self._redraw()
         self._fill_audit()
         self._scores_label.setText(self._scores.describe() if self._scores else "")
-        self._note.setText(" · ".join(part for part in (rep.note, self._caption) if part))
+        self._note.setText(" | ".join(part for part in (rep.note, self._caption) if part))
         n = rep.n
         noun = "bars" if self.joined else "instances"
-        self._summary = f"{n} {noun} on the map · {self._caption} "
+        self._summary = f"{n} {noun} on the map | {self._caption} "
         self.summary_changed.emit()
         self.results_changed.emit(self.results())
         self.status.emit(HINT)
@@ -789,14 +789,14 @@ class MapPage(QWidget):
             flagged = nov.disagreements_of(classes, klass)
             verdict = "look anomalous" if klass == 0 else "look normal"
             heading = (
-                f"{klass} · {self.info.fault_name(int(klass))} — {len(flagged)} of "
+                f"{klass}. {self.info.fault_name(int(klass))}: {len(flagged)} of "
                 f"{len(members)} {verdict}"
             )
             head = QTreeWidgetItem([heading])
             head.setData(0, Qt.ItemDataRole.UserRole, -1)
             head.setForeground(0, pg.mkColor(fault_color(int(klass))))
             for i in sorted(flagged.tolist(), key=lambda i: nov.score[i], reverse=klass != 0):
-                child = QTreeWidgetItem([f"{self._points[i].title} · score {nov.score[i]:+.2f}"])
+                child = QTreeWidgetItem([f"{self._points[i].title} (score {nov.score[i]:+.2f})"])
                 child.setData(0, Qt.ItemDataRole.UserRole, int(i))
                 head.addChild(child)
             head.setExpanded(len(flagged) <= 12)
@@ -847,7 +847,7 @@ class MapPage(QWidget):
     def describe(self, index: int) -> str:
         """One line about a point: which instance, its class and well, and what the map made of it."""
         point = self._points[index]
-        parts = [f"{well_label(point.well)} · {point.title} · {self.info.fault_name(point.fault)}"]
+        parts = [f"{well_label(point.well)} | {point.title} | {self.info.fault_name(point.fault)}"]
         if self._clusters is not None:
             label = int(self._clusters[index])
             parts.append("left out of every cluster" if label < 0 else f"cluster {label + 1}")
@@ -855,7 +855,7 @@ class MapPage(QWidget):
         if typ is not None and np.isfinite(typ.rank[index]):
             parts.append(
                 f"typicality {typ.rank[index]:.2f} (distance {typ.distance[index]:.2f} to the "
-                f"medoid of its class{' — the medoid itself' if typ.rank[index] == 1.0 else ''})"
+                f"medoid of its class{', the medoid itself' if typ.rank[index] == 1.0 else ''})"
             )
         nov = self._novelty
         if nov is not None:
@@ -873,7 +873,7 @@ class MapPage(QWidget):
                 if np.isfinite(share)
                 else f"not scored by {self._model_results.name}"
             )
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def summary(self) -> str:
         return self._summary
@@ -898,8 +898,8 @@ class MapPage(QWidget):
         """Where a file list from this page came from, for its provenance."""
         what = em.REPRESENTATION_NAMES[self.representation]
         if self.representation == "dtw":
-            what += f" · {self._sensor.currentText()} · {self._class.currentText()}"
-        return f"the Instances map · {what}" + (" · joined bars" if self.joined else "")
+            what += f" | {self._sensor.currentText()} | {self._class.currentText()}"
+        return f"the Instances map | {what}" + (" | joined bars" if self.joined else "")
 
 
 __all__ = ["COLORINGS", "MapPage", "MapResults", "cluster_color", "tint"]

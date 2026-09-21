@@ -5,10 +5,11 @@ figures of one instance, and what they show is the historian's lines: the
 cloud of two interpolated series is the trajectories of the interpolations,
 straight segments between the few instants that were measured. This page
 draws that cloud for any pair of sensors over every real instance, one fault
-class or one well — or the joined bars — and lets it be read rather than
+class or one well (or the joined bars) and lets it be read rather than
 looked at: every dot is a sample that names its instance and its instant on
-hover and opens it on click; the density of the samples sits behind the
-dots; the label periods are switched on and off; the dots can be the
+hover, lights up every other dot of that instance while the rest of the
+cloud fades, and opens it on click; the density of the samples sits behind
+the dots; the label periods are switched on and off; the dots can be the
 measurements alone; and a moving average shows what smoothing does to the
 cloud. The reading is done once per scope and smoothing window, every analog
 sensor at once, so that everything else is instant.
@@ -52,15 +53,17 @@ from overlap_viewer.frontend.overview import ElidedLabel
 from overlap_viewer.frontend.passes import Passes
 
 HINT = (
-    "Every dot is one sample of two sensors · hover a dot for its instance, its instant and its "
-    "readings · click it to open the instance · the shading behind is the density of the samples "
-    "· drag to pan · Ctrl + wheel to zoom · F1 for help"
+    "Every dot is one sample of two sensors | hover a dot for its instance, its instant and its "
+    "readings, and to light up every dot of that instance | click it to open the instance | the "
+    "shading behind is the density of the samples | drag to pan | Ctrl + wheel to zoom | F1 for help"
 )
 COLORINGS = ("Fault class", "Well", "Label period", "Density")
 DOT_PX = 3
 DOT_ALPHA = 130
 HIGHLIGHT_PX = 11
 HOVER_PX = 8
+KIN_PX = DOT_PX + 3  # the other dots of the hovered dot's instance
+FADE_OPACITY = 0.18  # the rest of the cloud while one instance is lit
 DENSITY_ALPHA = 0.45  # behind the dots; full when the density is the coloring
 
 SENSOR_TIP = (
@@ -76,7 +79,7 @@ SCOPE_TIP = (
 )
 COLORING_TIP = (
     "What colors the dots: the fault folder of the sample's instance, its well, or the label "
-    "period the sample was in — normal operation, transient, steady state, unlabeled. Density "
+    "period the sample was in (normal operation, transient, steady state, unlabeled). Density "
     "hides the dots and shows the two-dimensional histogram of the samples alone, darkest where "
     "most of them fall."
 )
@@ -87,13 +90,13 @@ SMOOTH_TIP = (
     "only is not offered on a smoothed series: an average is no measurement."
 )
 GENUINE_TIP = (
-    "Draw only the samples at which both sensors were actually measured — the readings the "
-    "historian archived — rather than the samples it filled in by drawing lines between them. "
+    "Draw only the samples at which both sensors were actually measured (the readings the "
+    "historian archived) rather than the samples it filled in by drawing lines between them. "
     "On 3W most sensors were read every ten seconds to every two minutes, so the cloud thins to "
     "a few per cent of its dots and the straight trajectories vanish. One caveat: a historian "
     "archives a reading when it has moved enough, so the instants at which both sensors were "
-    "archived are instants at which both moved, and this cloud favours the relation between them "
-    "— on the severe-slugging instances P-TPT × T-TPT reads +0.40 over every sample and +0.95 "
+    "archived are instants at which both moved, and this cloud favours the relation between "
+    "them: on the severe-slugging instances P-TPT × T-TPT reads +0.40 over every sample and +0.95 "
     "over the 5 % at which both were measured."
 )
 PERIODS_TIP = (
@@ -142,8 +145,11 @@ class DispersionPage(QWidget):
         self._dots = np.zeros(0, dtype=int)  # positions in the pair drawn as dots
         self._density: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._groups: list[pg.ScatterPlotItem] = []
+        self._dot_instances = np.zeros(0, dtype=int)  # the instance of every dot drawn
+        self._dot_fills = np.zeros(0, dtype=object)  # and its color
         self._pending = False
         self._hover = -1
+        self._hover_instance = -1
         self._summary = ""
         self._read_s = 0.0
 
@@ -164,6 +170,10 @@ class DispersionPage(QWidget):
         self._highlight = pg.ScatterPlotItem(size=HIGHLIGHT_PX, pxMode=True)
         self._highlight.setZValue(20)
         plot.addItem(self._highlight, ignoreBounds=True)
+        # The other dots of the hovered dot's instance, brought forward over the faded cloud.
+        self._kin = pg.ScatterPlotItem(size=KIN_PX, pxMode=True)
+        self._kin.setZValue(15)
+        plot.addItem(self._kin, ignoreBounds=True)
         self._plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
         self._plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
         body = QWidget()
@@ -201,8 +211,8 @@ class DispersionPage(QWidget):
         bar.addWidget(self._scope)
         self._join = QCheckBox("Join overlapping instances")
         self._join.setToolTip(
-            "Read the joined bars — the merged recordings of the instances of a well that overlap "
-            "in time and agree in their labels — instead of the instances, so that a sample two "
+            "Read the joined bars (the merged recordings of the instances of a well that overlap "
+            "in time and agree in their labels) instead of the instances, so that a sample two "
             "windows share is drawn once."
         )
         self._join.toggled.connect(self._refresh)
@@ -345,7 +355,7 @@ class DispersionPage(QWidget):
             box.blockSignals(True)
             box.clear()
             for name in analog:
-                box.addItem(f"{name} · {live[name]}", name)
+                box.addItem(f"{name} ({live[name]})", name)
                 item = box.model().item(box.count() - 1)
                 item.setEnabled(live[name] > 0)
                 unit = self.info.unit(name)
@@ -371,7 +381,7 @@ class DispersionPage(QWidget):
                 self._scope.insertSeparator(self._scope.count())
             for fault in sorted(faults.index):
                 self._scope.addItem(
-                    f"{fault} · {self.info.fault_name(int(fault))} ({int(faults[fault])} instances)",
+                    f"{fault}. {self.info.fault_name(int(fault))} ({int(faults[fault])} instances)",
                     ("class", int(fault)),
                 )
             wells = self._catalogue["well"].value_counts()
@@ -496,7 +506,11 @@ class DispersionPage(QWidget):
         self._groups = []
         self._image.clear()
         self._highlight.setData([], [])
+        self._kin.setData([], [])
+        self._hover_instance = -1
         self._dots = np.zeros(0, dtype=int)
+        self._dot_instances = np.zeros(0, dtype=int)
+        self._dot_fills = np.zeros(0, dtype=object)
         self._density = None
 
     def _well_colors(self) -> dict[int, str]:
@@ -539,7 +553,7 @@ class DispersionPage(QWidget):
         present = sorted(set(values.tolist()))
         table = {f: fault_color(int(f)) for f in present}
         colors = np.array([table[int(f)] for f in values]) if len(values) else np.array([])
-        key = [(table[f], f"{f} · {self.info.fault_name(int(f))}") for f in present]
+        key = [(table[f], f"{f}. {self.info.fault_name(int(f))}") for f in present]
         return colors, key
 
     def _redraw(self, *args) -> None:
@@ -555,6 +569,7 @@ class DispersionPage(QWidget):
         pair = cloud.pair(x, y, self.periods, self.genuine_only)
         self._pair = pair
         self._dots = pair.dots(di.MAX_DOTS)
+        self._dot_instances = cloud.instance[pair.rows[self._dots]]
         # The density of every row, behind the dots or in their place.
         density_shown = self.coloring == "Density" or self._density_check.isChecked()
         self._density = pair.density(di.BINS) if pair.n else None
@@ -588,6 +603,7 @@ class DispersionPage(QWidget):
             ]
         else:
             fills, key = self._dot_colors(pair.rows[self._dots])
+            self._dot_fills = fills
             for color in sorted(set(fills.tolist())):
                 picked = np.flatnonzero(fills == color)
                 item = pg.ScatterPlotItem(
@@ -637,12 +653,12 @@ class DispersionPage(QWidget):
             )
         else:
             parts.append(
-                "on the 1 Hz grid most dots lie on the historian's lines between measurements — "
+                "on the 1 Hz grid most dots lie on the historian's lines between measurements; "
                 "tick Measurements only for the readings alone"
             )
         if self._read_s >= 1.0:
             parts.append(f"read in {self._read_s:.0f} s")
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def _summary_text(self, pair: di.Pair) -> str:
         cloud = self._cloud
@@ -693,11 +709,42 @@ class DispersionPage(QWidget):
             return None
         return int(counts[i, j]), float(point.x()), float(point.y())
 
+    def _light_instance(self, instance: int) -> int:
+        """Bring every dot of one instance forward and fade the rest; ``-1`` restores the cloud.
+
+        The dots of one instance are its trajectory through the plane, which
+        is what Melo read the scatter plots for; one lit against a faded cloud
+        can be followed with the eye where a hundred thousand dots of every
+        instance are one smear. Returns how many dots of the instance are on
+        show.
+        """
+        if instance == self._hover_instance:
+            return int((self._dot_instances == instance).sum()) if instance >= 0 else 0
+        self._hover_instance = instance
+        if instance < 0:
+            self._kin.setData([], [])
+            for item in self._groups:
+                item.setOpacity(1.0)
+            return 0
+        pair = self._pair
+        picked = np.flatnonzero(self._dot_instances == instance)
+        kin = self._dots[picked]
+        outline = pg.mkPen(theme.current().outline, width=0.8)
+        self._kin.setData(
+            pair.x[kin],
+            pair.y[kin],
+            brush=[pg.mkBrush(QColor(color)) for color in self._dot_fills[picked]],
+            pen=outline,
+        )
+        for item in self._groups:
+            item.setOpacity(FADE_OPACITY)
+        return len(kin)
+
     def _on_mouse_moved(self, pos) -> None:
         index = self._nearest(pos)
+        pair = self._pair
         if index != self._hover:
             self._hover = index
-            pair = self._pair
             if index >= 0 and pair is not None:
                 colors = theme.current()
                 self._highlight.setData(
@@ -708,7 +755,12 @@ class DispersionPage(QWidget):
                 )
             else:
                 self._highlight.setData([], [])
+        kin = self._light_instance(
+            int(self._cloud.instance[pair.rows[index]]) if index >= 0 and pair is not None else -1
+        )
         text = self.describe(index) if index >= 0 else ""
+        if index >= 0 and kin > 1:
+            text = f"{text} | {kin:,} dots of this instance on show, brought forward"
         cell = self._density_here(pos)
         if cell is not None and (self._density_check.isChecked() or self.coloring == "Density"):
             count, px, py = cell
@@ -716,7 +768,7 @@ class DispersionPage(QWidget):
                 f"{count:,} samples in this cell of the density "
                 f"({self.x} ≈ {px:g}, {self.y} ≈ {py:g})"
             )
-            text = f"{text} · {here}" if text else here
+            text = f"{text} | {here}" if text else here
         self.status.emit(text or HINT)
 
     def _on_mouse_clicked(self, event) -> None:
@@ -747,13 +799,13 @@ class DispersionPage(QWidget):
                 for name, k in ((self.x, i), (self.y, j))
             ]
         parts = [
-            f"{well_label(ref.well)} · {ref.title} · {self.info.fault_name(ref.fault)} ({period})",
+            f"{well_label(ref.well)} | {ref.title} | {self.info.fault_name(ref.fault)} ({period})",
             f"{when:%Y-%m-%d %H:%M:%S}",
             f"{self.x} {pair.x[index]:g}{f' {unit_x}' if unit_x else ''}",
             f"{self.y} {pair.y[index]:g}{f' {unit_y}' if unit_y else ''}",
             *measured,
         ]
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     # -- what leaves the page
 
@@ -776,8 +828,8 @@ class DispersionPage(QWidget):
 
     def shown_source(self) -> str:
         """Where the file list came from, for its provenance."""
-        return f"the Dispersion page · {self.x} × {self.y} · over {self._scope_name()}" + (
-            " · joined bars" if self.joined else ""
+        return f"the Dispersion page | {self.x} × {self.y} | over {self._scope_name()}" + (
+            " | joined bars" if self.joined else ""
         )
 
     def wait_cursor(self):

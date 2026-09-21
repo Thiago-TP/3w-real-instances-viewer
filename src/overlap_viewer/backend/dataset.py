@@ -453,8 +453,8 @@ def merge_instances(frames: list[pd.DataFrame]) -> pd.DataFrame:
 
     The instances of a well are windows cut from the same recording, so the
     samples two of them share carry the same readings twice; the merged frame
-    keeps every instant once. Where one window says nothing about a column — a
-    sensor it did not record, or a sample the experts left unlabeled — the
+    keeps every instant once. Where one window says nothing about a column (a
+    sensor it did not record, or a sample the experts left unlabeled) the
     value is taken from whichever window does say something, which is what
     makes merging worth doing: the unlabeled head of a window is usually
     labeled by the window before it, so the ``class`` column comes out with far
@@ -527,7 +527,7 @@ def join_groups(starts: np.ndarray, ends: np.ndarray, runs: list[list[Segment]])
     holds an instance it overlaps, provided its labels agree
     (``labels.labels_agree``) with those of every member it overlaps, and
     opens a group of its own otherwise. A group is therefore one continuous
-    stretch of recording — every member overlaps another — in which no sample
+    stretch of recording (every member overlaps another) in which no sample
     sits under two different known labels, so its members can be read as a
     single instance.
 
@@ -586,7 +586,7 @@ def _distinct_samples(part: pd.DataFrame, runs: list[list[Segment]]) -> int:
 class WellData:
     """The bars of one well, stacked, with their overlaps resolved.
 
-    A bar is one real instance, or — in the view ``joined`` builds — one group
+    A bar is one real instance, or (in the view ``joined`` builds) one group
     of overlapping instances whose labels agree, drawn as one.
 
     Attributes
@@ -606,7 +606,7 @@ class WellData:
     colors : list[list[tuple[int, str]]]
         Per bar, the fault class and reach of every instance behind it, one
         entry per distinct pair, by fault class and then by decreasing tint
-        strength — the colors the bar has to carry.
+        strength, the colors the bar has to carry.
     source : WellData or None
         The unjoined bars a joined view was built from; ``None`` otherwise.
     """
@@ -674,7 +674,7 @@ class WellData:
             Join only these instances, and return only what they make up.
             Two of them that overlap only through an instance left out stay
             apart, so the result is what joining that set alone says rather
-            than what the whole well says — which is what an instance window
+            than what the whole well says, which is what an instance window
             asks for, its own group being all it is about. The default joins
             the well, and is built once and remembered, so that asking for it
             again hands back the very object the overview is drawing.
@@ -990,8 +990,8 @@ PAIR_COLUMNS = ["file", "fault_class", "pairs", "sensors", "listing_digest"]
 def pair_positions(n: int) -> tuple[np.ndarray, np.ndarray]:
     """Which two sensors each stored count belongs to: the upper triangle, diagonal included.
 
-    The matrix is symmetric — two sensors read together as often as they read
-    together — so only half of it is kept, and the diagonal with it, where a
+    The matrix is symmetric (two sensors read together as often as they read
+    together) so only half of it is kept, and the diagonal with it, where a
     pair of one sensor is that sensor's own count of readings.
     """
     return np.triu_indices(n, 0)

@@ -9,7 +9,7 @@ between the choice and the picture is the same: the same three arrangements,
 the same three domains, the same window of hours around an onset, the same
 normalization, the same transforms, the same hover.
 
-So that machinery lives here, and a page supplies only what differs — which
+So that machinery lives here, and a page supplies only what differs: which
 instances it reads, what a section is, what color a series takes and what the
 status bar should call it. A *section* is a heading, the sensor its plots draw,
 and the instances that belong in it; the layouts below know nothing else about
@@ -20,7 +20,7 @@ instance a small plot of its own, laid out in a grid, each with its own value
 axis and its label periods shaded behind the trace: two dozen shapes can be
 read at a glance, and the eye compares them one against the next. **Overlaid**
 draws them all on one set of axes, which says how far apart the levels are and
-little else once there are more than a handful — the reason the grid is the
+little else once there are more than a handful, the reason the grid is the
 default. **Overall** is not a third placement but a reduction before them: the
 instances of a group are pooled into one curve, and the overlaid arrangement
 draws the result. It is offered off the time axis only; there is no common
@@ -123,8 +123,8 @@ from overlap_viewer.frontend.traces import Trace, add_trace
 # The three arrangements of the same sections. *Overall* is not a third way of
 # placing the plots but a reduction before them: the instances of a group are
 # pooled into one curve, which the overlaid arrangement then draws. It says
-# nothing in the time domain — the instances are cut from different months, and
-# a pooled time series would be a line across a calendar of gaps — so it is
+# nothing in the time domain (the instances are cut from different months, and
+# a pooled time series would be a line across a calendar of gaps), so it is
 # greyed there.
 LAYOUTS = ("Small multiples", "Overlaid", "Overall")
 VALUE_AXES = ("Per instance", "Shared")
@@ -172,13 +172,13 @@ FIRST_DESCRIPTOR_SORT = (
 )
 SORT_TIP = (
     "The order of the list: by well and start, as the catalogue is; by typicality, the most "
-    "typical instance of its class first — its distance to the medoid of the class on the "
-    "Instances map, in the representation chosen there; by the one-class model's score, the "
+    "typical instance of its class first (its distance to the medoid of the class on the "
+    "Instances map, in the representation chosen there); by the one-class model's score, the "
     "instance that looks most anomalous first; by the agreement of the loaded model outputs "
     "with the labels, the instance the model disagrees with most first; or by one descriptor of "
-    "the feature on show — the time its autocorrelation takes to halve, its signal-to-noise "
+    "the feature on show (the time its autocorrelation takes to halve, its signal-to-noise "
     "ratio, the slope of Zhang's Gaussianity regression, its skewness or its kurtosis, Melo's "
-    "characterisation of a variable — largest first, taken on the grid or on the measurements "
+    "characterisation of a variable), largest first, taken on the grid or on the measurements "
     "as the box beside says. The two map orders are offered once the map has been computed on "
     "the instances (not on the joined bars), the model order once outputs are loaded, the "
     "descriptor orders once a feature is on show (the first look reads every instance in full, "
@@ -194,9 +194,9 @@ SORT_MODE_TIP = (
 SHADINGS = ("Dataset labels", "Model outputs")
 SHADING_TIP = (
     "What shades the label periods behind every small plot: the class labels the experts gave, "
-    "or the verdicts of the model outputs loaded — a detector's 'anomalous' drawn as the "
+    "or the verdicts of the model outputs loaded (a detector's 'anomalous' drawn as the "
     "instance's own fault, its 'normal' as normal operation; a classifier's classes as "
-    "themselves — so that where the model and the experts differ shows as a shading that does "
+    "themselves), so that where the model and the experts differ shows as a shading that does "
     "not match the trace's list entry. Offered once model outputs are loaded."
 )
 PLOT_PX = 230  # height of one overlaid section plot
@@ -233,15 +233,15 @@ class Series:
         Short enough to sit inside a plot a seventh of a window wide; the list
         on the right carries the filename and the hour.
         """
-        return f"{well_label(self.well)} · {self.onset:%Y-%m-%d}"
+        return f"{well_label(self.well)} | {self.onset:%Y-%m-%d}"
 
 
 @dataclass
 class Section:
     """One heading and the plots under it: a sensor, and the instances drawn of it.
 
-    ``key`` is whatever the page groups by — a sensor name on the faults page,
-    a fault class on the features page — and is only ever passed back to the
+    ``key`` is whatever the page groups by (a sensor name on the faults page,
+    a fault class on the features page) and is only ever passed back to the
     page that made it. ``members`` are positions in the page's series.
     """
 
@@ -256,7 +256,7 @@ def merge_overlapping(series: list[Series], group_of) -> list[Series]:
 
     Only ever within one well and one group: two windows of different wells
     share no instant, and two of different fault classes are being counted
-    apart on purpose. Inside that, the rule is the viewer's own — the groups
+    apart on purpose. Inside that, the rule is the viewer's own: the groups
     are ``dataset.join_groups``, so windows whose labels disagree where they
     overlap stay apart, and the frames are merged by ``merge_instances``, so
     every instant is kept once and what one window says nothing about the
@@ -647,7 +647,7 @@ class SeriesPage(QWidget):
         self._value_axis.setToolTip(
             "Per instance, every small plot scales to its own readings, so that every shape is "
             "legible whatever the level of its well; shared, they all take the same value axis, "
-            "so that the plots say how far apart those levels are — which is the very thing that "
+            "so that the plots say how far apart those levels are, which is the very thing that "
             "flattens most of them."
         )
         self._value_axis.currentIndexChanged.connect(self._replot)
@@ -851,7 +851,7 @@ class SeriesPage(QWidget):
 
     def section_note(self, section: Section, drawn: int, total: int) -> str:
         """What the heading adds after the counts; empty for nothing."""
-        return "" if drawn == total else f" · {total - drawn} recorded none of it"
+        return "" if drawn == total else f" | {total - drawn} recorded none of it"
 
     def before_replot(self) -> None:
         """Called before the plots are laid out again, for a page's own bookkeeping."""
@@ -880,8 +880,8 @@ class SeriesPage(QWidget):
         """Read the ticked instances and lay the plots out again.
 
         The stretch of time on screen is kept, so that ticking a feature or an
-        instance does not throw away a zoom; a new question — a new grouping, a
-        new alignment, a new layout — starts from the whole of it.
+        instance does not throw away a zoom; a new question (a new grouping, a
+        new alignment, a new layout) starts from the whole of it.
         """
         if not self.ready():
             return
@@ -1208,7 +1208,7 @@ class SeriesPage(QWidget):
 
         The estimate sums a fixed height per row and a flat few pixels per
         section for the gaps between them, which undercounts a grid with many
-        rows — each real gap between two rows of a pyqtgraph layout costs its
+        rows: each real gap between two rows of a pyqtgraph layout costs its
         own spacing, and a grid of, say, eight rows has seven of them per
         section, not the one or two pixels the flat fudge budgets. The layout
         already knows its rows and its spacing once they are built, so its own
@@ -1392,9 +1392,9 @@ class SeriesPage(QWidget):
 
         A distribution pools by putting the readings together: a histogram of
         the union is a histogram, whatever order the samples arrive in. A
-        spectrum does not, and cannot be taken over the concatenation — a
+        spectrum does not, and cannot be taken over the concatenation (a
         transform reads consecutive samples as one second apart, so the months
-        between two instances would become a step — so the estimates are
+        between two instances would become a step), so the estimates are
         averaged band by band instead, which is what Welch's method already
         does one level down.
 
@@ -1671,7 +1671,7 @@ class SeriesPage(QWidget):
         return (
             f'<span style="font-size:10pt; color:{colors.text};"><b>{head}</b></span>'
             f'<span style="font-size:8pt; color:{colors.muted};">&nbsp;&nbsp;'
-            f"{drawn} of {total} instances · {axis}{self.section_note(section, drawn, total)}</span>"
+            f"{drawn} of {total} instances | {axis}{self.section_note(section, drawn, total)}</span>"
         )
 
     def _apply_x_range(self) -> None:
@@ -1729,8 +1729,8 @@ class SeriesPage(QWidget):
                 pen = pg.mkPen(color, width=1.2)
             # A histogram outline carries a wash under it, which has to fade
             # with its line or the faded curve stays the loudest thing on the
-            # plot. Setting a fill brush on a curve that has no fill level —
-            # a trace, a spectrum — does nothing, so this needs no test.
+            # plot. Setting a fill brush on a curve that has no fill level (
+            # a trace, a spectrum) does nothing, so this needs no test.
             fill = histogram_fill(base)
             if faded:
                 fill.setAlpha(max(fill.alpha() * FADE_ALPHA // 255, 8))
@@ -1799,7 +1799,7 @@ class SeriesPage(QWidget):
                     spectrum = self._spectra_by_plot.get((id(plot), index))
                     if spectrum is not None:
                         parts.append(caption_for(spectrum, ""))
-            return " · ".join(parts)
+            return " | ".join(parts)
         if hours is not None:
             stamp = series.onset + pd.Timedelta(hours=hours)
             frame = series.frame
@@ -1827,7 +1827,7 @@ class SeriesPage(QWidget):
                     parts.append(", ".join(readings))
             else:
                 parts.append("outside the instance")
-        return " · ".join(parts)
+        return " | ".join(parts)
 
     def read_out_features(self) -> list[str]:
         """The sensors the status bar reads at the moment under the pointer."""

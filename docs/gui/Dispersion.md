@@ -4,8 +4,9 @@ dot, the density of the samples shaded behind. It is the scatter plot of Melo's 
 methodology made readable: his figures of two 3W variables (thesis, section 4.2.5) were where he
 saw the historian's hand, the cloud of two interpolated series being the trajectories of the two
 interpolations, straight segments between the few instants that were measured. A static scatter
-of a million points is a smear; this one names the instance and the instant of every dot on hover,
-opens the instance on a click, and thins itself to the measurements alone
+of a million points is a smear; this one names the instance and the instant of every dot on hover
+and lights up every other dot of that instance, opens the instance on a click, and thins itself to
+the measurements alone
 ([`algorithms/dispersion.py`](../../src/overlap_viewer/algorithms/dispersion.py),
 [`frontend/dispersion_page.py`](../../src/overlap_viewer/frontend/dispersion_page.py)).
 
@@ -27,14 +28,16 @@ opens the instance on a click, and thins itself to the measurements alone
   of the dots, from which the historian's straight trajectories vanish. It carries a caveat of its
   own: a historian archives a reading when it has moved enough, so the instants at which both
   sensors were archived are instants at which both moved, and this cloud favours the relation
-  between them — over the severe-slugging instances P-TPT × T-TPT reads +0.40 on every sample and
+  between them: over the severe-slugging instances P-TPT × T-TPT reads +0.40 on every sample and
   +0.95 on the 5 % at which both were measured. **Smoothing** applies a moving average of 5 s to
   5 min to both series first, which is what a pipeline's smoothing does to the cloud (and reads the
   scope again, once per window). The caption gives the counts, one in how many, and the Pearson
   coefficient over the samples on show, so that the cloud and the correlation matrix can be read
   against each other: no pooled coefficient betrays the lines, every scatter plot does.
 - **Hover** a dot for its instance, its instant, its label period, its two readings and whether
-  each was measured or filled in; the status bar also counts the samples in the density cell under
-  the pointer. **Click** a dot to open its instance. Pooling wells carries its usual caveat: two
+  each was measured or filled in. Every other dot of that instance is brought forward and the rest
+  of the cloud fades, so one recording's trajectory through the plane can be followed with the
+  eye; the status bar counts the dots of it on show and the samples in the density cell under the
+  pointer. **Click** a dot to open its instance. Pooling wells carries its usual caveat: two
   clouds side by side may be two wells rather than one relation, and *Color by: Well* tells them
   apart.

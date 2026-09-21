@@ -24,7 +24,7 @@ from overlap_viewer.backend import theme
 from overlap_viewer.backend.config import DEFAULT_GAP_HOURS, RAW_DIR_CANDIDATES, RAW_DIR_ENV
 from overlap_viewer.backend.dataset import DatasetInfo, ScanCancelled
 from overlap_viewer.frontend import styling
-from overlap_viewer.frontend.loading import catalogue_with_progress
+from overlap_viewer.frontend.loading import LaunchProgress, catalogue_with_progress
 from overlap_viewer.frontend.window import MainWindow
 
 
@@ -93,11 +93,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_window(args: argparse.Namespace) -> MainWindow | None:
+def build_window(args: argparse.Namespace, launch: bool = False) -> MainWindow | None:
     """Everything up to the main window, for ``main`` and for scripted runs.
 
     The theme goes in first: pyqtgraph fixes the colors of an item when it is
-    built, and the dialogs of the scan are on screen before that.
+    built, and the dialogs of the scan are on screen before that. With
+    ``launch`` the whole build reports to one progress bar, from the catalogue
+    (scanned, on a first launch, or read from the cache) through every page
+    being built and laid out: on 3W 2.0.0 that is several seconds, during
+    which nothing else is on screen.
     """
     mode = args.theme or styling.saved_mode()
     styling.apply(mode)
@@ -105,16 +109,33 @@ def build_window(args: argparse.Namespace) -> MainWindow | None:
     if raw_dir is None:
         return None
     info = DatasetInfo.load(raw_dir)
+    bar = LaunchProgress(steps=1 + 2 * len(MainWindow.PAGE_TITLES)) if launch else None
     try:
-        catalogue = catalogue_with_progress(info, use_cache=not args.no_cache)
-    except ScanCancelled:
-        return None
-    except FileNotFoundError as error:
-        QMessageBox.critical(None, "3W Overlap Viewer", str(error))
-        return None
-    return MainWindow(
-        info, catalogue, gap_hours=args.gap_hours, columns=args.columns, theme_mode=mode
-    )
+        if bar is not None:
+            bar.step("Loading the catalogue of the real instances…")
+        try:
+            catalogue = catalogue_with_progress(
+                info, use_cache=not args.no_cache, progress=bar.scanning if bar else None
+            )
+        except ScanCancelled:
+            return None
+        except FileNotFoundError as error:
+            QMessageBox.critical(None, "3W Overlap Viewer", str(error))
+            return None
+        window = MainWindow(
+            info,
+            catalogue,
+            gap_hours=args.gap_hours,
+            columns=args.columns,
+            theme_mode=mode,
+            progress=bar.step if bar else None,
+        )
+        if bar is not None:
+            bar.step("Opening the window…")
+        return window
+    finally:
+        if bar is not None:
+            bar.close()
 
 
 def main(argv=None) -> int:
@@ -124,7 +145,7 @@ def main(argv=None) -> int:
     app.setOrganizationName(styling.SETTINGS[0])
     app.setApplicationName(styling.SETTINGS[1])
     app.setStyle("Fusion")  # the one style that honors a palette on every platform
-    window = build_window(args)
+    window = build_window(args, launch=True)
     if window is None:
         return 1
     window.resize(1500, 950)

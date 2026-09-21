@@ -4,8 +4,8 @@ The faults page fixes a fault and asks what its instances did to each sensor.
 This one turns the question round: it fixes a **sensor** and gives each fault
 class a section, so that what a gauge reads under a hydrate can be set beside
 what the same gauge reads under severe slugging and under normal operation.
-That is the feature-wise grouping of the catalogue the viewer was missing — the
-timelines are the well-wise one and the faults page the fault-wise one — and
+That is the feature-wise grouping of the catalogue the viewer was missing (the
+timelines are the well-wise one and the faults page the fault-wise one) and
 the histogram of one sensor per class is the closest the viewer comes to the
 pairplot diagonal a pipeline would start from.
 
@@ -17,7 +17,7 @@ same window of hours around an onset, the same transforms and the same hover.
 over one another and the line is the only key there is. In the grid it is not:
 every small plot sits under a heading that names its class, so the line takes
 the neutral trace color of the theme and leaves the hues to the shading of the
-label periods behind it and to the stacks of a histogram — which carry that
+label periods behind it and to the stacks of a histogram, which carry that
 class's hue at full strength, and which a line of the same hue would vanish
 into.
 
@@ -63,9 +63,9 @@ from overlap_viewer.frontend.series_page import LIST_WIDTH, Section, Series, Ser
 
 HINT = (
     "One sensor: a section per fault class in the grid, every class over the others in one plot "
-    "when overlaid, in the colors the list on the left keys · hover a trace to name its instance "
-    "and read it · tick the classes on the left and the instances on the right · Ctrl + wheel to "
-    "zoom, the wheel scrolls · F1 for help"
+    "when overlaid, in the colors the list on the left keys | hover a trace to name its instance "
+    "and read it | tick the classes on the left and the instances on the right | Ctrl + wheel to "
+    "zoom, the wheel scrolls | F1 for help"
 )
 
 # How many instances of each class are ticked when the page opens, or when the
@@ -94,11 +94,11 @@ LAYOUT_TIP = (
     "Small multiples give every instance a plot of its own, in a grid under a heading per fault "
     "class, so that the shapes of one class can be read one against the next and against the "
     "class below. Overlaid draws every class on one set of axes, each instance in the color of "
-    "its class, which is what makes the classes comparable rather than merely adjacent — and the "
+    "its class, which is what makes the classes comparable rather than merely adjacent, and the "
     "natural view for histograms and spectra, where the question is whether the classes sit at "
     "different values or peak at different periods. Overall goes one further and pools each "
     "class into a single curve, so the plot becomes one distribution, or one spectrum, per fault "
-    "class over every instance of it — the feature-level view this page was built for. It is "
+    "class over every instance of it, the feature-level view this page was built for. It is "
     "offered off the time axis only, instances cut from different months having no common clock."
 )
 NORMALIZE_TIP = (
@@ -293,7 +293,7 @@ class FeaturesPage(SeriesPage):
         self._feature.clear()
         for name in self._availability.sensors:
             count = self._recorded.get(name, 0)
-            self._feature.addItem(f"{name} · {count}", name)
+            self._feature.addItem(f"{name} ({count})", name)
             item = self._feature.model().item(self._feature.count() - 1)
             item.setEnabled(count > 0)
             unit = self.info.unit(name)
@@ -326,8 +326,8 @@ class FeaturesPage(SeriesPage):
 
         Two things have to be kept out of the way of the default. A valve state
         is carried by nearly every instance and is counted *live* even while it
-        holds one position for a whole recording — that is a fact about the
-        well, not a frozen gauge — so the plainest count opens the page on a
+        holds one position for a whole recording (that is a fact about the
+        well, not a frozen gauge), so the plainest count opens the page on a
         row of flat lines whose spectrum declines every one of them. And a
         gauge that is present but frozen says as little. So: the measuring
         variables first, ranked by how many instances they are live in.
@@ -422,7 +422,7 @@ class FeaturesPage(SeriesPage):
                 item.widget().deleteLater()
         counts = self._class_counts()
         for fault, count in counts.items():
-            check = QCheckBox(f"{fault} · {self.info.fault_name(fault)} · {count}")
+            check = QCheckBox(f"{fault}. {self.info.fault_name(fault)} ({count})")
             check.setIcon(self.chip(fault_color(fault)))
             check.setToolTip(
                 f"{self.info.fault_name(fault)}: {count} real instances recorded "
@@ -537,13 +537,13 @@ class FeaturesPage(SeriesPage):
         onset = entry["onset"]
         when = f"{onset:%Y-%m-%d %H:%M}" if onset is not None else "no onset in the labels"
         mark = " ⚠" if entry["implausible"] else ""
-        return f"{entry['fault']} · {entry['title']}{mark} · {when}"
+        return f"{entry['fault']}. {entry['title']}{mark} | {when}"
 
     def _item_tooltip(self, entry: dict) -> str:
         fault = entry["fault"]
-        reach = "" if fault == 0 else f" · {REACH_LABELS[entry['reach']]}"
+        reach = "" if fault == 0 else f" | {REACH_LABELS[entry['reach']]}"
         text = (
-            f"{well_label(entry['well'])} · {self.info.fault_name(fault)}{reach}\n"
+            f"{well_label(entry['well'])} | {self.info.fault_name(fault)}{reach}\n"
             f"{entry['start']:%Y-%m-%d %H:%M:%S} → {entry['end']:%Y-%m-%d %H:%M:%S} "
             f"({entry['hours']:.1f} h)"
         )
@@ -598,7 +598,7 @@ class FeaturesPage(SeriesPage):
             # Only where it bites: the cap is spent per class, so it is silent
             # until one class is ticked past its share of the grid.
             parts.append(f"the grid draws the first {limit} of each class")
-        self._instance_note.setText(" · ".join(parts) + ".")
+        self._instance_note.setText(" | ".join(parts) + ".")
         self._note.setText(parts[0])
 
     # -- what the shared machinery asks of this page
@@ -658,7 +658,7 @@ class FeaturesPage(SeriesPage):
         A section becomes one plot when the layout is *Overlaid*, so a section
         per class would draw each class on a set of axes of its own, where
         every curve carries that class's color and the color therefore says
-        nothing — the reader is comparing instances inside one class, and the
+        nothing: the reader is comparing instances inside one class, and the
         key has told them nothing. Overlaying is worth doing here precisely
         *across* the classes: one histogram, or one set of spectra, with the
         classes over one another in their own hues, which is the question the
@@ -674,7 +674,7 @@ class FeaturesPage(SeriesPage):
         for i, series in enumerate(self._series):
             members.setdefault(series.fault, []).append(i)
         return [
-            Section(fault, feature, f"{fault} · {self.info.fault_name(fault)}", members[fault])
+            Section(fault, feature, f"{fault}. {self.info.fault_name(fault)}", members[fault])
             for fault in self.selected_classes()
             if members.get(fault)
         ]
@@ -687,12 +687,12 @@ class FeaturesPage(SeriesPage):
         """Where a file list from this page came from, for its provenance."""
         classes = ", ".join(str(c) for c in self.selected_classes())
         well = self._well.currentText()
-        return f"the Features page · {self.feature} · classes {classes} · {well} · the instances ticked"
+        return f"the Features page | {self.feature} | classes {classes} | {well} | the instances ticked"
 
     def pool_headline(self, members: list[int]) -> str:
         fault = self._series[members[0]].fault
         return (
-            f"{fault} · {self.info.fault_name(fault)} · {self.feature} · "
+            f"{fault}. {self.info.fault_name(fault)} | {self.feature} | "
             f"{SeriesPage.pool_headline(self, members)}"
         )
 
@@ -709,12 +709,12 @@ class FeaturesPage(SeriesPage):
         whole = len([i for i in section.members])
         if drawn == whole:
             return ""
-        return f" · {whole - drawn} more ticked, beyond what this layout draws"
+        return f" | {whole - drawn} more ticked, beyond what this layout draws"
 
     def series_headline(self, series: Series) -> str:
         return (
-            f"{well_label(series.well)} · {series.title} · "
-            f"{self.info.fault_name(series.fault)} · {self.feature} · "
+            f"{well_label(series.well)} | {series.title} | "
+            f"{self.info.fault_name(series.fault)} | {self.feature} | "
             f"{ALIGNMENT_NAMES[self.alignment].lower()} at {series.onset:%Y-%m-%d %H:%M:%S}"
         )
 
@@ -723,13 +723,13 @@ class FeaturesPage(SeriesPage):
         feature = self.feature
         if feature is None or self._catalogue is None:
             return ""
-        version = f"3W {self.info.version} · " if self.info.version else ""
+        version = f"3W {self.info.version} | " if self.info.version else ""
         unit = self.info.unit(feature)
-        where = "" if self.well_filter is None else f" · {well_label(self.well_filter)}"
+        where = "" if self.well_filter is None else f" | {well_label(self.well_filter)}"
         return (
-            f"{version}{feature}{f' [{unit}]' if unit else ''}{where} · recorded in "
-            f"{self._recorded.get(feature, 0)} real instances · "
-            f"{len(self.selected_classes())} classes · {len(self._series)} drawn "
+            f"{version}{feature}{f' [{unit}]' if unit else ''}{where} | recorded in "
+            f"{self._recorded.get(feature, 0)} real instances | "
+            f"{len(self.selected_classes())} classes | {len(self._series)} drawn "
         )
 
     # -- pointer

@@ -132,9 +132,9 @@ def test_the_descriptor_matrix_is_built_from_the_profile_table():
     rep = em.feature_matrix(profiles, keys, False, info)
     assert rep.n == 10 and "QGL" not in rep.sensors and "ESTADO-W1" in rep.sensors
     assert "T-TPT" in rep.sensors  # live in half of the points, on the threshold
-    assert "ESTADO-W1 · mean" in rep.columns
-    assert not any(c.startswith("ESTADO-W1 · skew") for c in rep.columns)
-    assert "P-PDG · genuine_share" not in rep.columns  # constant: dropped
+    assert "ESTADO-W1 | mean" in rep.columns
+    assert not any(c.startswith("ESTADO-W1 | skew") for c in rep.columns)
+    assert "P-PDG | genuine_share" not in rep.columns  # constant: dropped
     assert rep.X.shape[0] == 10 and np.allclose(rep.X.mean(axis=0), 0, atol=1e-9)
     assert rep.imputed[1] > rep.imputed[0]  # the odd points lack T-TPT
     assert "imputed" in rep.note

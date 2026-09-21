@@ -86,11 +86,12 @@ REPRESENTATION_TIP = (
     "own comparison of shapes, each series z-scored and averaged into 400 blocks first."
 )
 MODE_TIP = (
-    "Which descriptors: those taken on the 1 Hz grid, which is what a pipeline reads, or those "
-    "taken on the measurements alone. On the grid the straight lines the historian drew between "
-    "measurements make every series look smoother than the process (the signal-to-noise ratio "
-    "and the autocorrelation time in particular), so the map drawn from the grid is a map of the "
-    "lines as much as of the wells."
+    "Which descriptors. Interpolated: those taken over the whole 1 Hz grid, most of whose samples "
+    "the historian drew between the readings it archived, which is what a pipeline reads. "
+    "Measurements: those taken over the readings alone. Over the interpolated grid the straight "
+    "lines make every series look smoother than the process (the signal-to-noise ratio and the "
+    "autocorrelation time in particular), so the map drawn from it is a map of the lines as much "
+    "as of the wells."
 )
 EMBEDDING_TIP = (
     "How the points are laid on the plane. PCA keeps the two directions of largest variance and "

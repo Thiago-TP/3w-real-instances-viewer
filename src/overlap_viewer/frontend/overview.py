@@ -127,8 +127,9 @@ DESCRIPTOR_TIP = (
     "bar for the value."
 )
 DESCRIPTOR_MODE_TIP = (
-    "Whether the figure is taken on the 1 Hz grid, which is what a pipeline reads, or on the "
-    f"measurements alone: {GRID_CAVEAT}."
+    "What the figure is taken over. Interpolated: the whole 1 Hz grid, most of whose samples the "
+    "historian drew between the readings it archived, which is what a pipeline reads. "
+    f"Measurements: the readings alone. {GRID_CAVEAT.capitalize()}."
 )
 
 
@@ -1149,7 +1150,9 @@ class TimelinesPage(QWidget):
         self._state_key.setVisible(sensor is not None or kind in ("typicality", "cleaned", "model"))
         if sensor is not None and kind == "descriptor":
             choice = self.descriptor_choice
-            where = "on the measurements" if self.descriptor_measured else "on the grid"
+            where = (
+                "on the measurements" if self.descriptor_measured else "on the interpolated grid"
+            )
             caveat = f", {GRID_CAVEAT}" if choice.inflated and not self.descriptor_measured else ""
             self._state_key.set_text(
                 "ramp",

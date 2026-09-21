@@ -18,10 +18,11 @@ of the process; everything is an analysis of the catalogue, recomputed on every 
   own comparison of instances, the dynamic time warping distance between the series of one sensor,
   each z-scored and averaged into 400 blocks first (a matter of cost, not the resampling of every
   instance to one length), under a window of a tenth of the length.
-- **on** chooses whether the descriptors were taken on the 1 Hz grid, which is what a pipeline
-  reads, or on the measurements alone, which is what the process did; on the grid the historian's
-  lines make every series look smoother than the process, so the map drawn from the grid is partly
-  a map of how each sensor was archived.
+- **on** chooses what the descriptors were taken over: *Interpolated*, the whole 1 Hz grid, most of
+  whose samples the historian drew between the readings it archived, which is what a pipeline
+  reads; or *Measurements*, the readings alone, which is what the process did. Interpolated, the
+  historian's lines make every series look smoother than the process, so the map drawn from them is
+  partly a map of how each sensor was archived.
 - **Embedding** lays the points on the plane: *PCA* (numpy; the axes say how much variance each
   carries, and on a DTW representation it becomes the principal coordinates of the distances),
   *t-SNE* and *UMAP*, which keep neighbourhoods rather than distances and take a few seconds on

@@ -117,8 +117,12 @@ DESCRIPTOR_CHOICES = (
     DescriptorChoice("Skewness", "skew", signed=True),
     DescriptorChoice("Kurtosis", "kurtosis", signed=True),
 )
-# Which of the two sets of descriptors a box asks for.
-DESCRIPTOR_MODES = ("Grid", "Measurements")
+# Which of the two sets of descriptors a box asks for. The first is the whole
+# 1 Hz grid, which is named after what most of it is: on 3W 2.0.0 only 6 % of
+# the samples of a live analog sensor were measured and the historian drew the
+# rest, so "Interpolated" says what the figure was taken over better than
+# "Grid", which sounds like a mere unit of time.
+DESCRIPTOR_MODES = ("Interpolated", "Measurements")
 GRID_CAVEAT = (
     "on the 1 Hz grid the straight lines the historian drew between measurements inflate the "
     "autocorrelation time and the signal-to-noise ratio; the measurements alone say what the "

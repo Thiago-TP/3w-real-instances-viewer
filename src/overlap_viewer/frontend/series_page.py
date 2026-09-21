@@ -186,8 +186,9 @@ SORT_TIP = (
     "instance then carries the figures."
 )
 SORT_MODE_TIP = (
-    "Whether the descriptor is taken on the 1 Hz grid, which is what a pipeline reads, or on the "
-    f"measurements alone: {GRID_CAVEAT}."
+    "What the descriptor is taken over. Interpolated: the whole 1 Hz grid, most of whose samples "
+    "the historian drew between the readings it archived, which is what a pipeline reads. "
+    f"Measurements: the readings alone. {GRID_CAVEAT.capitalize()}."
 )
 # What shades the label periods behind a small plot: the experts' labels, or
 # the loaded model's verdicts in the same vocabulary.

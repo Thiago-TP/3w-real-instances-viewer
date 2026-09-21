@@ -720,7 +720,8 @@ window.
 - `InstanceWindow(QMainWindow)` — builds both the "apart" and "joined" drawings up front so toggling
   *Join* is instant. `_adopt(joined)` switches which drawing is active and reloads frames.
   `select_features(names)` is the external API other pages use to open the window with a preset
-  sensor. `_lay_out_stack()` is the master layout builder (coverage band, per-block header, state/
+  sensor. `dots_shown` is the *Measurement dots* box of the Views row: unticked, a trace is drawn
+  as the plain line the file holds rather than marking the samples the historian archived. `_lay_out_stack()` is the master layout builder (coverage band, per-block header, state/
   class/model bands, per-feature trace + optional histogram/spectrum row). `_refresh_stretch()`
   recomputes histograms/spectra for the on-screen time range as the user pans and zooms.
   `set_model_results(results)` adds the model band once outputs are loaded.

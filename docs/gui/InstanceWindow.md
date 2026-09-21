@@ -51,7 +51,9 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   dense dots are a sensor read every second and sparse dots on a faint line a sensor read every
   two minutes and filled in between. A valve state is not tested and keeps its plain line, and so
   does a sensor measured at every sample. The Faults and Features pages draw their traces the
-  same way, in the color of the series.
+  same way, in the color of the series. **Measurement dots**, in the Views row, turns the marks
+  off for the plain line throughout, which is what the file holds and what a pipeline reads; the
+  figures beside each plot go on saying how much of it was measured.
 - A **reading outside the plausible range** is drawn in amber over the trace, sample by sample, so
   the stretch that is garbage is seen for what it is; the panel's figures call it out, the header
   of the block names the sensors, and the feature's checkbox wears a ⚠.

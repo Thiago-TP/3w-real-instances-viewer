@@ -137,6 +137,15 @@ STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch vie
 # the slugging period drifts, and everywhere else it said what the spectrum
 # beside it already said while taking a row of its own from every feature of
 # every block, which is the scarce thing in a window that stacks them.
+DOTS_TIP = (
+    "Mark, on every trace, the samples the plant's PI historian actually archived: they are drawn "
+    "as dots in the full color, and the line through every sample, which between two dots is "
+    "exactly the straight line the historian drew, runs faint beneath them. Dense dots are a "
+    "sensor read every second, sparse dots on a faint line a sensor read every two minutes and "
+    "filled in between. Untick for the plain line, which is what the file holds and what a "
+    "pipeline reads; the figures beside each plot go on saying how much of it was measured. A "
+    "valve state is never tested and has no dots either way."
+)
 VIEWS = ("distribution", "spectrum")
 VIEW_NAMES = {"distribution": "Distribution", "spectrum": "Spectrum"}
 VIEW_TIPS = {
@@ -533,6 +542,11 @@ class InstanceWindow(QMainWindow):
             check.toggled.connect(self._on_view_toggled)
             self._views[view] = check
             views_bar.addWidget(check)
+        self._dots_check = QCheckBox("Measurement dots")
+        self._dots_check.setChecked(True)
+        self._dots_check.setToolTip(DOTS_TIP)
+        self._dots_check.toggled.connect(self._rebuild)
+        views_bar.addWidget(self._dots_check)
         views_bar.addSeparator()
         self._controls = TransformControls()
         self._controls.changed.connect(self._rebuild)
@@ -593,6 +607,11 @@ class InstanceWindow(QMainWindow):
         self._rebuild()
 
     # -- the views
+
+    @property
+    def dots_shown(self) -> bool:
+        """Whether a trace marks the samples the historian actually archived."""
+        return self._dots_check.isChecked()
 
     def view_on(self, view: str) -> bool:
         check = self._views.get(view)
@@ -1157,7 +1176,7 @@ class InstanceWindow(QMainWindow):
             y = frame[feature].to_numpy(dtype=float)
             # The measurements as dots, the historian's lines faint between them.
             kinds = self._kinds_of(position, feature)
-            add_trace(plot, x, y, colors.trace, 1.0, kinds)
+            add_trace(plot, x, y, colors.trace, 1.0, kinds if self.dots_shown else None)
             note = format_delta(stats.delta, unit) + (" (flat)" if stats.flat else "")
             if kinds is not None and not stats.flat:
                 note += " | " + describe_sampling(sampling_of(kinds))

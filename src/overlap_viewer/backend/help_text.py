@@ -1696,7 +1696,10 @@ USAGE = {
             "historian drew, so dense dots are a sensor read every second and sparse dots on a "
             "faint line a sensor read every two minutes and filled in between. The panel's "
             "figures say the share measured and the interval. A valve state is not tested and "
-            "keeps its plain line; so does a sensor measured at every sample."
+            "keeps its plain line; so does a sensor measured at every sample. Untick "
+            "<b>'Measurement dots'</b>, in the Views row, for the plain line throughout, which is "
+            "what the file holds and what a pipeline reads; the figures go on saying how much of "
+            "it was measured."
         ),
     ],
     "Signal views": [

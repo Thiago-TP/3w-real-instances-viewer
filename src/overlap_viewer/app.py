@@ -105,6 +105,7 @@ def build_window(args: argparse.Namespace, launch: bool = False) -> MainWindow |
     """
     mode = args.theme or styling.saved_mode()
     styling.apply(mode)
+    styling.install_tooltip_width()  # before any widget is built, so none is missed
     raw_dir = resolve_raw_dir(args.raw_dir)
     if raw_dir is None:
         return None

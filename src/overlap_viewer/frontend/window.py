@@ -62,6 +62,20 @@ class MainWindow(QMainWindow):
     """
 
     PAGE_TITLES = ("Timelines", "Availability", "Faults", "Features", "Instances", "Dispersion")
+    PAGE_TIPS = (
+        "Every real instance of every well, laid out in time",
+        "What the sensors recorded, per fault class, per well, or instance by instance",
+        "Every real instance of one fault, from every well, drawn over the others",
+        "One sensor, a section per fault class: what it reads under each event",
+        (
+            "Every real instance as one point, placed by what its sensors amount to: clusters, "
+            "typicality, and the labels a one-class model disagrees with"
+        ),
+        (
+            "Two sensors against each other over every instance, one class or one well: every "
+            "sample a dot, the density behind, the measurements alone on request"
+        ),
+    )
 
     def __init__(
         self,
@@ -103,28 +117,13 @@ class MainWindow(QMainWindow):
         self.map = MapPage(info, passes=self._passes)
         report("Building the Dispersion page…")
         self.dispersion = DispersionPage(info, passes=self._passes)
-        for title, page in zip(self.PAGE_TITLES, self.pages):
+        # A tab's tooltip is not a widget's, so it is bounded here rather than
+        # by the filter ``styling.install_tooltip_width`` puts on the application.
+        for index, (title, page, tip) in enumerate(
+            zip(self.PAGE_TITLES, self.pages, self.PAGE_TIPS)
+        ):
             self._tabs.addTab(page, title)
-        self._tabs.setTabToolTip(0, "Every real instance of every well, laid out in time")
-        self._tabs.setTabToolTip(
-            1, "What the sensors recorded, per fault class, per well, or instance by instance"
-        )
-        self._tabs.setTabToolTip(
-            2, "Every real instance of one fault, from every well, drawn over the others"
-        )
-        self._tabs.setTabToolTip(
-            3, "One sensor, a section per fault class: what it reads under each event"
-        )
-        self._tabs.setTabToolTip(
-            4,
-            "Every real instance as one point, placed by what its sensors amount to: clusters, "
-            "typicality, and the labels a one-class model disagrees with",
-        )
-        self._tabs.setTabToolTip(
-            5,
-            "Two sensors against each other over every instance, one class or one well: every "
-            "sample a dot, the density behind, the measurements alone on request",
-        )
+            self._tabs.setTabToolTip(index, styling.bounded_tooltip(tip))
         self._tabs.currentChanged.connect(self._on_page_changed)
         self.setCentralWidget(self._tabs)
         self._catalogue = None

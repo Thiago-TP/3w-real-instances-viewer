@@ -40,6 +40,7 @@ from overlap_viewer.backend import theme
 from overlap_viewer.backend.availability import FROZEN, LIVE
 from overlap_viewer.backend.palette import tint
 from overlap_viewer.frontend.items import MARK_PX, draw_mark
+from overlap_viewer.frontend.styling import bounded_tooltip
 
 CELL_MIN_W, CELL_MAX_W = (
     34,
@@ -422,7 +423,7 @@ class HeatmapWidget(QWidget):
             row, column = self.hit(event.pos())
             text = self._tooltip(row, column) if (row >= 0 or column >= 0) else ""
             if text:
-                QToolTip.showText(event.globalPos(), text, self)
+                QToolTip.showText(event.globalPos(), bounded_tooltip(text), self)
             else:
                 QToolTip.hideText()
                 event.ignore()

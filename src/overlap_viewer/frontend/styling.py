@@ -1,4 +1,4 @@
-"""Installing a theme: Qt's palette, pyqtgraph's configuration, and the saved mode.
+"""The application's own appearance: a theme installed into Qt and pyqtgraph, and the width of a tooltip.
 
 One call settles both halves of the viewer's appearance, so that the windows and
 the plots inside them can never be painted from two different ideas of what the
@@ -10,10 +10,13 @@ A mode is ``light``, ``dark``, or ``system`` for the desktop's own choice. The
 choice is remembered between runs; ``--theme`` overrides it for one run.
 """
 
+from html import escape
+
 import pyqtgraph as pg
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt
+from PySide6.QtGui import QColor, QFontMetrics, QPalette
+from PySide6.QtGui import Qt as GuiQt  # ``mightBeRichText`` is on QtGui's Qt, not QtCore's
+from PySide6.QtWidgets import QApplication, QToolTip, QWidget
 
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.theme import Theme
@@ -127,3 +130,70 @@ def apply(mode: str) -> Theme:
     if app is not None:
         app.setPalette(qt_palette(colors))
     return colors
+
+
+# -- The width of a tooltip -------------------------------------------------------
+
+# Qt bounds a tooltip by the screen, not by what a person can read: the long
+# explanations this viewer puts in its tooltips come out as a band of text
+# around half the screen wide (some 960 px on a 1920 monitor), one or two lines
+# tall, which is hard to read and covers the very control it explains. There is
+# no width to set, so a tooltip is laid out in a table cell of a fixed width,
+# which Qt's rich text honors exactly.
+TOOLTIP_WIDTH_PX = 460
+_BOUNDED = '<table class="tip"'  # how a tooltip that has been through this says so
+
+
+def bounded_tooltip(text: str) -> str:
+    """One tooltip laid out in a column ``TOOLTIP_WIDTH_PX`` wide, if it needs one.
+
+    A tooltip that already fits on one line of that width is returned
+    untouched: fixing the width of a cell fixes it in both directions, and
+    "Show every well again" in a 460-pixel box would be mostly box. Plain text
+    is escaped, since several tooltips name a placeholder such as
+    ``<class>/<instance>.parquet`` that rich text would swallow, and its line
+    breaks are kept; text that is already rich passes through. Bounding an
+    already bounded tooltip returns it unchanged, so the filter below can set
+    the result back on the widget without looping.
+    """
+    if not text.strip() or text.startswith(_BOUNDED):
+        return text
+    rich = GuiQt.mightBeRichText(text)
+    if not rich:
+        metrics = QFontMetrics(QToolTip.font())
+        if all(metrics.horizontalAdvance(line) <= TOOLTIP_WIDTH_PX for line in text.split("\n")):
+            return text
+    body = text if rich else escape(text).replace("\n", "<br>")
+    return f'{_BOUNDED}><tr><td width="{TOOLTIP_WIDTH_PX}">{body}</td></tr></table>'
+
+
+class _ToolTipWidth(QObject):
+    """Bounds every tooltip set on a widget, wherever in the viewer it is set.
+
+    A tooltip reaches a reader three ways, and this catches the common one.
+    Setting one on a widget sends it ``ToolTipChange``, and a tool button
+    copies the tooltip of its action, so one filter on the application covers
+    every ``setToolTip`` of every page. The two paths it cannot see, a tab's
+    tooltip and a ``QToolTip.showText`` of a widget's own, call
+    ``bounded_tooltip`` themselves.
+    """
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.ToolTipChange and isinstance(watched, QWidget):
+            bounded = bounded_tooltip(watched.toolTip())
+            if bounded != watched.toolTip():
+                watched.setToolTip(bounded)
+        return False
+
+
+_tooltip_width: _ToolTipWidth | None = None
+
+
+def install_tooltip_width() -> None:
+    """Bound the tooltips of this application, once, before its widgets are built."""
+    global _tooltip_width
+    app = QApplication.instance()
+    if app is None or _tooltip_width is not None:
+        return
+    _tooltip_width = _ToolTipWidth(app)
+    app.installEventFilter(_tooltip_width)

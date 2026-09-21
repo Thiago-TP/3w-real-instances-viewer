@@ -45,16 +45,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.availability import ABSENT, LIVE, Availability
-from overlap_viewer.config import MAX_SMALL_MULTIPLES, REACH_LABELS
-from overlap_viewer.dataset import DatasetInfo, WellData, well_label
-from overlap_viewer.faults import ALIGNMENT_NAMES, ALIGNMENTS, onset_from_runs, relative_hours
-from overlap_viewer.instance_window import PANEL_WIDTH
-from overlap_viewer.labels import segments_from_json
-from overlap_viewer.loading import FrameCache
-from overlap_viewer.palette import fault_color
-from overlap_viewer.series_page import LIST_WIDTH, Section, Series, SeriesPage
+from overlap_viewer.algorithms.faults import (
+    ALIGNMENT_NAMES,
+    ALIGNMENTS,
+    onset_from_runs,
+    relative_hours,
+)
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.availability import ABSENT, LIVE, Availability
+from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES, REACH_LABELS
+from overlap_viewer.backend.dataset import DatasetInfo, WellData, well_label
+from overlap_viewer.backend.labels import segments_from_json
+from overlap_viewer.backend.palette import fault_color
+from overlap_viewer.frontend.instance_window import PANEL_WIDTH
+from overlap_viewer.frontend.loading import FrameCache
+from overlap_viewer.frontend.series_page import LIST_WIDTH, Section, Series, SeriesPage
 
 HINT = (
     "One sensor: a section per fault class in the grid, every class over the others in one plot "
@@ -113,8 +118,8 @@ class FeaturesPage(SeriesPage):
 
     HINT = HINT
 
-    def __init__(self, info: DatasetInfo, frames: FrameCache, parent=None):
-        super().__init__(info, parent)
+    def __init__(self, info: DatasetInfo, frames: FrameCache, passes=None, parent=None):
+        super().__init__(info, passes, parent)
         self._frames = frames
         self._catalogue: pd.DataFrame | None = None
         self._wells: dict[int, WellData] = {}
@@ -232,6 +237,7 @@ class FeaturesPage(SeriesPage):
         buttons.addWidget(every)
         buttons.addWidget(none)
         layout.addLayout(buttons)
+        self.add_sort_control(layout)
         self._list = QListWidget()
         self._list.setMouseTracking(True)
         self._list.itemChanged.connect(self._on_item_changed)
@@ -242,6 +248,14 @@ class FeaturesPage(SeriesPage):
         self._instance_note.setWordWrap(True)
         layout.addWidget(self._instance_note)
         return panel
+
+    def on_map_results(self) -> None:
+        if self.ready():
+            self._rebuild_instances(fresh=False)
+
+    def on_sort_changed(self, *args) -> None:
+        if self.ready():
+            self._rebuild_instances(fresh=False)
 
     # -- appearance
 
@@ -294,6 +308,7 @@ class FeaturesPage(SeriesPage):
         self._feature.setCurrentIndex(max(index, 0))
         self._feature.blockSignals(False)
 
+        self._sync_sort_control()  # the descriptor orders name the feature chosen
         self._rebuild_classes()
         self._rebuild_instances(fresh=True)
         self._replot(keep_range=False)
@@ -340,9 +355,14 @@ class FeaturesPage(SeriesPage):
     def ready(self) -> bool:
         return self._availability is not None and self.feature is not None
 
+    def sort_feature(self) -> str | None:
+        """The descriptor orders read the feature on show."""
+        return self.feature
+
     def _on_feature_changed(self, *args) -> None:
         if not self.ready():
             return
+        self._sync_sort_control()  # the descriptor orders name the feature
         self._rebuild_classes()
         self._rebuild_instances(fresh=True)
         self._replot(keep_range=False)
@@ -458,6 +478,7 @@ class FeaturesPage(SeriesPage):
                             "fault": fault,
                             "well": well,
                             "position": position,
+                            "file": str(entry["file"]) if "file" in rows.columns else "",
                             "title": str(entry["file"]).rsplit(".", 1)[0]
                             if "file" in rows.columns
                             else str(entry["title"]),
@@ -481,7 +502,7 @@ class FeaturesPage(SeriesPage):
             for entry, item in zip(self._instances, self._items)
             if item.checkState() == Qt.CheckState.Checked
         }
-        self._instances = self._instances_of()
+        self._instances = self.sorted_entries(self._instances_of())
         self._building = True
         self._list.clear()
         self._items = []
@@ -533,7 +554,7 @@ class FeaturesPage(SeriesPage):
             )
         if entry["implausible"]:
             text += f"\n⚠ {self.feature} reads outside its plausible range in this instance."
-        return text
+        return text + self.map_tooltip_lines(entry)
 
     def _on_item_changed(self, item) -> None:
         if not self._building:
@@ -626,6 +647,7 @@ class FeaturesPage(SeriesPage):
                     neutral or fault_color(entry["fault"]),
                     int(entry["fault"]),
                     entry.get("runs", []),
+                    self.model_runs_for(entry["fault"], entry.get("file", "")),
                 )
             )
         return series
@@ -660,6 +682,12 @@ class FeaturesPage(SeriesPage):
     def pool_key(self, series: Series):
         """Pooled, a class becomes one curve: telling the classes apart is what the page is for."""
         return series.fault
+
+    def shown_source(self) -> str:
+        """Where a file list from this page came from, for its provenance."""
+        classes = ", ".join(str(c) for c in self.selected_classes())
+        well = self._well.currentText()
+        return f"the Features page · {self.feature} · classes {classes} · {well} · the instances ticked"
 
     def pool_headline(self, members: list[int]) -> str:
         fault = self._series[members[0]].fault

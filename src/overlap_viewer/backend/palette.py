@@ -12,8 +12,8 @@ Qt; the widgets turn them into ``QColor`` at draw time.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from overlap_viewer import theme
-from overlap_viewer.config import (
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.config import (
     BACKGROUND_TINTS,
     REACH_LABELS,
     REACH_TINTS,

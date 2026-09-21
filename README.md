@@ -45,6 +45,19 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
   empty for one never recorded, so the grid becomes the history of that sensor on every well: an
   era of absence, or a scattering of it. A key of its own takes the place of the fault key while it
   is on; the outline of a bar keeps its fault hue.
+- **Bar color: Measurements of a sensor** tints every bar by the share of the sensor's *live*
+  samples that were actually measured rather than filled in by the plant's historian (see
+  [Measurements, not samples](#measurements-not-samples)), so an era in which a sensor was archived
+  every two minutes reads apart from one in which it was read every second. Hover a bar for the
+  share and the interval. The first time, it reads every instance in full behind a progress dialog
+  and keeps the result in the cache.
+- **Bar color: Descriptor of a sensor** tints every bar by one figure of the sensor's series — the
+  time its autocorrelation takes to halve, its signal-to-noise ratio, the slope of Zhang's
+  Gaussianity regression, its skewness or its kurtosis — ranked among the bars on show, faint for
+  the smallest and full for the largest, so the grid shows which recordings of a sensor were slow,
+  noisy, heavy-tailed or skewed. The *on* box takes the figure on the 1 Hz grid or on the
+  measurements alone; on the grid the key and the hover carry the caveat that the historian's lines
+  inflate the first two. Hover a bar for both values and the rank.
 - A small **amber triangle** in the corner of a bar marks an instance in which a sensor reads
   outside its plausible range; tinted by one sensor, the mark is for that sensor alone.
 - **Retract the key** by clicking its title (or `Ctrl+L`) to give the grid the room. Retracted it
@@ -93,6 +106,14 @@ the width of the window.
   another. The footers of the files cannot say which instants two windows share, so the first
   tick reads the data (about 15 s for 3W 2.0.0, behind a progress dialog) and keeps the result in
   the cache next to the catalogue.
+- **Measured vs filled** splits the live share of every cell into the samples that were measured,
+  solid, and the samples the historian filled in between measurements, pale — most of every live
+  cell on 3W 2.0.0 (see [Measurements, not samples](#measurements-not-samples)). The tooltip and
+  the status bar then give the share and the interval between measurements. The split is of
+  samples, so it rests while the cells count instances, and it applies to the joined bars as much
+  as to the instances, each merged recording profiled as the one series it is. The first tick
+  reads every instance in full (about 100 s for 3W 2.0.0, behind a progress dialog) and keeps the
+  result in the cache.
 - **Hover** a cell: the status bar gives the three shares, how many instances of the row have the
   sensor in each state, the smallest and largest reading, and how many instances read outside the
   plausible range. Hover a sensor's name for what it is and its plausible range, a row's label for
@@ -141,6 +162,39 @@ the same instant.
 - The footers cannot answer this one: a count of missing values says how much of a column is
   there, not *which* samples are there. So the first look reads the data (about 9 s for 3W 2.0.0,
   behind a progress dialog) and caches the result beside the catalogue.
+
+*Sensor correlations* asks the next question: of two sensors recorded together, how do they move
+together? Melo's exploratory methodology (doctoral thesis, section 4.1.5) reads the relations
+between variables three ways at once, and the matrix offers the three
+([`algorithms/correlation.py`](src/overlap_viewer/algorithms/correlation.py)).
+
+- **Coefficient**: *Pearson*, the linear correlation, blue positive and amber negative, full at ±1,
+  exact over every sample of the scope in which both sensors carry a plausible reading, pooled;
+  *Mutual information*, Laarne's coefficient √(1 − e⁻²ᴵ) of the mutual information estimated by
+  nearest neighbours on an even subsample of a few thousand of the same samples, 0 for
+  independent sensors and 1 for a deterministic relation, equal to |Pearson| when the pair is
+  jointly Gaussian; *Nonlinear*, Zhang's ρ_I·(1 − |ρ|), what the second says beyond the first. The
+  title sums each into Melo's global coefficient (his equations 4.16 and 4.15). A pair with fewer
+  than 300 co-valid samples is left blank, and the valve states are left out: a position is not a
+  measurement. The two nonlinear coefficients need the `analysis` extra.
+- **Smoothing** takes a moving average of 5 s to 5 min before the coefficients, all lengths in one
+  pass; the tooltip of a cell gives the Pearson coefficient at every length. Melo's figures 4.11
+  and 4.26 show a process's coefficients rising as the window grows, and the historian's lines
+  between measurements (below) were his reason to distrust any coefficient taken on the grid. What
+  3W 2.0.0 says is more sobering: pooled over a scope, the coefficients hardly move with smoothing
+  (the global coefficient of the whole dataset goes from 0.420 to 0.424 between none and five
+  minutes), because a pooled coefficient is set by the levels the sensors sit at from one instance
+  to the next, not by what happens between two measurements. The lines' spurious dynamics live
+  inside one instance, at the scale of seconds, where the Dispersion page looks.
+- **Over** is the scope, and it carries the caveat that does bite, stated in the title: pooling the
+  instances of a class or of the whole dataset mixes the levels of different wells into the
+  coefficient. With every well pooled the mutual-information coefficient of almost every pair reads
+  1.00, since knowing one sensor's level is enough to know the well and so the other's; over one
+  well (WELL-00007) nearly every pair of pressures and temperatures correlates at ±0.99, through
+  the well's shut-ins and restarts. **Join overlapping instances** pools the merged recordings of
+  the bars, so that a sample two windows share is counted once. The first look at a scope reads its
+  instances behind a progress dialog (about two minutes for the whole dataset); the result is kept
+  for the session.
 
 **Faults page** — every real instance of one fault, from every well, side by side. Rabelo's figures
 2.5 and 2.6 put two instances of the same fault next to each other to make a point: the same event,
@@ -212,6 +266,93 @@ three domains, the same window of hours around an onset, the same transforms and
   operation has no transient and no steady fault state, so anchoring on either would silently leave
   every normal instance out.
 
+**Instances map** — every real instance as one point, from above. The other pages look at the
+instances one well, one fault or one sensor at a time; this one places all of them on a plane by
+what their sensors amount to, colors them by class, by well, by cluster, by typicality or by the
+verdict of a one-class model, and opens any of them on a click. The unit is the instance, never
+the window a pipeline cuts: 1,119 points, which a reader can hold in view. Nothing here is a model
+of the process; everything is an analysis of the catalogue, recomputed on every change of a box.
+
+- **Representation** is what an instance becomes a point by. *Descriptors*: per sensor the moments,
+  the quantiles, the autocorrelation time, the signal-to-noise ratio, the Gaussianity slope and how
+  it was measured (the profile pass of [Measurements, not samples](#measurements-not-samples)),
+  one standardized column each; a sensor enters only if it is live in at least half of the points
+  (six on 3W 2.0.0), and a cell an instance lacks takes the column's median, the note under the
+  map saying how much was made up that way. *Shape only* leaves the levels out, so that the level
+  of a well does not place its instances. *DTW of a sensor, within a class* is the 3W Toolkit's
+  own comparison of instances, the dynamic time warping distance between the series of one sensor,
+  each z-scored and averaged into 400 blocks first (a matter of cost, not the resampling of every
+  instance to one length), under a window of a tenth of the length.
+- **on** chooses whether the descriptors were taken on the 1 Hz grid, which is what a pipeline
+  reads, or on the measurements alone, which is what the process did; on the grid the historian's
+  lines make every series look smoother than the process, so the map drawn from the grid is partly
+  a map of how each sensor was archived.
+- **Embedding** lays the points on the plane: *PCA* (numpy; the axes say how much variance each
+  carries, and on a DTW representation it becomes the principal coordinates of the distances),
+  *t-SNE* and *UMAP*, which keep neighbourhoods rather than distances and take a few seconds on
+  the whole dataset.
+- **Clustering** groups the points — k-means, a Gaussian mixture, agglomerative clustering, DBSCAN,
+  the list Siqueira's notebooks on 3W work through — and the line beside it scores the result: the
+  silhouette, and the agreement with the fault classes and with the wells as the adjusted Rand
+  index and the normalised mutual information, 1 for a clustering that is the classes (or the
+  wells) under other names. That is the question the page asks: whether what places the instances
+  is the event or the well they came from.
+- **Typicality** is how ordinary an instance of its class each one is: its distance to the medoid
+  of its class in the representation, as a rank inside the class (1 the medoid, 0 the farthest).
+  It colors the points, it is a *Bar color* of the Timelines, and it is a *Sort* order of the
+  instance lists of the Faults and Features pages, whose tooltips carry it.
+- The **label audit** on the right is what a one-class model of the normal instances (a
+  radial-basis one-class SVM, as in Siqueira's notebooks, 5 % of the normal instances allowed
+  outside its boundary) makes of every label: class by class, the fault instances that *look
+  normal* to it and the normal instances that *look anomalous*, each a click away. It is an audit
+  of the labels, not a detector; under the *Novelty* coloring the disagreements wear a dark ring.
+- **Join overlapping instances** makes the points the bars of the joined view, each merged
+  recording profiled as the one series it is; the Timelines take the map's colorings only on the
+  view it was drawn on.
+- The first time the page is shown it reads every instance in full behind a progress dialog (the
+  same pass the availability split uses) and keeps the result in the cache. t-SNE, the
+  clusterings, their scores and the one-class model need the `analysis` extra, UMAP the `umap`
+  extra, the DTW representation the `dtw` extra; a control whose extra is missing is greyed, and
+  its tooltip names the install command.
+
+**Dispersion page** — two sensors against each other, every sample of the instances of a scope one
+dot, the density of the samples shaded behind. It is the scatter plot of Melo's exploratory
+methodology made readable: his figures of two 3W variables (thesis, section 4.2.5) were where he
+saw the historian's hand, the cloud of two interpolated series being the trajectories of the two
+interpolations, straight segments between the few instants that were measured. A static scatter
+of a million points is a smear; this one names the instance and the instant of every dot on hover,
+opens the instance on a click, and thins itself to the measurements alone
+([`algorithms/dispersion.py`](src/overlap_viewer/algorithms/dispersion.py),
+[`frontend/dispersion_page.py`](src/overlap_viewer/frontend/dispersion_page.py)).
+
+- **X**, **Y** are the two sensors (analog ones; readings outside the plausible range left out) and
+  **Over** the scope: every real instance, one fault class or one well, the joined bars with **Join
+  overlapping instances**. The first look at a scope reads its instances in full behind a progress
+  dialog, every analog sensor at once, and keeps an even subsample of the rows for the session,
+  400,000 in all (one row in a few for one well, one in fifty for the whole dataset, which takes
+  about two minutes), so that everything else is instant; at most 150,000 of them are drawn as
+  dots, evenly, and the **density** behind the dots, a two-dimensional histogram on a logarithmic
+  scale, counts them all.
+- **Color by** colors the dots by fault class, by well or by label period, or shows the density
+  alone; **Label periods** switches the samples of normal operation, the transient, the steady
+  state and the unlabeled on and off, so that a fault's steady state alone shows the relation under
+  the fault and normal operation alone the relation it departs from.
+- **Measurements only** keeps the samples at which both sensors were actually read, a few per cent
+  of the dots, from which the historian's straight trajectories vanish. It carries a caveat of its
+  own: a historian archives a reading when it has moved enough, so the instants at which both
+  sensors were archived are instants at which both moved, and this cloud favours the relation
+  between them — over the severe-slugging instances P-TPT × T-TPT reads +0.40 on every sample and
+  +0.95 on the 5 % at which both were measured. **Smoothing** applies a moving average of 5 s to
+  5 min to both series first, which is what a pipeline's smoothing does to the cloud (and reads the
+  scope again, once per window). The caption gives the counts, one in how many, and the Pearson
+  coefficient over the samples on show, so that the cloud and the correlation matrix can be read
+  against each other: no pooled coefficient betrays the lines, every scatter plot does.
+- **Hover** a dot for its instance, its instant, its label period, its two readings and whether
+  each was measured or filled in; the status bar also counts the samples in the density cell under
+  the pointer. **Click** a dot to open its instance. Pooling wells carries its usual caveat: two
+  clouds side by side may be two wells rather than one relation, and *Color by: Well* tells them
+  apart.
+
 **Instance window** — one block per bar of the timelines, stacked chronologically on a shared time
 axis, so the overlapping stretches line up vertically. Each block has a header line, the well
 operational status (`state`) and the label (`class`) as thin bands, then one plot per selected
@@ -253,8 +394,15 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
 - A **crosshair** follows the pointer through every plot; the status bar gives the time under it and,
   per instance, the label, the operational status and the selected readings at that time.
 - Each plot reports the total variation of the signal (Δ = max − min, marked *flat* for a frozen
-  sensor) and the share of samples carrying a reading. A sensor never moving is held on a padded
-  axis instead of being autoscaled into noise.
+  sensor), the share of samples carrying a reading, and how the sensor was measured: the share of
+  its readings that are measurements and the interval between them. A sensor never moving is held
+  on a padded axis instead of being autoscaled into noise.
+- Every trace draws its **measurements as dots**, with the line through every sample faint
+  beneath them; between two dots that line is exactly the straight line the historian drew, so
+  dense dots are a sensor read every second and sparse dots on a faint line a sensor read every
+  two minutes and filled in between. A valve state is not tested and keeps its plain line, and so
+  does a sensor measured at every sample. The Faults and Features pages draw their traces the
+  same way, in the color of the series.
 - A **reading outside the plausible range** is drawn in amber over the trace, sample by sample, so
   the stretch that is garbage is seen for what it is; the panel's figures call it out, the header
   of the block names the sensors, and the feature's checkbox wears a ⚠.
@@ -293,6 +441,17 @@ feature of every block — which is the scarce thing in a window that stacks the
   many were left out. The one tick serves the marginal of an instance window, the *Distribution*
   domain of the faults page and the features page. Spectra are not affected: interpolating over a
   spike of 10¹² gives the spectrum of the spike, not of the signal, so they always mask it.
+- **Measurements only**, beside it, counts and transforms the measurements alone, leaving out the
+  samples the historian filled in between them. A histogram then counts what was read, and says
+  so in its caption; a spectrum becomes the **Lomb–Scargle periodogram** of the readings at their
+  own instants, which fits a sinusoid of each period to them by least squares and needs no grid —
+  the honest spectrum of a series read every ten seconds or every two minutes, where a transform
+  of the 1 Hz grid is a transform of the historian's lines. Its caption gives the share of the
+  variance a sinusoid of the peak period explains and how many measurements it was taken over;
+  the periods run from twice the typical interval between measurements up to the stretch; and it
+  is scaled so that it integrates to the variance of the measurements, as a density does, so it
+  sits on the axis Welch's estimate would and pools with it band by band under *Overall*. The one
+  tick serves the instance window, the Faults page and the Features page.
 - **Segment**, **Overlap**, **Window** and **Bins** are the parameters, the same widgets in both
   windows, on a toolbar row of their own so that a narrow window never hides them. Nothing longer
   than a segment can be resolved, so the plots grey the periods beyond it; with *whole stretch*
@@ -349,6 +508,145 @@ help says so rather than inventing one.
 
 ![Help window](docs/assets/help.png)
 
+## Measurements, not samples
+
+The dataset is sampled once a second, but the sensors were not read once a second. Afrânio Melo
+noticed it on the normal instances of WELL-00001 (doctoral thesis, section 4.2.5, in
+[`docs/papers/`](docs/papers)): the readings sit on straight lines between a few extremes, the
+plant's PI historian having interpolated linearly between the values it archived, and the scatter
+plot of two such series shows trajectories that are nothing but the ups and downs of two
+interpolations — spurious dynamics and spurious correlations, an impediment to the exploratory
+analysis he set out to do, so he stopped there. The viewer takes the direct route he considered
+too uncertain to take on the whole dataset: a straight line is a run of samples whose first
+difference is constant.
+
+The rule ([`algorithms/interpolation.py`](src/overlap_viewer/algorithms/interpolation.py)): a
+sample equal to the one before it is **held**; a sample collinear with both its neighbours, with a
+non-zero slope, is **interpolated**; everything else — the ends of every line and the first of
+every held run — is a **measurement**, one per value the historian archived. Interpolated and held
+together are *filled*. Collinearity needs a tolerance, and the data says which: on the real files
+the second differences along a ramp sit in a clean band at 10⁻⁷ to 10⁻⁶ of the reading (the
+interpolation was evidently done in single precision; every pressure value is exactly
+representable as a 32-bit float) while genuine changes of slope sit at 10⁻⁴ and above, so the
+tolerance is one part in a million of the largest reading, in the gap. Exact equality catches only
+a third of the ramps. What the test cannot decide it counts as filled — a quantized sensor that
+repeats a value for three seconds, or climbs one step a second, draws the very lines the historian
+does — and the valve states are not tested at all.
+
+On 3W 2.0.0 the finding is stark. Over every live analog sensor of every real instance, **6 % of
+the samples are measurements**, 55 % are interpolated and 39 % held; the median interval between
+two measurements is 33 s. Where they are live, P-MON-CKP is read every 12 s, P-PDG every 13 s,
+T-TPT every 16 s, QGL every 21 s, P-TPT every 100 s, T-JUS-CKP every two minutes and P-ANULAR
+every four. Every figure taken on the 1 Hz grid inherits the lines: the signal-to-noise ratio of
+T-JUS-CKP is 36,000 on the grid and 1.5 on its measurements, and its autocorrelation takes seven
+minutes to halve on the grid against 73 s on the measurements. The pass that finds this
+([`backend/profiles.py`](src/overlap_viewer/backend/profiles.py)) reads every file in full once,
+about 100 s for the whole dataset, and keeps the result in the cache; it profiles every sensor of
+every instance and of every bar of the joined view as the merged recording it is, and computes the
+descriptors of each ([`algorithms/descriptors.py`](src/overlap_viewer/algorithms/descriptors.py):
+moments, quantiles, autocorrelation time, signal-to-noise ratio, Gaussianity, Melo's own set) both
+on the grid and on the measurements alone, so that wherever a figure taken on the grid is shown
+the viewer can say so.
+
+The measurements show in four places: as dots on every trace, in the *Measured vs filled* split of
+the availability page, in the Timelines' *Bar color: Measurements of a sensor*, and under the
+*Measurements only* tick of the signal views, where the spectrum becomes a Lomb–Scargle
+periodogram of the readings at their own instants.
+
+The descriptors travel as columns of the catalogue. *Bar color: Descriptor of a sensor*, on the
+Timelines, tints every bar by the autocorrelation time, the signal-to-noise ratio, the Gaussianity
+slope, the skewness or the kurtosis of one sensor, ranked among the bars on show; *Sort*, above the
+instance lists of the Faults and Features pages, orders the instances by the same figures of the
+feature on show, largest first, the tooltip of every instance carrying both the grid's and the
+measurements' value. Each has an *on* box choosing the grid or the measurements, and on the grid
+the key, the hover and the tooltip carry the caveat that the historian's lines inflate the first
+two: on 3W 2.0.0 the autocorrelation time of T-JUS-CKP is 444 s on the grid and 73 s on the
+measurements.
+
+## The 3W Toolkit
+
+The viewer meets the [3W Toolkit](https://github.com/petrobras/3W) in two places, by rule and by
+file.
+
+**By rule.** The Toolkit's preprocessing step `CleanSignals` decides, per instance and per sensor,
+whether a signal is to be believed: fitted on the dataset, it puts bounds at the quartiles of the
+instances' means and spreads, three interquartile ranges out on either side, discards the sensor
+in an instance whose mean or spread falls outside them (a spread below 1e-6 always fails), drops a
+sensor entirely missing in 60 % or more of the instances, and leaves the valve states alone. The
+profile pass holds exactly what the rule needs, so the viewer applies it at no cost
+([`algorithms/cleaning.py`](src/overlap_viewer/algorithms/cleaning.py)) and lets its thresholds
+move: *Toolkit's CleanSignals*, on the Availability page, marks every cell in which the rule would
+discard the sensor in at least one instance of the row with a slash, greys the columns it would
+drop, and says in the tooltip how many and which bound; the *IQR ×* and *drop if missing in* boxes
+move the thresholds; the rule is fitted afresh on the joined bars when the view is joined. The
+Timelines offer *Bar color: Sensors the Toolkit's CleanSignals keeps*, every bar tinted by the
+share of its live sensors the rule keeps, hovering it naming what the rule discards and why. The
+header of every block of an instance window names the sensors the rule would discard in it, once
+the rule has been fitted anywhere. One difference is kept on purpose: the profiles describe the
+plausible readings, so a sensor whose readings are instrument garbage is not discarded here by a
+mean of 10⁴² — it wears the amber mark instead, which says more.
+
+**By file.** *Export file list…*, in the main toolbar, writes the instances the current page has on
+show — the wells filtered on the Timelines, the rows of the Availability page, the instances ticked
+on the Faults and Features pages, the points of the Instances map, a joined bar as its instances —
+as the JSON of a Toolkit `ParquetDatasetConfig` with `split="list"`, each file a path relative to
+the dataset root, which the Toolkit loads with `ParquetDatasetConfig(**json.load(open(path)))`;
+its provenance is written beside it. [`scripts/export_file_list.py`](scripts/export_file_list.py)
+writes the same from the command line, by fault class and by well, and
+[`examples/`](examples/README.md) holds one it produced, the severe-slugging instances of
+WELL-00014, with its provenance.
+
+**What cannot come back.** The Toolkit's `ModelAssessment` exports `predictions_<timestamp>.csv`
+with the columns `true_values`, `predictions`, `model_name`, `task_type` and `timestamp`: one row
+per window the model scored, in the order the windows were fed, with no instance and no instant in
+it. Nothing in that file says which file, let alone which second, a prediction belongs to, so the
+viewer cannot draw it onto the data. The viewer's own model-output format (next section) is what
+such an export would have to carry.
+
+## Model outputs
+
+The viewer displays what a model said; it does not train one. For a model's verdicts to be drawn
+onto the data, every verdict has to say which instance and which instant it is about, so the viewer
+defines the format itself ([`backend/model_outputs.py`](src/overlap_viewer/backend/model_outputs.py)),
+the smallest one that says both, and ships an example of it with its provenance written down.
+
+**The format** is a folder: `model.json` beside one `<fault_class>/<instance>.parquet` per instance
+scored, laid out as the dataset is. `model.json` holds `name`; `kind`, `"detection"` for a model
+that says *anomalous or not* and `"classification"` for one that names the event by its 3W class
+number; `labels`, the meaning of every label value the files carry; a `description`; and
+`provenance`, who produced the outputs, with what script and parameters, on which dataset version,
+when. Each parquet file has the `timestamp` of every sample scored as its index, an integer `label`
+column and, optionally, a float `score` column. A model need not score every sample, nor every
+instance.
+
+**Agreement** is measured against the experts' `class` labels over the stretches where both said
+something: a detection model agrees where it says *anomalous* and the label is a fault (transient or
+steady) and where it says *normal* and the label is 0; a classification model where its class equals
+the fault the label names. The share of the compared time in agreement is the instance's agreement,
+computed from the label runs the catalogue already holds, so loading a set of outputs costs only
+reading them.
+
+**Where it shows.** *Load model outputs…*, in the main toolbar, opens a folder in the format. Then:
+a third band, *model*, under the class band of every instance window, plain where the verdict
+agrees with the label under it and **amber where it disagrees**, the header of the block giving the
+agreement; *Bar color: Agreement with the model outputs* on the Timelines; *Color by: Model
+agreement* on the Instances map; *Sort: Agreement with the model outputs* and *Shade by: Model
+outputs* on the Faults and Features pages, the latter shading the label periods behind the small
+plots with the model's verdicts in the dataset's own vocabulary (a detector's *anomalous* as the
+instance's own fault), so that where the two differ is seen against the trace.
+
+**The example.** [`examples/model_outputs/pca_control_chart_well7`](examples/README.md) holds the
+outputs of a PCA control chart over the twelve real instances of WELL-00007: one model fitted on the
+well's two Normal Operation instances over the ten analog sensors live in both, Hotelling's T² and
+Q followed along every instance of the well, a sample called anomalous beyond the 99th percentile
+of either statistic over the training samples. It was produced by
+[`scripts/pca_control_chart.py`](scripts/pca_control_chart.py), whose command, parameters and
+fitted limits are in the example's `model.json`; on WELL-00007 it agrees with the labels 98 % of
+the time on the normal instances and 100 % on the ten severe-slugging ones. It is one producer of
+the format among many — the U-Net segmentation of Lopes *et al.*, the Toolkit's own models with an
+export that carries the instance and the instant, a hand-labeled review — and the model itself is
+not built into the viewer: its outputs are stored and shown.
+
 ## Color code
 
 A bar's hue is the **fault-class folder** the instance comes from, and its tint says how far the
@@ -380,8 +678,10 @@ labels develop furthest, and hovering it lights up every one of its entries in t
 The availability page has three colors of its own, keyed at the right of its title line: a slate
 blue for *live* that no fault hue comes close to, so a cell can never be read as a class; a grey
 under a flat line for *frozen*, the line saying what the color alone would not; and the empty cell
-for *absent*. The timelines take the same three when they are tinted by a sensor, the blue on a
-ramp from faint to full with the share of samples live. Amber, used nowhere else, marks a reading
+for *absent*. With *Measured vs filled* on, the live span of a cell ends in a paler blue for the
+samples the historian filled in, the solid part being the measurements. The timelines take the
+same colors when they are tinted by a sensor, the blue on a ramp from faint to full with the share
+of samples live, or with the share of the live samples that were measured. Amber, used nowhere else, marks a reading
 outside the plausible range, wherever it appears: the corner of a cell or a bar, the samples of a
 trace, the caption and the header of an instance plot, the checkbox of a feature. The rows of the
 fault classes and of the instances carry the fault hue of the timelines as a small square before
@@ -411,7 +711,7 @@ toward the plotting background of the mode rather than always toward white, so t
 always means less of the hue and more of the ground, whichever way round the two are. The trace of a
 time series crosses to the other end of the scale for the same reason: dark on the pale shading of
 the light mode, pale on the dark shading of the other. Every color of a mode is stated in one place,
-[`theme.py`](src/overlap_viewer/theme.py), and the windows rebuild from it when the mode changes.
+[`theme.py`](src/overlap_viewer/backend/theme.py), and the windows rebuild from it when the mode changes.
 
 ## Running
 
@@ -444,60 +744,116 @@ progress dialog), and caches the result under the platform cache directory
 and modification times and start instantly; any changed, added or removed file triggers a fresh
 scan, as does the *Rescan dataset* button, and so does a version of the viewer that records more
 about each instance than the cache holds (the label runs the join reads, and the sensor figures the
-availability page reads, were added this way). Two figures the footers cannot give are read from the
-data the first time they are asked for, each behind its own progress dialog and cached the same way:
-the merged figures the availability page's join needs, sensor by sensor and pair by pair, in one
-pass (about 30 s), and the pair counts of the instances as the dataset stores them (about 9 s).
+availability page reads, were added this way). Three figures the footers cannot give are read from
+the data the first time they are asked for, each behind its own progress dialog and cached the same
+way: the merged figures the availability page's join needs, sensor by sensor and pair by pair, in
+one pass (about 30 s); the pair counts of the instances as the dataset stores them (about 9 s); and
+the profiles of every sensor of every instance and bar — which samples are measurements, and what
+each sensor amounts to — which read every file in full (about 100 s). A pass one page has paid for
+is shared with every other.
 
 Only real instances (`WELL-*` files) are shown: simulated and hand-drawn instances have no well to
 overlap on and no sensor to lack, and this viewer is about the real ones.
+
+### Optional extras
+
+The core of the viewer needs numpy, pandas, pyarrow, PySide6 and pyqtgraph, and nothing else.
+The heavier analyses are grouped into optional extras, one per capability, so that a plain
+`uv sync` stays light. A control whose group is not installed is greyed, and its tooltip names the
+group and the command that installs it; nothing else changes.
+
+| Group | Installs | Enables |
+| ----- | -------- | ------- |
+| `analysis` | scikit-learn | the Instances map (embeddings, clusterings and their scores, the novelty audit) and the mutual-information matrices |
+| `umap` | umap-learn | the UMAP embedding of the Instances map |
+| `dtw` | dtaidistance | the DTW representation of the Instances map: each instance's shape compared with the others of its class, the 3W Toolkit's rule |
+
+```bash
+uv sync --extra analysis           # one group
+uv sync --all-extras               # every group
+```
+
+The table lives in [`backend/extras.py`](src/overlap_viewer/backend/extras.py) as well as in
+`pyproject.toml`, and the tests check that the two agree.
 
 ## Layout
 
 ```
 app/
-├── pyproject.toml            standalone uv project (package overlap_viewer, script overlap-viewer)
+├── pyproject.toml            standalone uv project (package overlap_viewer, script overlap-viewer, the optional extras)
 ├── main.py                   runs the viewer from a checkout without installing
 ├── docs/
 │   ├── assets/               screenshots · the platform schematics the help shows
 │   └── papers/               the 3W data articles, the thesis and the graduation project the help draws on
-├── tests/test_backend.py     backend tests on a synthetic miniature of the 3W layout
+├── examples/                 one explained example of every file the viewer reads or writes, with its provenance
+├── scripts/                  what produces the examples, outside the GUI: export_file_list.py, pca_control_chart.py
+├── tests/
+│   ├── conftest.py           the synthetic miniature of the 3W layout every test module shares
+│   ├── test_backend.py       tests of the backend
+│   ├── test_algorithms.py    tests of the algorithms, on series with known answers
+│   ├── test_profiles.py      tests of the profile pass and of the measured/filled split
+│   ├── test_map.py           tests of the Instances map's analyses, on planted clouds
+│   ├── test_cleaning.py      tests of the Toolkit's CleanSignals rule and of the file-list export
+│   ├── test_model_outputs.py tests of the model-output format, its loader and the agreement figure
+│   ├── test_correlation.py   tests of the correlation matrices: Pearson exact over pooled samples, the mutual-information coefficient, smoothing
+│   └── test_dispersion.py    tests of the dispersion pass: the subsample, the label periods, the measurements, the pair and its density
 └── src/overlap_viewer/
-    ├── config.py             dataset fallbacks · plausible ranges · the tint ladder · signatures · layout · cache
-    ├── dataset.py            dataset.ini · instance catalogue and its cache · sensor figures from the footers, from merged recordings and pair by pair · overlaps and joins per well
-    ├── availability.py       the three states of a sensor in a bar · groups folded into shares of samples or of bars · the pair map of a scope
-    ├── faults.py             where the event begins in an instance · z-scores · the plausible extent of a series
-    ├── spectral.py           the signal views, numpy only: a series prepared · Welch's density and the dominant period · histograms stacked by label, with their peak
-    ├── timemap.py            gap-compressed (or calendar) time axis in hours
-    ├── labels.py             label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts · a stamp at a frame's own resolution
-    ├── theme.py              every color of the light and of the dark mode
-    ├── palette.py            fault hues tinted by reach · legend entries
-    ├── help_text.py          what the help says: classes, variables, statuses, availability, usage
-    ├── styling.py            installing a theme into Qt and pyqtgraph · the saved mode
-    ├── loading.py            progress dialogs · cache of loaded instances
-    ├── items.py              pyqtgraph items: segments, instance bars and their marks, time axis, anchored text
-    ├── spectral_items.py     the parameter widgets, the period axis and the builders of the signal views
-    ├── heatmap.py            the matrix widget of the availability page, its tooltips and the keys of the states
-    ├── legend.py             the clickable color key and its flow layout
-    ├── help.py               the help window
-    ├── overview.py           the timelines page: the grid of well timelines
-    ├── availability_page.py  the availability page: rows, sensors, the matrix and what it says
-    ├── series_page.py        what the faults and features pages both are: sections of instances, in a chosen domain and layout
-    ├── faults_page.py        the faults page: one fault, a section per feature, its instances in the color of their well
-    ├── features_page.py      the features page: one sensor, a section per fault class, the classes over one another when overlaid
-    ├── instance_window.py    the time series of a group of overlapping instances, with their distributions and spectra
-    ├── window.py             the main window: the pages, the shared toolbar and status bar, the windows they open
-    └── app.py                command line and start-up
+    ├── app.py                command line and start-up
+    ├── backend/              what the data is — pandas, numpy and pyarrow only
+    │   ├── config.py         dataset fallbacks · plausible ranges · the tint ladder · signatures · layout · cache
+    │   ├── dataset.py        dataset.ini · instance catalogue and its cache · sensor figures from the footers, from merged recordings and pair by pair · overlaps and joins per well
+    │   ├── profiles.py       the pass that profiles every sensor of every instance and bar: how it was measured, what it amounts to, cached
+    │   ├── labels.py         label kinds and names · runs, their agreement and their merge · feature statistics · coverage counts · a stamp at a frame's own resolution
+    │   ├── timemap.py        gap-compressed (or calendar) time axis in hours
+    │   ├── availability.py   the three states of a sensor in a bar · the measured/filled split of the live share · groups folded into shares of samples or of bars · the pair map of a scope
+    │   ├── extras.py         the optional dependency groups: what each enables, whether it is installed, how it is installed
+    │   ├── export.py         the Toolkit file list: a ParquetDatasetConfig of the instances on show, with its provenance
+    │   ├── model_outputs.py  the model-output format: model.json beside per-instance parquet files, its loader, the agreement with the labels
+    │   ├── theme.py          every color of the light and of the dark mode
+    │   ├── palette.py        fault hues tinted by reach · legend entries
+    │   └── help_text.py      what the help says: classes, variables, statuses, availability, usage
+    ├── algorithms/           what is computed from the data — numpy only; anything heavier is an optional extra
+    │   ├── faults.py         where the event begins in an instance · z-scores · the plausible extent of a series
+    │   ├── interpolation.py  which samples are measurements and which the historian drew: held, interpolated, genuine · the spacing of the measurements
+    │   ├── descriptors.py    what a series amounts to: moments, quantiles, autocorrelation time, signal-to-noise ratio, Zhang's Gaussianity test
+    │   ├── cleaning.py       the Toolkit's CleanSignals rule on the profiles: bounds at the quartiles, the sensors discarded and dropped
+    │   ├── embedding.py      the Instances map: representations, PCA and MDS in numpy, t-SNE and UMAP, the clusterings and their scores, typicality, the one-class audit
+    │   ├── dtw.py            the DTW distance between the decimated, z-scored series of one sensor (the ``dtw`` extra)
+    │   ├── correlation.py    how the sensors move together over a scope: Pearson exact over the pooled samples, the mutual-information and nonlinear coefficients, per smoothing window
+    │   ├── dispersion.py     two sensors against each other over a scope: an even subsample of every instance with its label periods and measurements, the pair, its density
+    │   └── spectral.py       the signal views: a series prepared · Welch's density and the dominant period · the Lomb–Scargle periodogram of the measurements · histograms stacked by label, with their peak
+    └── frontend/             how it is shown — PySide6 and pyqtgraph
+        ├── styling.py        installing a theme into Qt and pyqtgraph · the saved mode
+        ├── loading.py        progress dialogs · cache of loaded instances
+        ├── passes.py         the passes over the data, read once behind a dialog and shared by every page
+        ├── traces.py         a time series drawn as measurements (dots) and the historian's lines (faint) between them
+        ├── items.py          pyqtgraph items: segments, instance bars and their marks, time axis, anchored text
+        ├── spectral_items.py the parameter widgets, the period axis and the builders of the signal views
+        ├── heatmap.py        the matrix widget of the availability page, its tooltips and the keys of the states
+        ├── legend.py         the clickable color key and its flow layout
+        ├── help.py           the help window
+        ├── overview.py       the timelines page: the grid of well timelines
+        ├── availability_page.py  the availability page: its three matrices — availability, sensor pairs, sensor correlations — and what each says
+        ├── series_page.py    what the faults and features pages both are: sections of instances, in a chosen domain and layout
+        ├── faults_page.py    the faults page: one fault, a section per feature, its instances in the color of their well
+        ├── features_page.py  the features page: one sensor, a section per fault class, the classes over one another when overlaid
+        ├── map_page.py       the Instances map: the points, their colorings, the clustering scores, the label audit
+        ├── dispersion_page.py    the Dispersion page: two sensors against each other over a scope, the dots, the density, the measurements alone
+        ├── instance_window.py    the time series of a group of overlapping instances, with their distributions and spectra
+        └── window.py         the main window: the pages, the shared toolbar and status bar, the windows they open
 ```
 
-The backend (`config`, `dataset`, `availability`, `faults`, `spectral`, `timemap`, `labels`,
-`theme`, `palette`, `help_text`) depends on pandas, numpy and pyarrow only, and reads what the dataset states
-about itself from `dataset.ini` (event names and labels, which events have a transient, the
-transient offset, variable units, which variables are valve states), with built-in fallbacks for
-3W 2.0.0. The frontend is PySide6 and pyqtgraph. The lane-packing rule that stacks the instances is
-the one the `flowml` pipeline uses to drop overlapping instances: what the timelines show on stack
-level 2 or higher is exactly what the pipeline removes by default. The plausible ranges are the
-pipeline's cleaning rules.
+The three packages are layers, and the dependencies grow from one to the next. `backend` is what
+the data is: it depends on pandas, numpy and pyarrow only, and reads what the dataset states about
+itself from `dataset.ini` (event names and labels, which events have a transient, the transient
+offset, variable units, which variables are valve states), with built-in fallbacks for 3W 2.0.0.
+`algorithms` is what is computed from the data, in numpy; whatever needs more is an optional extra
+(above). `frontend` is how it is shown, in PySide6 and pyqtgraph; `app.py`, at the top, is the one
+module that imports from all three. Same-focus code sits together: a new analysis goes into
+`algorithms` with its tests, and the page that shows it into `frontend`. The lane-packing rule
+that stacks the instances is the one the `flowml` pipeline uses to drop overlapping instances: what
+the timelines show on stack level 2 or higher is exactly what the pipeline removes by default. The
+plausible ranges are the pipeline's cleaning rules.
 
 The help text and the signature variables come from the 3W Dataset 2.0.0 data article
 ([doi:10.1038/s41597-026-07225-z](https://doi.org/10.1038/s41597-026-07225-z)); its figures 3 to 7
@@ -520,5 +876,5 @@ uv run pytest
 uv run ruff check . && uv run ruff format .
 ```
 
-Tests cover the backend only; the widgets were checked by rendering them offscreen
+Tests cover the backend and the algorithms; the widgets were checked by rendering them offscreen
 (`QT_QPA_PLATFORM=offscreen`) against the full dataset.

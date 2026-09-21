@@ -17,34 +17,43 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.config import (
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.config import (
     EXTREME_VALUE_LIMIT,
     FAULT_SIGNATURES,
     PLAUSIBLE_RANGES,
     WELL_STATES,
     asset_path,
 )
-from overlap_viewer.dataset import DatasetInfo
-from overlap_viewer.heatmap import SWATCH_KINDS, swatch_image
-from overlap_viewer.help_text import (
+from overlap_viewer.backend.dataset import DatasetInfo
+from overlap_viewer.backend.help_text import (
     AVAILABILITY_INTRO,
     AVAILABILITY_NOTES,
     AVAILABILITY_SOURCES,
     AVAILABILITY_STATES,
     CONFIRMATION_WINDOWS,
     DATASET_NOTES,
+    DISPERSION_INTRO,
+    DISPERSION_NOTES,
+    DISPERSION_SOURCES,
     FAULTS,
     FIGURES,
     MAGNITUDE_NOTE,
+    MAP_INTRO,
+    MAP_NOTES,
+    MAP_SOURCES,
+    MODEL_INTRO,
+    MODEL_NOTES,
+    MODEL_SOURCES,
     PLAUSIBLE_RANGE_NOTES,
     STATES,
     TRANSIENT_CAPABLE,
     USAGE,
     VARIABLES,
 )
-from overlap_viewer.items import hatch_brush
-from overlap_viewer.palette import bar_color, fault_color, state_color
+from overlap_viewer.backend.palette import bar_color, fault_color, state_color
+from overlap_viewer.frontend.heatmap import SWATCH_KINDS, swatch_image
+from overlap_viewer.frontend.items import hatch_brush
 
 # The swatches of the help that are drawings rather than colors, painted as
 # images because rich text has no hatch: the status of a stretch nobody labeled,
@@ -393,6 +402,33 @@ def availability_help_page(figures: "Figures | None" = None) -> str:
     return _document("".join(parts))
 
 
+def map_help_page() -> str:
+    """The Instances map: the representations, the embeddings, the clusterings, typicality, the audit."""
+    parts = ["<h2>Instances map</h2>", f"<p>{MAP_INTRO}</p>"]
+    for title, text in MAP_NOTES:
+        parts.append(f"<h3>{title}</h3><p>{text}</p>")
+    parts.append(f'<hr><p class="sub">{MAP_SOURCES}</p>')
+    return _document("".join(parts))
+
+
+def model_help_page() -> str:
+    """The model-output format, the agreement figure, where it shows, and the example's provenance."""
+    parts = ["<h2>Model outputs</h2>", f"<p>{MODEL_INTRO}</p>"]
+    for title, text in MODEL_NOTES:
+        parts.append(f"<h3>{title}</h3><p>{text}</p>")
+    parts.append(f'<hr><p class="sub">{MODEL_SOURCES}</p>')
+    return _document("".join(parts))
+
+
+def dispersion_help_page() -> str:
+    """The dispersion page: the cloud, the historian's lines in it, the scopes and the cost."""
+    parts = ["<h2>Dispersion</h2>", f"<p>{DISPERSION_INTRO}</p>"]
+    for title, text in DISPERSION_NOTES:
+        parts.append(f"<h3>{title}</h3><p>{text}</p>")
+    parts.append(f'<hr><p class="sub">{DISPERSION_SOURCES}</p>')
+    return _document("".join(parts))
+
+
 def usage_page() -> str:
     """How to work the pages and the windows, and what the dataset underneath them is."""
     parts = ["<h2>Using the viewer</h2>"]
@@ -410,7 +446,16 @@ def usage_page() -> str:
 class HelpWindow(QDialog):
     """Tabbed help on the dataset and on the viewer, shared by both windows."""
 
-    TABS = ("Fault classes", "Variables", "Well status", "Data availability", "Using the viewer")
+    TABS = (
+        "Fault classes",
+        "Variables",
+        "Well status",
+        "Data availability",
+        "Instances map",
+        "Dispersion",
+        "Model outputs",
+        "Using the viewer",
+    )
 
     def __init__(self, info: DatasetInfo, counts: dict[int, int] | None = None, parent=None):
         super().__init__(parent)
@@ -427,6 +472,9 @@ class HelpWindow(QDialog):
                 variable_page(info, figures),
                 state_page(figures),
                 availability_help_page(figures),
+                map_help_page(),
+                dispersion_help_page(),
+                model_help_page(),
                 usage_page(),
             ),
         ):

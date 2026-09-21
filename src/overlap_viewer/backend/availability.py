@@ -34,6 +34,14 @@ shares of a cell add up to one and a partially recorded sensor shows as partly
 absent; the bar shares count how many of the group's bars have the sensor in
 each state. A sample two overlapping instances share is counted in both, unless
 the bars are the joined view's, where it is counted once.
+
+A **live** sample is not necessarily a **measurement**. Most sensors of the
+dataset were read every ten seconds or every two minutes and the historian
+drew straight lines between the readings (``algorithms.interpolation``), so,
+given the profiles of the bars (``profiles.Profiles``), the live share of a
+cell is split further into the samples that were measured and the samples the
+historian filled in, and a bar can be tinted by the share of its live samples
+that are measurements.
 """
 
 from collections.abc import Mapping, Sequence
@@ -42,8 +50,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from overlap_viewer.config import plausible_range
-from overlap_viewer.dataset import (
+from overlap_viewer.backend.config import plausible_range
+from overlap_viewer.backend.dataset import (
     BarStats,
     DatasetInfo,
     JoinedStats,
@@ -51,7 +59,8 @@ from overlap_viewer.dataset import (
     instance_title,
     split_wells,
 )
-from overlap_viewer.labels import is_flat, sensor_stats_from_json
+from overlap_viewer.backend.labels import is_flat, sensor_stats_from_json
+from overlap_viewer.backend.profiles import Profiles
 
 # The states a sensor can be in inside one bar, and their codes.
 STATES = ("absent", "frozen", "live")
@@ -143,6 +152,10 @@ class AvailabilityTable:
     low, high : np.ndarray
         ``(rows, sensors)``: the smallest and largest reading of the sensor in
         the group, NaN where nothing was recorded.
+    genuine, filled : np.ndarray or None
+        ``(rows, sensors)``: of the live samples of the group, how many are
+        measurements and how many the historian filled in; ``None`` when the
+        bars were built without their profiles.
     """
 
     keys: list
@@ -154,6 +167,8 @@ class AvailabilityTable:
     implausible: np.ndarray
     low: np.ndarray
     high: np.ndarray
+    genuine: np.ndarray | None = None
+    filled: np.ndarray | None = None
 
     @staticmethod
     def _shares(counts: np.ndarray, totals: np.ndarray) -> np.ndarray:
@@ -170,6 +185,33 @@ class AvailabilityTable:
     def instance_shares(self) -> np.ndarray:
         """``instances`` as shares of the group's bars, zero for an empty group."""
         return self._shares(self.instances, self.n_instances)
+
+    @property
+    def measured(self) -> bool:
+        """Whether the live share can be split into measurements and filled samples."""
+        return self.genuine is not None and self.filled is not None
+
+    @property
+    def filled_shares(self) -> np.ndarray:
+        """The samples the historian filled in, as shares of the group's samples; zeros when unknown."""
+        if not self.measured:
+            return np.zeros(self.samples.shape[:2])
+        totals = self.n_samples[:, None].astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(totals > 0, self.filled / np.where(totals > 0, totals, 1.0), 0.0)
+
+    def measured_share(self, row: int, column: int) -> float:
+        """Of the live samples of one cell, the share that are measurements; NaN when unknown or none."""
+        if not self.measured:
+            return float("nan")
+        genuine, filled = float(self.genuine[row, column]), float(self.filled[row, column])
+        return genuine / (genuine + filled) if genuine + filled > 0 else float("nan")
+
+    def spacing_s(self, row: int, column: int) -> float:
+        """Seconds of live signal per measurement in one cell: how far apart the measurements are."""
+        if not self.measured or self.genuine[row, column] <= 0:
+            return float("nan")
+        return float(self.samples[row, column, LIVE]) / float(self.genuine[row, column])
 
     def coverage_order(self, by_instances: bool = False) -> list[int]:
         """Column positions by the live share over every row, highest first, then dataset order."""
@@ -193,12 +235,15 @@ class AvailabilityTable:
             self.implausible[:, order],
             self.low[:, order],
             self.high[:, order],
+            None if self.genuine is None else self.genuine[:, order],
+            None if self.filled is None else self.filled[:, order],
         )
 
     def stacked(self, other: "AvailabilityTable") -> "AvailabilityTable":
         """This table with the rows of ``other`` appended, e.g. a total row."""
         if other.sensors != self.sensors:
             raise ValueError("the two tables do not share their sensors")
+        both = self.measured and other.measured
         return AvailabilityTable(
             [*self.keys, *other.keys],
             self.sensors,
@@ -209,6 +254,8 @@ class AvailabilityTable:
             np.concatenate([self.implausible, other.implausible]),
             np.concatenate([self.low, other.low]),
             np.concatenate([self.high, other.high]),
+            np.concatenate([self.genuine, other.genuine]) if both else None,
+            np.concatenate([self.filled, other.filled]) if both else None,
         )
 
     def __len__(self) -> int:
@@ -248,6 +295,10 @@ class Availability:
         ``(bars, sensors)``: ``ABSENT``, ``FROZEN`` or ``LIVE``.
     implausible : np.ndarray
         ``(bars, sensors)``: whether a reading leaves the plausible range.
+    genuine, filled : np.ndarray or None
+        ``(bars, sensors)``: how many readings of the sensor are measurements
+        and how many the historian filled in, from the bars' profiles; ``None``
+        when the bars were built without them.
     """
 
     bars: pd.DataFrame
@@ -261,6 +312,8 @@ class Availability:
     high: np.ndarray
     state: np.ndarray
     implausible: np.ndarray
+    genuine: np.ndarray | None = None
+    filled: np.ndarray | None = None
     _index: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -278,6 +331,7 @@ class Availability:
         info: DatasetInfo,
         threshold: float = 0.0,
         joined_stats: JoinedStats | None = None,
+        profiles: Profiles | None = None,
     ) -> "Availability":
         """Read the sensor figures of every bar of the ``views`` into arrays.
 
@@ -293,10 +347,15 @@ class Availability:
         joined_stats : JoinedStats, optional
             The merged figures of every bar of a joined view, from
             ``dataset.load_joined_sensor_stats``; required for joined views.
+        profiles : Profiles, optional
+            The profiles of the bars (``profiles.load_profiles``), which split
+            the readings of a live sensor into measurements and filled samples.
         """
         records: list[dict] = []
         parsed: list[Mapping[str, SensorStats]] = []
         totals: list[int] = []
+        keys: list[tuple] = []
+        joined = any(view.joined_view for view in views)
         for view in views:
             rows = view.rows
             has_stats = "sensor_stats" in rows.columns
@@ -312,6 +371,11 @@ class Availability:
                     stats = sensor_stats_from_json(str(row["sensor_stats"])) if has_stats else {}
                 parsed.append(stats)
                 totals.append(int(n_total))
+                keys.append(
+                    (view.well, bar)
+                    if view.joined_view
+                    else (int(row["fault_class"]), str(row.get("file", "")))
+                )
                 records.append(
                     {
                         "well": view.well,
@@ -354,8 +418,30 @@ class Availability:
                 implausible[i, j] = n_valid[i, j] > 0 and outside_range(
                     low[i, j], high[i, j], ranges[j]
                 )
+        genuine = filled = None
+        if profiles is not None:
+            genuine = np.nan_to_num(
+                profiles.matrix(keys, joined, "n_genuine", sensors), nan=0.0
+            ).astype(int)
+            filled = np.nan_to_num(
+                profiles.matrix(keys, joined, "n_interpolated", sensors)
+                + profiles.matrix(keys, joined, "n_held", sensors),
+                nan=0.0,
+            ).astype(int)
         return cls(
-            bars, sensors, units, ranges, threshold, n_total, n_valid, low, high, state, implausible
+            bars,
+            sensors,
+            units,
+            ranges,
+            threshold,
+            n_total,
+            n_valid,
+            low,
+            high,
+            state,
+            implausible,
+            genuine,
+            filled,
         )
 
     @classmethod
@@ -374,9 +460,32 @@ class Availability:
         """Whether the bars are merged recordings rather than the instances themselves."""
         return bool(len(self.bars)) and any(len(members) > 1 for members in self.bars["members"])
 
+    @property
+    def measured(self) -> bool:
+        """Whether the bars carry their profiles, so live readings split into measured and filled."""
+        return self.genuine is not None and self.filled is not None
+
     def index_of(self, well: int, bar: int) -> int:
         """The row of one bar of one well's view."""
         return self._index[(int(well), int(bar))]
+
+    def measured_of(self, rows: Sequence[int], sensor: int) -> tuple[float, float]:
+        """Of one sensor's live readings over some bars, the share measured, and the seconds per measurement.
+
+        What tints a timeline bar by how a sensor was measured. Both are NaN
+        without profiles, or where the sensor is live in none of the bars.
+        """
+        if not self.measured:
+            return (float("nan"), float("nan"))
+        rows = np.asarray(list(rows), dtype=int)
+        live = self.state[rows, sensor] == LIVE
+        genuine = float(self.genuine[rows, sensor][live].sum())
+        filled = float(self.filled[rows, sensor][live].sum())
+        if genuine + filled <= 0:
+            return (float("nan"), float("nan"))
+        share = genuine / (genuine + filled)
+        spacing = float(self.n_valid[rows, sensor][live].sum()) / genuine if genuine else np.nan
+        return (share, spacing)
 
     def shares_of(self, rows: Sequence[int], sensor: int) -> tuple[np.ndarray, bool]:
         """The sample shares of one sensor over some bars, and whether any of them reads implausibly.
@@ -426,6 +535,9 @@ class Availability:
         implausible = np.zeros((r, s), dtype=int)
         low = np.full((r, s), np.nan)
         high = np.full((r, s), np.nan)
+        measured = self.measured
+        genuine = np.zeros((r, s), dtype=int) if measured else None
+        filled = np.zeros((r, s), dtype=int) if measured else None
         for k, key in enumerate(rows):
             members = np.flatnonzero(taken & (keys == key))
             if not len(members):
@@ -436,6 +548,11 @@ class Availability:
             valid = self.n_valid[members]
             samples[k, :, FROZEN] = np.where(state == FROZEN, valid, 0).sum(axis=0)
             samples[k, :, LIVE] = np.where(state == LIVE, valid, 0).sum(axis=0)
+            if measured:
+                # Only a live sensor has measurements to split: a frozen one is
+                # one value throughout, and counts as frozen, not as filled.
+                genuine[k] = np.where(state == LIVE, self.genuine[members], 0).sum(axis=0)
+                filled[k] = np.where(state == LIVE, self.filled[members], 0).sum(axis=0)
             # Whatever is neither is absent: the missing samples, and the
             # readings of a sensor too sparse to count as available.
             samples[k, :, ABSENT] = n_samples[k] - samples[k, :, FROZEN] - samples[k, :, LIVE]
@@ -458,6 +575,8 @@ class Availability:
             implausible,
             low,
             high,
+            genuine,
+            filled,
         )
 
     def total(self, key="all", mask: np.ndarray | None = None) -> AvailabilityTable:

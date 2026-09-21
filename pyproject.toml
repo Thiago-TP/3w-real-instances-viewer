@@ -15,6 +15,16 @@ dependencies = [
     "PySide6>=6.8",
 ]
 
+# Optional groups, one per capability. The viewer runs without them; a control
+# that needs one is greyed with a tooltip naming the group and this command:
+#     uv sync --extra <group>        (or: uv sync --all-extras)
+# What each enables is listed in src/overlap_viewer/backend/extras.py and in the
+# README, and the tests check that the two lists and this one agree.
+[project.optional-dependencies]
+analysis = ["scikit-learn>=1.5"]
+umap = ["umap-learn>=0.5.7"]
+dtw = ["dtaidistance>=2.3.12"]
+
 [project.scripts]
 overlap-viewer = "overlap_viewer.app:main"
 

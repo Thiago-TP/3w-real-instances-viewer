@@ -1,18 +1,25 @@
 """Backend tests on a synthetic miniature of the 3W layout; no Qt involved."""
 
-import os
 import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from conftest import CACHE_HOME, T0, hours
 
-from overlap_viewer import dataset as ds
-from overlap_viewer import help_text, theme
-from overlap_viewer.availability import (
+from overlap_viewer.algorithms.faults import (
+    onset,
+    onset_from_runs,
+    plausible_extent,
+    relative_hours,
+    window_mask,
+    zscore,
+)
+from overlap_viewer.backend import dataset as ds
+from overlap_viewer.backend import help_text, theme
+from overlap_viewer.backend.availability import (
     ABSENT,
     FROZEN,
     LIVE,
@@ -23,7 +30,7 @@ from overlap_viewer.availability import (
     outside_range,
     sensor_state,
 )
-from overlap_viewer.config import (
+from overlap_viewer.backend.config import (
     DEFAULT_FAULT_NAMES,
     DEFAULT_SENSOR_UNITS,
     DEFAULT_TRANSIENT_CAPABLE,
@@ -35,15 +42,7 @@ from overlap_viewer.config import (
     cache_dir,
     plausible_range,
 )
-from overlap_viewer.faults import (
-    onset,
-    onset_from_runs,
-    plausible_extent,
-    relative_hours,
-    window_mask,
-    zscore,
-)
-from overlap_viewer.labels import (
+from overlap_viewer.backend.labels import (
     Segment,
     column_as_float,
     coverage_counts,
@@ -61,8 +60,7 @@ from overlap_viewer.labels import (
     sensor_stats_from_json,
     sensor_stats_to_json,
 )
-from overlap_viewer.legend import row_breaks
-from overlap_viewer.palette import (
+from overlap_viewer.backend.palette import (
     background_color,
     bar_color,
     blend,
@@ -76,28 +74,8 @@ from overlap_viewer.palette import (
     to_rgb,
     unknown_background,
 )
-from overlap_viewer.timemap import TimeMap
-
-T0 = pd.Timestamp("2017-02-01 01:00:00")
-
-# Where ``config.cache_dir`` looks on the platform the tests are running on. A
-# test that wants the cache inside its ``tmp_path`` sets this one rather than
-# faking ``os.name`` to reach the other branch: ``os.name`` is also what tells
-# ``pathlib`` which flavour of ``Path`` to build, so a Windows interpreter told
-# it is POSIX hands out ``PosixPath`` objects that raise on their first join.
-CACHE_HOME = "LOCALAPPDATA" if os.name == "nt" else "XDG_CACHE_HOME"
-
-
-@pytest.fixture(autouse=True)
-def light_theme():
-    """The theme is global, so a test that switches it must not colour the next one."""
-    theme.use("light")
-    yield
-    theme.use("light")
-
-
-def hours(h: float) -> pd.Timestamp:
-    return T0 + pd.Timedelta(hours=h)
+from overlap_viewer.backend.timemap import TimeMap
+from overlap_viewer.frontend.legend import row_breaks
 
 
 def segments(*spans) -> list[Segment]:
@@ -123,82 +101,6 @@ def instance_row(well: int, fault_class: int, start: pd.Timestamp, labels) -> di
         "stamp": index[0],
         "hours": (index[-1] - index[0]).total_seconds() / 3600,
     }
-
-
-def write_instance(
-    folder: Path,
-    well: int,
-    start: pd.Timestamp,
-    n: int,
-    classes,
-    pdg_offset: float = 0.0,
-    pdg_missing: float = 0.0,
-    statistics: bool = True,
-) -> Path:
-    """One parquet file shaped like a 3W instance: timestamp index, sensors, nullable labels.
-
-    The sensors cover the states the availability analysis tells apart: a
-    pressure that moves (``P-PDG``, shifted by ``pdg_offset`` so a file can
-    carry a negative pressure, and missing for the leading ``pdg_missing``
-    share of the samples so a file can carry a partly recorded sensor), a
-    frozen temperature (``T-TPT``), an absent flow rate (``QGL``) and a valve
-    held open throughout (``ESTADO-W1``). ``statistics=False`` writes the file
-    without the footer figures the scan reads first, so the fallback that
-    reads the columns gets exercised.
-    """
-    index = pd.date_range(start, periods=n, freq="1s", name="timestamp")
-    pdg = np.linspace(1.0e7, 1.1e7, n) + pdg_offset
-    pdg[: round(pdg_missing * n)] = np.nan
-    frame = pd.DataFrame(
-        {
-            "P-PDG": pdg,
-            "T-TPT": np.full(n, 118.5),
-            "QGL": np.full(n, np.nan),
-            "ESTADO-W1": np.full(n, 1.0),
-            "class": pd.array(classes, dtype="Int16"),
-            "state": pd.array([0] * n, dtype="Int16"),
-        },
-        index=index,
-    )
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"WELL-{well:05d}_{start:%Y%m%d%H%M%S}.parquet"
-    if statistics:
-        frame.to_parquet(path)
-    else:
-        pq.write_table(pa.Table.from_pandas(frame), path, write_statistics=False)
-    return path
-
-
-@pytest.fixture
-def raw_dir(tmp_path: Path) -> Path:
-    root = tmp_path / "dataset"
-    (root / "dataset.ini").parent.mkdir()
-    (root / "dataset.ini").write_text(
-        "[VERSION]\nDATASET = 9.9.9\n"
-        "[PARQUET_FILE_PROPERTIES]\ntimestamp = Instant\nP-PDG = Downhole pressure [Pa]\n"
-        "T-TPT = Xmas-tree temperature [oC]\nQGL = Gas lift flow rate [m3/s]\n"
-        "ESTADO-W1 = State of the PWV [0, 0.5, or 1]\nclass = Label\nstate = Status\n"
-        "[EVENTS]\nNAMES = NORMAL, HYDRATE_IN_SERVICE_LINE\nTRANSIENT_OFFSET = 100\n"
-        "[NORMAL]\nLABEL = 0\nDESCRIPTION = Normal Operation\n"
-        "[HYDRATE_IN_SERVICE_LINE]\nLABEL = 9\nDESCRIPTION = Hydrate in Service Line\nTRANSIENT = True\n",
-        encoding="utf-8",
-    )
-    n = 3600
-    # Well 1: a chain of three windows, each overlapping the next by one hour.
-    write_instance(root / "0", 1, hours(0), 2 * n, [0] * (2 * n))
-    write_instance(root / "0", 1, hours(1), 2 * n, [0] * (2 * n))
-    write_instance(root / "0", 1, hours(2), 2 * n, [0] * (2 * n))
-    # Well 2: one hydrate instance that reaches the transient only, its downhole
-    # pressure missing for the first 60 % of the recording, and one that never
-    # leaves normal and reports a negative downhole pressure, written without
-    # footer statistics.
-    write_instance(
-        root / "9", 2, hours(0), n, [pd.NA] * 600 + [0] * 1800 + [109] * 1200, pdg_missing=0.6
-    )
-    write_instance(root / "9", 2, hours(48), n, [0] * n, pdg_offset=-2.0e7, statistics=False)
-    # A simulated file must be ignored.
-    (root / "9" / "SIMULATED_00001.parquet").write_bytes(b"not parquet")
-    return root
 
 
 def test_parse_names():
@@ -1189,7 +1091,7 @@ def test_faults_are_aligned_where_the_event_begins_and_scaled_to_their_level():
 
 def test_a_series_is_prepared_for_a_transform_or_declines():
     """Implausible readings masked, holes interpolated, trend removed; too little or flat declines."""
-    from overlap_viewer.spectral import prepare
+    from overlap_viewer.algorithms.spectral import prepare
 
     t = np.arange(600, dtype=float)
     y = 5.0 + 0.01 * t + np.sin(2 * np.pi * t / 60)
@@ -1209,7 +1111,7 @@ def test_a_series_is_prepared_for_a_transform_or_declines():
 
 
 def test_welch_finds_the_period_of_a_sine_and_says_what_it_resolves():
-    from overlap_viewer.spectral import TransformParams, prepare, welch
+    from overlap_viewer.algorithms.spectral import TransformParams, prepare, welch
 
     t = np.arange(6 * 3600, dtype=float)
     rng = np.random.default_rng(1)
@@ -1237,7 +1139,7 @@ def test_welch_finds_the_period_of_a_sine_and_says_what_it_resolves():
 
 
 def test_histogram_stacks_by_group_and_leaves_the_implausible_out():
-    from overlap_viewer.spectral import histogram
+    from overlap_viewer.algorithms.spectral import histogram
 
     values = np.array([1.0, 1.5, 2.0, 2.5, 3.0, np.nan, 1.0e9, 3.5])
     groups = np.array([0, 0, 1, 1, 1, 0, 0, 1])
@@ -1263,7 +1165,7 @@ def test_histogram_stacks_by_group_and_leaves_the_implausible_out():
 
 def test_spectra_are_pooled_by_averaging_the_bands_they_reach():
     """Instances are cut from different months, so their spectra average; they never concatenate."""
-    from overlap_viewer.spectral import TransformParams, average_spectra, prepare, welch
+    from overlap_viewer.algorithms.spectral import TransformParams, average_spectra, prepare, welch
 
     params = TransformParams()
     # Two stretches of the same process, of different lengths, so their
@@ -1297,7 +1199,7 @@ def test_spectra_are_pooled_by_averaging_the_bands_they_reach():
 
 def test_a_histogram_counts_the_implausible_only_when_it_is_asked_to():
     """The clamp is what a histogram leaves out, and unticking it must let the garbage in."""
-    from overlap_viewer.spectral import TransformParams, histogram
+    from overlap_viewer.algorithms.spectral import TransformParams, histogram
 
     assert TransformParams().clamp is True  # what a histogram is normally asked for
     values = np.concatenate([np.linspace(1.0e7, 1.1e7, 200), np.full(20, 9.0e12)])
@@ -1321,7 +1223,7 @@ def test_a_histogram_counts_the_implausible_only_when_it_is_asked_to():
 
 def test_a_stamp_is_searched_at_the_resolution_the_frame_is_indexed_in():
     """A view edge carries nanoseconds; a 3W file read through pyarrow is indexed in microseconds."""
-    from overlap_viewer.labels import at_index_unit
+    from overlap_viewer.backend.labels import at_index_unit
 
     index = pd.date_range(T0, periods=5, freq="1s", name="timestamp").as_unit("us")
     frame = pd.DataFrame({"P-PDG": np.arange(5.0)}, index=index)
@@ -1342,7 +1244,7 @@ def test_a_stamp_is_searched_at_the_resolution_the_frame_is_indexed_in():
 
 def test_the_peak_of_a_histogram_is_the_fullest_bin():
     """What the readings pile up at, which a skewed or two-humped shape hides from the mean."""
-    from overlap_viewer.spectral import Histogram, histogram
+    from overlap_viewer.algorithms.spectral import Histogram, histogram
 
     # A long tail to the right: the mean is dragged out of the hump, the peak is not.
     values = np.concatenate([np.full(40, 1.0), np.linspace(2.0, 11.0, 10)])
@@ -1359,3 +1261,31 @@ def test_the_peak_of_a_histogram_is_the_fullest_bin():
     tie = histogram(np.array([0.0, 0.0, 1.0, 1.0]), None, bins=2)
     assert tie is not None and tie.peak == (pytest.approx(0.25), 2)
     assert Histogram(np.array([0.0, 1.0])).peak == (pytest.approx(np.nan, nan_ok=True), 0)
+
+
+def test_the_optional_groups_are_declared_once_and_answer_for_themselves(monkeypatch):
+    """pyproject.toml, extras.py and the README name the same groups, and a group says how to install itself."""
+    import tomllib
+
+    from overlap_viewer.backend import extras
+    from overlap_viewer.backend.config import PROJECT_DIR
+
+    declared = tomllib.loads((PROJECT_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+    groups = declared["project"]["optional-dependencies"]
+    assert set(groups) == set(extras.EXTRAS), "pyproject.toml and extras.py disagree on the groups"
+    readme = (PROJECT_DIR / "README.md").read_text(encoding="utf-8")
+    for name, extra in extras.EXTRAS.items():
+        assert extra.name == name
+        assert f"| `{name}` |" in readme, f"the README table does not list the {name} group"
+        assert extra.enables in readme, f"the README does not say what {name} enables"
+    # A group that imports answers None; one that does not says what and how.
+    extras.forget()
+    monkeypatch.setitem(extras.EXTRAS, "core", extras.Extra("core", ("numpy",), "everything"))
+    assert extras.missing("core") is None and extras.available("core")
+    monkeypatch.setitem(
+        extras.EXTRAS, "ghost", extras.Extra("ghost", ("no_such_module_anywhere",), "nothing")
+    )
+    reason = extras.missing("ghost")
+    assert reason is not None and not extras.available("ghost")
+    assert "no_such_module_anywhere" in reason and extras.install_command("ghost") in reason
+    extras.forget()

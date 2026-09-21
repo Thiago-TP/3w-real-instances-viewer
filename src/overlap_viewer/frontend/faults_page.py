@@ -38,20 +38,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.availability import ABSENT, Availability
-from overlap_viewer.config import (
+from overlap_viewer.algorithms.faults import (
+    ALIGNMENT_NAMES,
+    ALIGNMENTS,
+    onset_from_runs,
+    relative_hours,
+)
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.availability import ABSENT, Availability
+from overlap_viewer.backend.config import (
     FAULT_SIGNATURES,
     MAX_OVERLAID_INSTANCES,
     MAX_SMALL_MULTIPLES,
     REACH_LABELS,
 )
-from overlap_viewer.dataset import DatasetInfo, WellData, well_label
-from overlap_viewer.faults import ALIGNMENT_NAMES, ALIGNMENTS, onset_from_runs, relative_hours
-from overlap_viewer.instance_window import PANEL_WIDTH
-from overlap_viewer.labels import segments_from_json
-from overlap_viewer.loading import FrameCache
-from overlap_viewer.series_page import LIST_WIDTH, Section, Series, SeriesPage
+from overlap_viewer.backend.dataset import DatasetInfo, WellData, well_label
+from overlap_viewer.backend.labels import segments_from_json
+from overlap_viewer.frontend.instance_window import PANEL_WIDTH
+from overlap_viewer.frontend.loading import FrameCache
+from overlap_viewer.frontend.series_page import LIST_WIDTH, Section, Series, SeriesPage
 
 HINT = (
     "Every plot is one real instance of the fault, in the color of its well, on a time axis that "
@@ -95,8 +100,8 @@ class FaultsPage(SeriesPage):
 
     HINT = HINT
 
-    def __init__(self, info: DatasetInfo, frames: FrameCache, parent=None):
-        super().__init__(info, parent)
+    def __init__(self, info: DatasetInfo, frames: FrameCache, passes=None, parent=None):
+        super().__init__(info, passes, parent)
         self._frames = frames
         self._catalogue: pd.DataFrame | None = None
         self._wells: dict[int, WellData] = {}
@@ -218,6 +223,7 @@ class FaultsPage(SeriesPage):
         buttons.addWidget(every)
         buttons.addWidget(none)
         layout.addLayout(buttons)
+        self.add_sort_control(layout)
         self._list = QListWidget()
         self._list.setMouseTracking(True)
         self._list.itemChanged.connect(self._on_item_changed)
@@ -228,6 +234,14 @@ class FaultsPage(SeriesPage):
         self._instance_note.setWordWrap(True)
         layout.addWidget(self._instance_note)
         return panel
+
+    def on_map_results(self) -> None:
+        if self.ready():
+            self._rebuild_instances()
+
+    def on_sort_changed(self, *args) -> None:
+        if self.ready():
+            self._rebuild_instances()
 
     # -- appearance
 
@@ -324,6 +338,8 @@ class FaultsPage(SeriesPage):
                     {
                         "well": well,
                         "position": position,
+                        "fault": fault,
+                        "file": str(row["file"]) if "file" in rows.columns else "",
                         "title": str(row["file"]).rsplit(".", 1)[0]
                         if "file" in rows.columns
                         else str(row["title"]),
@@ -360,15 +376,14 @@ class FaultsPage(SeriesPage):
     def _rebuild_instances(self) -> None:
         """List the instances of the fault, the earliest ticked, those without an onset greyed out."""
         fault = self.fault
+        self._sync_sort_control()  # the descriptor orders name the first feature ticked
         previously = {
             (entry["well"], entry["position"])
             for entry, item in zip(self._instances, self._items)
             if item.checkState() == Qt.CheckState.Checked
         }
         fresh = not self._instances or self._instances[0].get("fault") != fault
-        self._instances = self._instances_of(fault)
-        for entry in self._instances:
-            entry["fault"] = fault
+        self._instances = self.sorted_entries(self._instances_of(fault))
         colors = self._well_colors()
         self._building = True
         self._list.clear()
@@ -416,7 +431,7 @@ class FaultsPage(SeriesPage):
             )
         if entry["implausible"]:
             text += "\n⚠ A sensor reads outside its plausible range in this instance."
-        return text
+        return text + self.map_tooltip_lines(entry)
 
     def _rebuild_features(self) -> None:
         """Offer every sensor, greying those no instance of the fault recorded, the signature ticked."""
@@ -472,6 +487,10 @@ class FaultsPage(SeriesPage):
     def selected_features(self) -> list[str]:
         return [name for name, check in self._checks.items() if check.isChecked()]
 
+    def sort_feature(self) -> str | None:
+        """The descriptor orders read the first feature ticked, the one the first section draws."""
+        return next(iter(self.selected_features()), None)
+
     def _signature_features(self) -> list[str]:
         fault = self.fault
         return [
@@ -495,6 +514,10 @@ class FaultsPage(SeriesPage):
             bool(signature) and set(self.selected_features()) == set(signature)
         )
         self._signature.blockSignals(False)
+        # The descriptor orders name, and read, the first feature ticked.
+        self._sync_sort_control()
+        if self.descriptor_sort() is not None and self.ready():
+            self._rebuild_instances()
         self._replot()
 
     def _set_all_features(self, checked: bool) -> None:
@@ -567,6 +590,7 @@ class FaultsPage(SeriesPage):
                     neutral or entry["color"],
                     int(entry["fault"]),
                     entry.get("runs", []),
+                    self.model_runs_for(entry["fault"], entry.get("file", "")),
                 )
             )
         return series
@@ -590,6 +614,10 @@ class FaultsPage(SeriesPage):
 
     def pool_headline(self, members: list[int]) -> str:
         return f"{self.info.fault_name(self.fault)} · {super().pool_headline(members)}"
+
+    def shown_source(self) -> str:
+        """Where a file list from this page came from, for its provenance."""
+        return f"the Faults page · {self.info.fault_name(self.fault)} · the instances ticked"
 
     def summary(self) -> str:
         """One line for the status bar: the fault, its instances and wells, how many are drawn."""

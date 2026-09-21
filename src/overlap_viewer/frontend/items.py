@@ -32,10 +32,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QSizePolicy
 
-from overlap_viewer import theme
-from overlap_viewer.config import BAR_HEIGHT
-from overlap_viewer.palette import blend, text_color
-from overlap_viewer.timemap import TimeMap
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.config import BAR_HEIGHT
+from overlap_viewer.backend.palette import blend, text_color
+from overlap_viewer.backend.timemap import TimeMap
 
 # Formats tried, longest first, for the stamp written inside an instance bar.
 STAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m-%d %H:%M", "%H:%M")

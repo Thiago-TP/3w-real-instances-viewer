@@ -7,8 +7,8 @@ import pandas as pd
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QProgressDialog, QWidget
 
-from overlap_viewer.config import FRAME_CACHE_ROWS
-from overlap_viewer.dataset import (
+from overlap_viewer.backend.config import FRAME_CACHE_ROWS
+from overlap_viewer.backend.dataset import (
     DatasetInfo,
     JoinedStats,
     PairCounts,
@@ -18,6 +18,7 @@ from overlap_viewer.dataset import (
     load_joined_stats,
     load_pair_counts,
 )
+from overlap_viewer.backend.profiles import Profiles, load_profiles
 
 
 class FrameCache:
@@ -45,6 +46,15 @@ class FrameCache:
             _, evicted = self._frames.popitem(last=False)
             self._rows -= len(evicted)
         return frame
+
+
+def progress_dialog(text: str, parent: QWidget | None):
+    """A cancellable progress dialog and the callback that drives it, for any pass over the files.
+
+    The callback takes ``(done, total, name)`` and returns ``False`` once the
+    user has cancelled; the caller closes the dialog when it is through.
+    """
+    return _progress_dialog(text, parent)
 
 
 def _progress_dialog(text: str, parent: QWidget | None):
@@ -121,6 +131,31 @@ def pair_counts_with_progress(
     )
     try:
         return load_pair_counts(info, sensors, use_cache=use_cache, progress=progress)
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def profiles_with_progress(
+    info: DatasetInfo,
+    wells: list[WellData],
+    sensors: list[str],
+    use_cache: bool = True,
+    parent: QWidget | None = None,
+) -> Profiles:
+    """Load the profile of every sensor of every instance and bar, behind a progress dialog.
+
+    The pass reads every file in full — about a minute and a half for the
+    1,119 instances of 3W 2.0.0 — and is cached, so the dialog shows once.
+    Raises ``dataset.ScanCancelled`` when the user cancels.
+    """
+    dialog, progress = _progress_dialog(
+        "Reading every instance in full: which samples are measurements, and what each "
+        "sensor amounts to…",
+        parent,
+    )
+    try:
+        return load_profiles(info, wells, sensors, use_cache=use_cache, progress=progress)
     finally:
         dialog.close()
         dialog.deleteLater()

@@ -205,12 +205,16 @@ RAW_DIR_ENV = "FLOWML_RAW_DATA_DIR"
 RAW_DIR_CANDIDATES = (Path("../3W/dataset"), Path("dataset"), Path("3W/dataset"))
 
 
+# Where this file sits: ``<project>/src/overlap_viewer/backend/config.py``.
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
+PROJECT_DIR = PACKAGE_DIR.parents[1]
+
 # Illustrations the help window shows. They live in the project's docs
 # directory; a copy inside the package is looked for first, so that an
 # installed distribution can carry them without the docs tree.
 ASSET_DIRS = (
-    Path(__file__).resolve().parent / "assets",
-    Path(__file__).resolve().parents[2] / "docs" / "assets",
+    PACKAGE_DIR / "assets",
+    PROJECT_DIR / "docs" / "assets",
 )
 
 

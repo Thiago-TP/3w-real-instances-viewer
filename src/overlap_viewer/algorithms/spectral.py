@@ -19,13 +19,30 @@ grid is a fixed 1 Hz and the holes are rare), and the mean and the linear trend
 are removed, since the trend would otherwise own every long period. A stretch
 with fewer than half its readings, or a frozen sensor, declines: the caller
 writes a note in place of a plot.
+
+The 1 Hz grid is itself an interpolation for most sensors of the dataset (see
+``algorithms.interpolation``): the historian drew straight lines between
+measurements taken every ten seconds or every two minutes. A transform of the
+grid is therefore a transform of those lines. Asked for the **measurements
+only**, the views count the histogram over the genuine samples and take the
+spectrum with the Lomb–Scargle periodogram, which needs no grid: it fits a
+sinusoid of each period to the measurements at the instants they were taken,
+and is the honest spectrum of an irregularly sampled series.
 """
 
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from overlap_viewer.labels import is_flat
+from overlap_viewer.backend.labels import is_flat
+
+# The Lomb–Scargle periodogram is evaluated at this many periods, equally
+# spaced in log period, and over at most this many measurements (thinned
+# evenly beyond it: a merged recording of days has hundreds of thousands, and
+# the periods of interest are minutes to hours).
+LOMB_SCARGLE_PERIODS = 400
+LOMB_SCARGLE_MAX_POINTS = 60_000
+LOMB_SCARGLE_CHUNK = 16  # periods evaluated at once: chunk × points doubles of memory
 
 # The window functions offered, by the name a toolbar shows for them. Numpy's
 # own; a rectangular window is the plain segment.
@@ -55,7 +72,10 @@ class TransformParams:
     segment the next one repeats. ``bins`` and ``clamp`` are for the
     histograms: ``clamp`` counts only the readings inside the plausible range,
     which is how a histogram is normally read, and unticking it lets the
-    garbage be looked at rather than only counted.
+    garbage be looked at rather than only counted. ``genuine`` restricts every
+    view to the measurements, leaving out the samples the historian filled in
+    between them: the histograms count the measurements alone and the spectra
+    become Lomb–Scargle periodograms over the instants of measurement.
     """
 
     segment_s: int = 0
@@ -63,6 +83,7 @@ class TransformParams:
     window: str = "Hann"
     bins: int = 40
     clamp: bool = True
+    genuine: bool = False
 
     def __post_init__(self):
         if self.window not in WINDOWS:
@@ -81,12 +102,23 @@ class Spectrum:
     segment length; ``power`` is the density in the unit of the series squared
     per hertz. ``segment_s`` is the segment the estimate averaged over, which is
     also the longest period it can resolve; ``n_segments`` how many.
+    ``n_points`` is how many measurements a Lomb–Scargle estimate was taken
+    over, and zero for Welch's, which works on the grid; ``explained`` is
+    then, per period, the share of the variance a sinusoid of that period
+    explains, the periodogram's own reading of the peak.
     """
 
     periods: np.ndarray
     power: np.ndarray
     segment_s: int
     n_segments: int
+    n_points: int = 0
+    explained: np.ndarray | None = None
+
+    @property
+    def lomb_scargle(self) -> bool:
+        """Whether this is a periodogram of the measurements at their own instants."""
+        return self.n_points > 0
 
     def dominant(self) -> tuple[float, float]:
         """The period carrying the most power, and that power's share of the total.
@@ -94,7 +126,10 @@ class Spectrum:
         Only periods the segment holds ``MIN_CYCLES`` of are candidates; the
         share is of the power over every period, so a normal instance, whose
         power is spread thin, scores a few percent where an oscillating one
-        scores half or more.
+        scores half or more. For a Lomb–Scargle estimate the share is the
+        variance a sinusoid of the period explains, which is what its
+        periodogram measures and does not depend on how finely the periods
+        were laid out.
         """
         total = float(self.power.sum())
         if total <= 0 or not len(self.periods):
@@ -104,6 +139,8 @@ class Spectrum:
             return (np.nan, 0.0)
         masked = np.where(candidates, self.power, -np.inf)
         k = int(np.argmax(masked))
+        if self.explained is not None and len(self.explained) == len(self.power):
+            return (float(self.periods[k]), float(self.explained[k]))
         return (float(self.periods[k]), float(self.power[k] / total))
 
     def binned(self, n_bins: int = 160) -> tuple[np.ndarray, np.ndarray]:
@@ -339,7 +376,105 @@ def average_spectra(spectra: list[Spectrum], n_bins: int = 160) -> Spectrum | No
         total[filled] / counts[filled],
         max(s.segment_s for s in usable),
         sum(s.n_segments for s in usable),
+        sum(s.n_points for s in usable),
     )
+
+
+# -- the spectrum of the measurements alone
+
+
+def prepare_irregular(
+    times_s: np.ndarray, values: np.ndarray, bounds: tuple[float, float] | None = None
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """The instants and the readings of the measurements, fit for a Lomb–Scargle transform.
+
+    Readings outside ``bounds`` and missing ones are dropped with their
+    instants; the mean and the linear trend are removed, as ``prepare`` does
+    on the grid. ``None`` with fewer than ``MIN_SAMPLES`` measurements or a
+    flat series. More than ``LOMB_SCARGLE_MAX_POINTS`` measurements are
+    thinned evenly, which keeps the sampling irregular and the periods of
+    interest, minutes to hours, as well covered as before.
+    """
+    t = np.asarray(times_s, dtype=float)
+    y = np.asarray(values, dtype=float)
+    keep = ~np.isnan(y) & ~np.isnan(t)
+    if bounds is not None:
+        keep &= (y >= bounds[0]) & (y <= bounds[1])
+    t, y = t[keep], y[keep]
+    if len(y) < MIN_SAMPLES or is_flat(float(y.min()), float(y.max())):
+        return None
+    if len(y) > LOMB_SCARGLE_MAX_POINTS:
+        stride = int(np.ceil(len(y) / LOMB_SCARGLE_MAX_POINTS))
+        t, y = t[::stride], y[::stride]
+    if t[-1] <= t[0]:
+        return None
+    slope, intercept = np.polyfit(t, y, 1)
+    return t, y - (slope * t + intercept)
+
+
+def lomb_scargle_power(times_s: np.ndarray, values: np.ndarray, periods: np.ndarray) -> np.ndarray:
+    """The generalised Lomb–Scargle periodogram at each period: the share of the variance a sinusoid explains.
+
+    Zechmeister and Kürster's floating-mean form, with equal weights: at each
+    frequency the sinusoid ``a·cos + b·sin + c`` is fitted by least squares to
+    the readings at their own instants, and the power is one minus the
+    residual variance over the total, so it lies in [0, 1]. Evaluated a few
+    periods at a time, since each needs a cosine and a sine of every instant.
+    """
+    t = np.asarray(times_s, dtype=float)
+    y = np.asarray(values, dtype=float)
+    y = y - y.mean()
+    yy = float(np.dot(y, y)) / len(y)
+    omegas = 2.0 * np.pi / np.asarray(periods, dtype=float)
+    power = np.zeros(len(omegas))
+    if yy <= 0:
+        return power
+    for start in range(0, len(omegas), LOMB_SCARGLE_CHUNK):
+        w = omegas[start : start + LOMB_SCARGLE_CHUNK, None]
+        phase = w * t[None, :]
+        c, s = np.cos(phase), np.sin(phase)
+        cm, sm = c.mean(axis=1), s.mean(axis=1)
+        yc = (c @ y) / len(y)
+        ys = (s @ y) / len(y)
+        cc = (c * c).mean(axis=1) - cm * cm
+        ss = (s * s).mean(axis=1) - sm * sm
+        cs = (c * s).mean(axis=1) - cm * sm
+        det = cc * ss - cs * cs
+        with np.errstate(divide="ignore", invalid="ignore"):
+            p = (ss * yc * yc + cc * ys * ys - 2.0 * cs * yc * ys) / (yy * det)
+        power[start : start + LOMB_SCARGLE_CHUNK] = np.where(np.isfinite(p), np.clip(p, 0, 1), 0)
+    return power
+
+
+def lomb_scargle(
+    times_s: np.ndarray,
+    prepared: np.ndarray,
+    n_periods: int = LOMB_SCARGLE_PERIODS,
+) -> Spectrum:
+    """The spectrum of measurements at their own instants, against period, as a density.
+
+    The periods run from twice the median interval between measurements (the
+    shortest cycle they could resolve, the counterpart of the Nyquist period)
+    up to the span of the stretch, equally spaced in log period. The
+    periodogram's power is a share of the variance; it is scaled so that its
+    integral over frequency is the variance of the readings, which is what a
+    density's integral is, so the curve sits on the axis Welch's estimate of
+    the same series would, and pools with it band by band.
+    """
+    t = np.asarray(times_s, dtype=float)
+    y = np.asarray(prepared, dtype=float)
+    span = float(t[-1] - t[0])
+    shortest = max(2.0 * float(np.median(np.diff(t))), 2.0)
+    if span <= shortest:
+        span = shortest * 2.0
+    periods = np.logspace(np.log10(shortest), np.log10(span), n_periods)
+    power = lomb_scargle_power(t, y, periods)
+    freqs = 1.0 / periods  # descending
+    # The integral over frequency, by the trapezoid rule on the descending frequencies.
+    area = float(np.sum(0.5 * (power[1:] + power[:-1]) * (freqs[:-1] - freqs[1:])))
+    variance = float(y.var())
+    density = power * (variance / area) if area > 0 else power
+    return Spectrum(periods, density, round(span), 1, len(y), power)
 
 
 # -- the distribution

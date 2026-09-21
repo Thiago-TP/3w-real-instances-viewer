@@ -15,7 +15,12 @@ from itertools import pairwise
 import numpy as np
 import pandas as pd
 
-from overlap_viewer.config import DEFAULT_TRANSIENT_OFFSET, FLAT_SPAN, LABEL_COLUMNS, WELL_STATES
+from overlap_viewer.backend.config import (
+    DEFAULT_TRANSIENT_OFFSET,
+    FLAT_SPAN,
+    LABEL_COLUMNS,
+    WELL_STATES,
+)
 
 
 def label_kind(value: float, offset: int = DEFAULT_TRANSIENT_OFFSET) -> str:

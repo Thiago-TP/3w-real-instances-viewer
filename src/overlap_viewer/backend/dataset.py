@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from overlap_viewer.config import (
+from overlap_viewer.backend.config import (
     DEFAULT_FAULT_NAMES,
     DEFAULT_SENSOR_UNITS,
     DEFAULT_TRANSIENT_CAPABLE,
@@ -33,7 +33,7 @@ from overlap_viewer.config import (
     REAL_PREFIX,
     cache_dir,
 )
-from overlap_viewer.labels import (
+from overlap_viewer.backend.labels import (
     Segment,
     column_as_float,
     coverage_counts,

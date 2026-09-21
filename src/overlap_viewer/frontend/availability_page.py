@@ -20,7 +20,7 @@ where the pointer is, a printed availability map writing that figure inside
 every cell. Clicking a fault class or a well opens its instances as the rows,
 and clicking an instance opens its time series with that sensor drawn.
 
-Three boxes change the picture rather than the grouping. *Cells* counts by
+Four boxes change the picture rather than the grouping. *Cells* counts by
 samples or by bars. *Available from* sets the share of samples a sensor needs
 readings in to count as available in a bar at all, so that Rabelo's rule, an
 instance whose P-TPT is more than half missing is dropped, can be read off the
@@ -28,7 +28,10 @@ matrix. *Join overlapping instances* makes the bars the merged recordings the
 timelines draw when joined, in which a sample two windows share is counted
 once; the footers of the files cannot say which instants two windows share, so
 the first tick reads the data, behind a progress dialog, and keeps the result
-in the cache.
+in the cache. *Measured vs filled* splits the live share of every cell into
+the samples that were measured and the samples the historian filled in
+between measurements (``algorithms.interpolation``), which takes the pass that
+profiles every instance, likewise once and cached.
 
 The page is well-wise, fault-wise and feature-wise at once because they are
 three groupings of the same bars, and the Rows box is where the grouping is
@@ -41,6 +44,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QScrollArea,
@@ -50,8 +54,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.availability import (
+from overlap_viewer.algorithms.cleaning import Cleaned, CleanRule
+from overlap_viewer.algorithms.correlation import (
+    COEFFICIENTS,
+    MIN_PAIRS,
+    WINDOW_NAMES,
+    WINDOWS,
+    CorrelationPass,
+    Correlations,
+)
+from overlap_viewer.algorithms.interpolation import format_spacing
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.availability import (
     ABSENT,
     FROZEN,
     LIVE,
@@ -61,13 +75,28 @@ from overlap_viewer.availability import (
     PairCoverage,
     PairTable,
 )
-from overlap_viewer.dataset import DatasetInfo, PairCounts, ScanCancelled, WellData, well_label
-from overlap_viewer.heatmap import HeatmapRow, HeatmapWidget, StateKey
-from overlap_viewer.loading import joined_stats_with_progress, pair_counts_with_progress
-from overlap_viewer.overview import describe_instance
-from overlap_viewer.palette import bar_color, fault_color
+from overlap_viewer.backend.dataset import (
+    DatasetInfo,
+    PairCounts,
+    ScanCancelled,
+    WellData,
+    merge_instances,
+    well_label,
+)
+from overlap_viewer.backend.extras import missing
+from overlap_viewer.backend.palette import bar_color, fault_color, tint
+from overlap_viewer.backend.profiles import Profiles
+from overlap_viewer.frontend.heatmap import ColorKey, HeatmapRow, HeatmapWidget, StateKey
+from overlap_viewer.frontend.loading import (
+    joined_stats_with_progress,
+    pair_counts_with_progress,
+    profiles_with_progress,
+    progress_dialog,
+)
+from overlap_viewer.frontend.overview import describe_instance
+from overlap_viewer.frontend.passes import Passes
 
-MATRICES = ("Sensor availability", "Sensor pairs")
+MATRICES = ("Sensor availability", "Sensor pairs", "Sensor correlations")
 MODES = ("Fault classes", "Wells", "Instances of one well", "Instances of one fault class")
 ORDERS = ("Dataset order", "By coverage")
 # Only the pair map can be ordered by what goes with what: it is the only one
@@ -85,6 +114,35 @@ PAIR_HINT = (
     "Every cell is a pair of sensors: the share of the samples in which both carry a reading at "
     "the same instant · hover one for the figures behind it · the diagonal is each sensor's own "
     "coverage · F1 for help"
+)
+CORR_HINT = (
+    "Every cell is a pair of sensors: how they move together over the samples of the instances "
+    "on show, pooled · blue positive, amber negative, full at ±1 · hover one for all three "
+    "coefficients · Smoothing shows what a moving average does to them · F1 for help"
+)
+
+
+def _coefficient(value: float, name: str) -> str:
+    """A coefficient to two digits: Pearson signed, the two others never negative."""
+    return f"{value:+.2f}" if name == "Pearson" else f"{value:.2f}"
+
+
+CORR_TIP = (
+    "Which coefficient the cells show. Pearson: the linear correlation over every co-valid "
+    "sample of the instances in the scope, pooled. Mutual information: Laarne's coefficient "
+    "√(1 − e⁻²ᴵ) of the mutual information estimated by nearest neighbours on an even subsample "
+    "of the same samples, 0 for independent variables and 1 for a deterministic relation, equal "
+    "to |Pearson| when the two are jointly Gaussian. Nonlinear: what the second says beyond the "
+    "first, ρ_I·(1 − |ρ|), Zhang's coefficient. All three after Melo (thesis §4.1.5)."
+)
+SMOOTH_TIP = (
+    "A moving average of this many samples applied to every series before the coefficients are "
+    "taken, computed for every length in one pass. Melo's figures 4.11 and 4.26 show a process's "
+    "coefficients rising as the window grows, the noise hiding the relations. On 3W the pooled "
+    "coefficients hardly move with it — the whole dataset's global coefficient goes from 0.420 to "
+    "0.424 between none and five minutes — because they are set by the levels the sensors sit at "
+    "from one instance to the next; the historian's lines between measurements matter inside one "
+    "instance, at the scale of seconds, where the Dispersion page looks."
 )
 
 
@@ -120,9 +178,12 @@ class AvailabilityPage(QWidget):
     summary_changed = Signal()
     open_requested = Signal(int, int, object, bool)
 
-    def __init__(self, info: DatasetInfo, parent=None):
+    def __init__(self, info: DatasetInfo, passes: Passes | None = None, parent=None):
         super().__init__(parent)
         self.info = info
+        # The passes over the data, shared with the other pages; without them
+        # the page reads what it needs itself, behind the same dialogs.
+        self._passes = passes
         self._catalogue: pd.DataFrame | None = None
         self._wells: list[WellData] = []
         self._well_by_number: dict[int, WellData] = {}
@@ -132,18 +193,28 @@ class AvailabilityPage(QWidget):
         self._pair_counts: PairCounts | None = None
         self._pairs: PairCoverage | None = None
         self._joined_pairs: PairCoverage | None = None
+        self._profiles: Profiles | None = None
+        self._cleaned: Cleaned | None = None  # the Toolkit's rule over the bars on show
         self._table: AvailabilityTable | None = None
         self._pair_table: PairTable | None = None
         self._rows: list[HeatmapRow] = []
         self._ids: list[tuple[str, object]] = []  # per row: what it stands for
         self._mask: np.ndarray | None = None  # the bars the rows are made of
+        self._struck_counts: np.ndarray | None = None  # per cell, bars the rule discards it in
+        # The correlation matrices computed so far, by (scope kind, scope key, joined).
+        self._correlations: dict[tuple, Correlations] = {}
+        self._corr: Correlations | None = None  # the one on show
+        self._corr_order: list[int] = []  # its sensors in the order drawn
 
-        # The keys of the two matrices are built before the toolbar, which shows
-        # one of them and hides the other as soon as it knows which matrix it is on.
-        self._key = StateKey()
+        # The keys of the three matrices are built before the toolbar, which shows
+        # one of them and hides the others as soon as it knows which matrix it is on.
+        self._key = StateKey(("live", "filled", "frozen", "absent", "implausible", "cleaned"))
+        self._key.set_visible("filled", False)
+        self._key.set_visible("cleaned", False)
         self._pair_key = StateKey(("live", "absent"))
         self._pair_key.set_text("live", "both carry a reading at the same instant")
         self._pair_key.set_text("absent", "not both")
+        self._corr_key = ColorKey()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -162,6 +233,7 @@ class AvailabilityPage(QWidget):
         heading_layout.addWidget(self._title, 1)
         heading_layout.addWidget(self._key, 0, Qt.AlignmentFlag.AlignTop)
         heading_layout.addWidget(self._pair_key, 0, Qt.AlignmentFlag.AlignTop)
+        heading_layout.addWidget(self._corr_key, 0, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(heading)
 
         self._heatmap = HeatmapWidget()
@@ -190,8 +262,10 @@ class AvailabilityPage(QWidget):
         self._matrix = QComboBox()
         self._matrix.addItems(list(MATRICES))
         self._matrix.setToolTip(
-            "What the matrix is about: what each group of instances recorded of every sensor, or "
-            "how often two sensors carry a reading at the same instant."
+            "What the matrix is about: what each group of instances recorded of every sensor; how "
+            "often two sensors carry a reading at the same instant; or how two sensors move "
+            "together over the samples they share, as Pearson, mutual-information and nonlinear "
+            "coefficients."
         )
         self._matrix.currentIndexChanged.connect(self._on_matrix_changed)
         bar.addWidget(self._matrix)
@@ -213,15 +287,16 @@ class AvailabilityPage(QWidget):
         self._subject.currentIndexChanged.connect(self._refresh)
         self._subject_combo_action = bar.addWidget(self._subject)
 
-        self._pairs_only.append(bar.addWidget(QLabel(" Over ")))
+        # The scope serves the pair map and the correlations alike.
+        self._scope_actions = [bar.addWidget(QLabel(" Over "))]
         self._scope = QComboBox()
         self._scope.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._scope.setToolTip(
-            "The instances the pairs are counted over: all of them, those of one fault class, or "
-            "those of one well."
+            "The instances the pairs, or the correlations, are taken over: all of them, those of "
+            "one fault class, or those of one well."
         )
         self._scope.currentIndexChanged.connect(self._refresh)
-        self._pairs_only.append(bar.addWidget(self._scope))
+        self._scope_actions.append(bar.addWidget(self._scope))
 
         bar.addSeparator()
         bar.addWidget(QLabel(" Sensors "))
@@ -249,6 +324,61 @@ class AvailabilityPage(QWidget):
         )
         self._weight.currentIndexChanged.connect(self._refresh)
         self._availability_only.append(bar.addWidget(self._weight))
+        self._split = QCheckBox("Measured vs filled")
+        self._split.setToolTip(
+            "Split the live share of every cell into the samples that were measured (solid) and "
+            "the samples the historian filled in between measurements (pale): the straight lines "
+            "it drew from one reading to the next, and the readings it carried forward. Most "
+            "sensors of 3W were read every ten seconds or every two minutes, so on the 1 Hz "
+            "grid one live sample in sixteen is a measurement. Hover a cell for the share and the "
+            "interval. The first tick reads every instance in full, behind a progress dialog, "
+            "and keeps the result in the cache; the split is of samples, so it rests while the "
+            "cells count instances."
+        )
+        self._split.toggled.connect(self._on_split_toggled)
+        self._availability_only.append(bar.addWidget(self._split))
+
+        self._clean = QCheckBox("Toolkit's CleanSignals")
+        self._clean.setToolTip(
+            "Mark, in every cell, the sensors the 3W Toolkit's CleanSignals rule would set to "
+            "missing in at least one instance of the row, and grey the columns it would drop "
+            "altogether. The rule is fitted on the instances on show: per sensor, bounds at the "
+            "quartiles of the instances' means and spreads plus or minus a multiple of the "
+            "interquartile range; an instance whose mean or spread falls outside them loses the "
+            "sensor, a spread below 1e-6 always does, and a sensor missing in enough of the "
+            "instances is dropped from all of them. The valve states are exempt. Hover a cell for "
+            "how many instances and which bound; the two boxes beside move the thresholds. Needs "
+            "the profile pass, read once and cached."
+        )
+        self._clean.toggled.connect(self._on_clean_toggled)
+        self._availability_only.append(bar.addWidget(self._clean))
+        self._clean_actions = [bar.addWidget(QLabel(" IQR × "))]
+        self._iqr = QDoubleSpinBox()
+        self._iqr.setRange(0.5, 20.0)
+        self._iqr.setSingleStep(0.5)
+        self._iqr.setDecimals(1)
+        self._iqr.setValue(CleanRule().iqr_factor)
+        self._iqr.setToolTip(
+            "The multiple of the interquartile range the bounds sit beyond the quartiles; the "
+            "Toolkit's default is 3."
+        )
+        self._iqr.valueChanged.connect(self._on_clean_rule_changed)
+        self._clean_actions.append(bar.addWidget(self._iqr))
+        self._clean_actions.append(bar.addWidget(QLabel(" drop if missing in ≥ ")))
+        self._missing = QSpinBox()
+        self._missing.setRange(1, 100)
+        self._missing.setSingleStep(10)
+        self._missing.setSuffix(" %")
+        self._missing.setValue(round(CleanRule().missing_share * 100))
+        self._missing.setToolTip(
+            "A sensor entirely missing in at least this share of the instances is dropped from all "
+            "of them; the Toolkit's default is 60 %."
+        )
+        self._missing.valueChanged.connect(self._on_clean_rule_changed)
+        self._clean_actions.append(bar.addWidget(self._missing))
+        for action in self._clean_actions:
+            self._availability_only.append(action)
+            action.setVisible(False)
 
         self._pairs_only.append(bar.addWidget(QLabel(" Count ")))
         self._count = QComboBox()
@@ -261,6 +391,26 @@ class AvailabilityPage(QWidget):
         )
         self._count.currentIndexChanged.connect(self._refresh)
         self._pairs_only.append(bar.addWidget(self._count))
+
+        self._corr_only: list = [bar.addWidget(QLabel(" Coefficient "))]
+        self._coefficient = QComboBox()
+        self._coefficient.addItems(list(COEFFICIENTS))
+        self._coefficient.setToolTip(CORR_TIP)
+        reason = missing("analysis")
+        if reason is not None:
+            for k in (1, 2):
+                item = self._coefficient.model().item(k)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                item.setToolTip(reason)
+        self._coefficient.currentIndexChanged.connect(self._refresh)
+        self._corr_only.append(bar.addWidget(self._coefficient))
+        self._corr_only.append(bar.addWidget(QLabel(" Smoothing ")))
+        self._smoothing = QComboBox()
+        for window in WINDOWS:
+            self._smoothing.addItem(WINDOW_NAMES[window], window)
+        self._smoothing.setToolTip(SMOOTH_TIP)
+        self._smoothing.currentIndexChanged.connect(self._refresh)
+        self._corr_only.append(bar.addWidget(self._smoothing))
 
         bar.addWidget(QLabel(" Available from "))
         self._threshold = QSpinBox()
@@ -285,16 +435,24 @@ class AvailabilityPage(QWidget):
         return bar
 
     def _show_subject(self, shown: bool) -> None:
-        self._subject_action.setVisible(shown and not self.pairs)
-        self._subject_combo_action.setVisible(shown and not self.pairs)
+        first = not self.pairs and not self.correlations_on
+        self._subject_action.setVisible(shown and first)
+        self._subject_combo_action.setVisible(shown and first)
 
     def _sync_matrix_controls(self) -> None:
         """Show the controls of the matrix on show, and offer the orders it can be put in."""
-        pairs = self.pairs
+        pairs, correlations = self.pairs, self.correlations_on
+        first = not pairs and not correlations
         for action in self._availability_only:
-            action.setVisible(not pairs)
+            action.setVisible(first)
+        for action in self._clean_actions:
+            action.setVisible(first and self._clean.isChecked())
         for action in self._pairs_only:
             action.setVisible(pairs)
+        for action in self._scope_actions:
+            action.setVisible(pairs or correlations)
+        for action in self._corr_only:
+            action.setVisible(correlations)
         self._show_subject(self.mode.startswith("Instances"))
         self._join.setToolTip(
             "Count the bars the timelines draw when joined: the instances of a well that overlap "
@@ -306,8 +464,9 @@ class AvailabilityPage(QWidget):
             "the first tick reads the data, behind a progress dialog, and keeps the result in the "
             "cache."
         )
-        self._key.setVisible(not pairs)
+        self._key.setVisible(first)
         self._pair_key.setVisible(pairs)
+        self._corr_key.setVisible(correlations)
         # The grouped order belongs to the pair map alone, so it is offered and
         # withdrawn with it rather than sitting there greyed out.
         wanted = self._order.currentText()
@@ -328,6 +487,7 @@ class AvailabilityPage(QWidget):
         self._title.setStyleSheet(f"color: {colors.muted}; font-size: 9pt;")
         self._key.apply_theme()
         self._pair_key.apply_theme()
+        self._corr_key.apply_theme()
         self._heatmap.update()
 
     # -- data
@@ -342,6 +502,20 @@ class AvailabilityPage(QWidget):
         return self._matrix.currentIndex() == 1
 
     @property
+    def correlations_on(self) -> bool:
+        """Whether the matrix on show is the correlation matrix."""
+        return self._matrix.currentIndex() == 2
+
+    @property
+    def coefficient(self) -> str:
+        return self._coefficient.currentText()
+
+    @property
+    def smoothing(self) -> int:
+        """The moving-average window on show, in samples."""
+        return int(self._smoothing.currentData() or 1)
+
+    @property
     def live_pairs(self) -> bool:
         return self._count.currentIndex() == 0
 
@@ -349,6 +523,20 @@ class AvailabilityPage(QWidget):
     def joined(self) -> bool:
         """Whether the bars are the merged recordings rather than the instances themselves."""
         return self._join.isChecked() and self._joined is not None
+
+    @property
+    def split(self) -> bool:
+        """Whether the live share of a cell is split into measured and filled samples."""
+        return self._split.isChecked() and self._profiles is not None and not self.by_instances
+
+    @property
+    def cleaning_on(self) -> bool:
+        """Whether the Toolkit's rule marks the cells."""
+        return self._clean.isChecked() and self._cleaned is not None
+
+    @property
+    def clean_rule(self) -> CleanRule:
+        return CleanRule(iqr_factor=self._iqr.value(), missing_share=self._missing.value() / 100.0)
 
     @property
     def availability(self) -> Availability | None:
@@ -362,6 +550,8 @@ class AvailabilityPage(QWidget):
 
     def hint(self) -> str:
         """What the status bar says when the pointer is over nothing in particular."""
+        if self.correlations_on:
+            return CORR_HINT
         return PAIR_HINT if self.pairs else HINT
 
     def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
@@ -374,6 +564,10 @@ class AvailabilityPage(QWidget):
         self._joined_pairs = None
         self._pair_counts = None
         self._pairs = None
+        self._profiles = None
+        self._cleaned = None
+        self._correlations = {}
+        self._corr = None
         self._rebuild_plain()
         self._fill_subjects()
         self._fill_scopes()
@@ -383,7 +577,9 @@ class AvailabilityPage(QWidget):
 
     def _rebuild_plain(self) -> None:
         """Read what every instance recorded, under the threshold in force."""
-        self._plain = Availability.from_wells(self._wells, self.info, self.threshold)
+        self._plain = Availability.from_wells(
+            self._wells, self.info, self.threshold, profiles=self._profiles
+        )
         if self._pair_counts is not None:
             self._pairs = PairCoverage.from_counts(self._plain, self._pair_counts)
 
@@ -394,6 +590,7 @@ class AvailabilityPage(QWidget):
             self.info,
             self.threshold,
             self._joined_stats,
+            profiles=self._profiles,
         )
         self._joined_pairs = PairCoverage.from_joined(self._joined, self._joined_stats)
 
@@ -402,16 +599,28 @@ class AvailabilityPage(QWidget):
         self._join.setChecked(checked)
         self._join.blockSignals(False)
 
+    def _set_split_checked(self, checked: bool) -> None:
+        self._split.blockSignals(True)
+        self._split.setChecked(checked)
+        self._split.blockSignals(False)
+
     def _load_joined(self) -> bool:
         """Have the merged figures on hand, reading the data if need be; ``False`` if cancelled."""
         if self._plain is None:
             return False
         if self._joined_stats is None:
-            try:
-                self._joined_stats = joined_stats_with_progress(
-                    self.info, self._wells, self._plain.sensors, parent=self.window()
+            if self._passes is not None:
+                self._joined_stats = self._passes.joined_stats(
+                    self._plain.sensors, parent=self.window()
                 )
-            except ScanCancelled:
+            else:
+                try:
+                    self._joined_stats = joined_stats_with_progress(
+                        self.info, self._wells, self._plain.sensors, parent=self.window()
+                    )
+                except ScanCancelled:
+                    self._joined_stats = None
+            if self._joined_stats is None:
                 return False
         self._rebuild_joined()
         return True
@@ -421,25 +630,162 @@ class AvailabilityPage(QWidget):
         if self._plain is None:
             return False
         if self._pair_counts is None:
-            try:
-                self._pair_counts = pair_counts_with_progress(
-                    self.info, self._plain.sensors, parent=self.window()
+            if self._passes is not None:
+                self._pair_counts = self._passes.pair_counts(
+                    self._plain.sensors, parent=self.window()
                 )
-            except ScanCancelled:
+            else:
+                try:
+                    self._pair_counts = pair_counts_with_progress(
+                        self.info, self._plain.sensors, parent=self.window()
+                    )
+                except ScanCancelled:
+                    self._pair_counts = None
+            if self._pair_counts is None:
                 return False
         self._pairs = PairCoverage.from_counts(self._plain, self._pair_counts)
         return True
 
+    def _load_profiles(self) -> bool:
+        """Have the profiles of every instance and bar on hand; ``False`` if the user cancels the pass.
+
+        The profiles split the live readings of every bar into measured and
+        filled, so both availabilities are built again with them.
+        """
+        if self._profiles is not None:
+            return True
+        sensors = self.info.sensor_names
+        if self._passes is not None:
+            self._profiles = self._passes.profiles(sensors, parent=self.window())
+        else:
+            try:
+                self._profiles = profiles_with_progress(
+                    self.info, self._wells, sensors, parent=self.window()
+                )
+            except ScanCancelled:
+                self._profiles = None
+        if self._profiles is None:
+            return False
+        self._rebuild_plain()
+        if self._joined_stats is not None:
+            self._rebuild_joined()
+        return True
+
+    def _load_cleaning(self) -> bool:
+        """Have the Toolkit's verdicts over the bars on show; ``False`` if the profile pass is declined."""
+        if not self._load_profiles():
+            return False
+        if self._passes is not None:
+            self._cleaned = self._passes.cleaning(
+                self.joined, self.clean_rule, parent=self.window()
+            )
+        else:
+            from overlap_viewer.algorithms.cleaning import clean_profiles
+
+            keys = self._event_keys()
+            self._cleaned = clean_profiles(
+                self._profiles, keys, self.joined, self.info, self.clean_rule
+            )
+        return self._cleaned is not None
+
+    def _event_keys(self) -> list:
+        """The bars on show as the profile table keys them."""
+        bars = self.availability.bars
+        if self.joined:
+            return [(int(w), int(b)) for w, b in zip(bars["well"], bars["bar"])]
+        return [(int(fc), str(f)) for fc, f in zip(bars["fault_class"], bars["file"])]
+
     def _ensure_data(self) -> bool:
         """Have on hand what the matrix on show asks for; ``False`` when the user cancels a scan.
 
-        Two of the four combinations need a pass over the data, and each keeps
-        its own cache: the merged recordings of the joined view, and the pair
-        counts of the instances as they are.
+        Three of the choices need a pass over the data, and each keeps its
+        own cache: the merged recordings of the joined view, the pair counts
+        of the instances as they are, and the profiles behind the split of
+        the live share and the Toolkit's rule.
         """
         if self._join.isChecked() and not self._load_joined():
             return False
+        if self._split.isChecked() and not self._load_profiles():
+            self._set_split_checked(False)
+        if self._clean.isChecked() and not self._load_cleaning():
+            self._clean.blockSignals(True)
+            self._clean.setChecked(False)
+            self._clean.blockSignals(False)
+        if self.correlations_on and not self._load_correlations():
+            return False
         return not (self.pairs and not self.joined and not self._load_pairs())
+
+    def _scope_key(self) -> tuple:
+        kind, key = self._scope.currentData() or ("all", -1)
+        return (str(kind), int(key), self.joined)
+
+    def _load_correlations(self) -> bool:
+        """Have the correlations of the scope on show; reads its instances once. ``False`` if cancelled."""
+        if self.availability is None:
+            return False
+        key = self._scope_key()
+        if key in self._correlations:
+            self._corr = self._correlations[key]
+            return True
+        availability = self.availability
+        bars = availability.bars
+        mask = self._scope_mask()
+        taken = np.arange(len(bars)) if mask is None else np.flatnonzero(mask)
+        # The analog sensors only: a valve state is a position, not a measurement,
+        # and its two values would dominate the matrix without saying anything.
+        analog = [
+            k for k, name in enumerate(availability.sensors) if not self.info.is_enumerated(name)
+        ]
+        accumulator = CorrelationPass(
+            [availability.sensors[k] for k in analog],
+            [availability.ranges[k] for k in analog],
+            len(taken),
+        )
+        dialog, progress = progress_dialog(
+            f"Reading the {len(taken)} {'bars' if self.joined else 'instances'} of "
+            f"{self._scope.currentText().split(' (')[0]} for their correlations…",
+            self.window(),
+        )
+        try:
+            for k, i in enumerate(taken, start=1):
+                row = bars.iloc[int(i)]
+                data = self._well_by_number[int(row["well"])]
+                paths = data.origin.rows["path"]
+                frames = [self._frame(paths.iloc[member]) for member in row["members"]]
+                accumulator.add(merge_instances(frames) if len(frames) > 1 else frames[0])
+                if not progress(k, len(taken), str(row["title"])):
+                    return False
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+        self._corr = self._correlations[key] = accumulator.result()
+        return True
+
+    def _frame(self, path) -> pd.DataFrame:
+        """One instance, through the shared cache when there is one."""
+        if self._passes is not None:
+            return self._passes.frames.get(path)
+        from overlap_viewer.backend.dataset import load_instance
+
+        return load_instance(path)
+
+    def _on_split_toggled(self, checked: bool) -> None:
+        if checked and not self._load_profiles():
+            self._set_split_checked(False)
+        self._refresh()
+
+    def _on_clean_toggled(self, checked: bool) -> None:
+        if checked and not self._load_cleaning():
+            self._clean.blockSignals(True)
+            self._clean.setChecked(False)
+            self._clean.blockSignals(False)
+        self._sync_matrix_controls()
+        self._refresh()
+
+    def _on_clean_rule_changed(self, *args) -> None:
+        if self._clean.isChecked() and self._profiles is not None:
+            self._load_cleaning()
+        self._refresh()
 
     def _fall_back(self) -> None:
         """Show the matrix that needs no reading, the user having declined one."""
@@ -461,6 +807,9 @@ class AvailabilityPage(QWidget):
         if not self._ensure_data():
             self._set_join_checked(not checked)
             self._ensure_data()
+        # The rule is fitted on the bars on show, which just changed.
+        if self._clean.isChecked() and self._profiles is not None:
+            self._load_cleaning()
         self._refresh()
 
     def _on_threshold_changed(self, *args) -> None:
@@ -630,20 +979,243 @@ class AvailabilityPage(QWidget):
     def _refresh(self, *args) -> None:
         if self.availability is None:
             return
-        if self.pairs and self.pair_coverage is not None:
+        if self.correlations_on:
+            if not self._load_correlations():
+                self._fall_back()
+                self._refresh_availability()
+            else:
+                self._refresh_correlations()
+        elif self.pairs and self.pair_coverage is not None:
             self._refresh_pairs()
         else:
             self._refresh_availability()
         self.status.emit(self.hint())
         self.summary_changed.emit()
 
+    # -- the correlation matrix
+
+    def _corr_fill(self, value: float) -> str | None:
+        """The color of one coefficient: blue for positive, amber for negative, full at one."""
+        if not np.isfinite(value):
+            return None
+        colors = theme.current()
+        strength = min(abs(float(value)), 1.0)
+        hue = colors.live if value >= 0 else colors.warning
+        return tint(hue, 0.06 + 0.94 * strength)
+
+    def _refresh_correlations(self) -> None:
+        corr = self._corr
+        matrix = corr.matrix(self.coefficient, self.smoothing)
+        window = self.smoothing
+        n = len(corr.sensors)
+        order = list(range(n))
+        if self._order.currentText() == "By coverage":
+            own = np.diag(corr.pairs[window])
+            order = sorted(order, key=lambda j: (-own[j], j))
+        self._corr_order = order
+        sensors = [corr.sensors[j] for j in order]
+        if matrix is None:
+            fills = [[None] * n for _ in range(n)]
+        else:
+            fills = [[self._corr_fill(matrix[i, j]) for j in order] for i in order]
+        self._rows = [HeatmapRow(name) for name in sensors]
+        self._ids = [("sensor", j) for j in order]
+        self._mask = self._scope_mask()  # so that the export covers the scope
+        present = corr.present(window)
+        muted = [k for k, j in enumerate(order) if not present[j]]
+        self._heatmap.set_fills(self._rows, sensors, fills, muted)
+        colors = theme.current()
+        ground = colors.block_fill
+        if self.coefficient == "Pearson":
+            entries = [
+                (colors.live, "positive, full at +1"),
+                (colors.warning, "negative, full at −1"),
+                (ground, f"fewer than {MIN_PAIRS} co-valid samples"),
+            ]
+        else:
+            entries = [
+                (colors.live, f"{self.coefficient.lower()} coefficient, full at 1"),
+                (ground, f"fewer than {MIN_PAIRS} co-valid samples, or the extra missing"),
+            ]
+        self._corr_key.set_entries(entries)
+        self._title.setText(self._corr_title_text())
+
+    def _corr_title_text(self) -> str:
+        corr = self._corr
+        window = self.smoothing
+        linear, nonlinear = corr.global_coefficients(window)
+        scope = self._scope.currentText().split(" (")[0] or "All real instances"
+        noun = "bars" if self.joined else "instances"
+        parts = [
+            (
+                f"Per pair of sensors: the {self.coefficient} coefficient over the samples of the "
+                f"{corr.n_instances} {noun} of {scope}, pooled"
+            ),
+            f"smoothing: {WINDOW_NAMES[window]}",
+        ]
+        if np.isfinite(linear):
+            summary = f"global linear coefficient {linear:.2f}"
+            if np.isfinite(nonlinear):
+                summary += f", nonlinear {nonlinear:.2f}"
+            parts.append(summary + " (Melo, eqs. 4.16 and 4.15)")
+        if corr.mi_coefficient is not None and corr.mi_samples:
+            parts.append(f"mutual information estimated on {corr.mi_samples:,} rows")
+        elif self.coefficient != "Pearson":
+            parts.append("mutual information needs the 'analysis' extra")
+        if self._scope_key()[0] in ("all", "class"):
+            parts.append(
+                "pooling wells mixes their levels into the coefficients; pick one well to see the "
+                "process alone"
+            )
+        else:
+            parts.append(
+                "pooled over the well's instances, so its shut-ins and restarts move every sensor "
+                "together"
+            )
+        return " · ".join(parts)
+
+    def _corr_values(self, row: int, column: int) -> dict[str, float]:
+        corr = self._corr
+        i, j = self._corr_order[row], self._corr_order[column]
+        window = self.smoothing
+        values = {"Pearson": float(corr.pearson[window][i, j])}
+        if corr.mi_coefficient is not None:
+            values["Mutual information"] = float(corr.mi_coefficient[window][i, j])
+            values["Nonlinear"] = float(corr.nonlinear[window][i, j])
+        values["pairs"] = float(corr.pairs[window][i, j])
+        return values
+
+    def _describe_corr(self, row: int, column: int) -> str:
+        """One line about a cell, a row or a column of the correlation matrix."""
+        corr = self._corr
+        window = self.smoothing
+        if row < 0 or column < 0:
+            k = column if row < 0 else row
+            j = self._corr_order[k]
+            name = corr.sensors[j]
+            rho = corr.pearson[window][j].copy()
+            rho[j] = np.nan
+            own = int(corr.pairs[window][j, j])
+            if np.isfinite(rho).any():
+                partner = int(np.nanargmax(np.abs(rho)))
+                strongest = f"strongest with {corr.sensors[partner]}: Pearson {rho[partner]:+.2f}"
+            else:
+                strongest = "too few co-valid samples with any other sensor"
+            return f"{name} · {own:,} samples in the scope · {strongest}"
+        a = corr.sensors[self._corr_order[row]]
+        b = corr.sensors[self._corr_order[column]]
+        values = self._corr_values(row, column)
+        if values["pairs"] < MIN_PAIRS:
+            return f"{a} × {b} · only {int(values['pairs']):,} co-valid samples: nothing to say"
+        parts = [f"{a} × {b}", f"Pearson {values['Pearson']:+.2f}"]
+        if "Mutual information" in values:
+            parts.append(f"mutual-information coefficient {values['Mutual information']:.2f}")
+            parts.append(f"nonlinear {values['Nonlinear']:.2f}")
+        parts.append(
+            f"over {int(values['pairs']):,} co-valid samples, smoothing {WINDOW_NAMES[window]}"
+        )
+        others = [
+            f"{WINDOW_NAMES[w]}: {corr.pearson[w][self._corr_order[row], self._corr_order[column]]:+.2f}"
+            for w in corr.windows
+            if w != window
+            and np.isfinite(corr.pearson[w][self._corr_order[row], self._corr_order[column]])
+        ]
+        if others:
+            parts.append("Pearson at other smoothings — " + ", ".join(others))
+        return " · ".join(parts)
+
+    def _corr_tooltip(self, row: int, column: int) -> str:
+        """The tooltip of a cell, a row or a column of the correlation matrix."""
+        colors = theme.current()
+        if row < 0 and column < 0:
+            return ""
+        if row < 0 or column < 0:
+            return f"<b>{self._describe_corr(row, column)}</b>"
+        corr = self._corr
+        a = corr.sensors[self._corr_order[row]]
+        b = corr.sensors[self._corr_order[column]]
+        values = self._corr_values(row, column)
+        if values["pairs"] < MIN_PAIRS:
+            return f'<b>{a} × {b}</b><br><span style="color:{colors.muted};">too few co-valid samples</span>'
+        shown = values.get(self.coefficient, values["Pearson"])
+        hue = colors.live if shown >= 0 else colors.warning
+        lines = [
+            f"<b>{a} × {b}</b>",
+            (
+                f'<span style="font-size:13pt; color:{hue};"><b>{_coefficient(shown, self.coefficient)}'
+                f"</b></span> {self.coefficient}"
+            ),
+        ]
+        rest = [
+            f"{k} {_coefficient(v, k)}"
+            for k, v in values.items()
+            if k not in ("pairs", self.coefficient)
+        ]
+        if rest:
+            lines.append(f'<span style="color:{colors.muted};">{" · ".join(rest)}</span>')
+        lines.append(
+            f'<span style="color:{colors.muted};">{int(values["pairs"]):,} co-valid samples · '
+            f"smoothing {WINDOW_NAMES[self.smoothing]}</span>"
+        )
+        return "<br>".join(lines)
+
     def _refresh_availability(self) -> None:
         self._rows, self._ids, self._table, self._mask = self._build()
         shares = self._table.instance_shares if self.by_instances else self._table.shares
+        split = self.split
+        struck, muted = self._cleaning_marks()
         self._heatmap.set_matrix(
-            self._rows, self._table.sensors, shares, self._table.implausible > 0
+            self._rows,
+            self._table.sensors,
+            shares,
+            self._table.implausible > 0,
+            self._table.filled_shares if split else None,
+            None if struck is None else struck > 0,
+            muted,
         )
+        # The split is of samples: while the cells count instances it rests, and says so.
+        self._split.setEnabled(not self.by_instances)
+        self._key.set_visible("filled", split)
+        self._key.set_visible("cleaned", self.cleaning_on)
+        self._key.set_text("live", "measured" if split else "live")
         self._title.setText(self._title_text())
+
+    def _cleaning_marks(self) -> tuple[np.ndarray | None, list[int]]:
+        """Per cell of the table, how many of its bars the rule discards the sensor in; and the columns it drops."""
+        self._struck_counts = None
+        if not self.cleaning_on or self._table is None:
+            return None, []
+        cleaned = self._cleaned
+        bars = self.availability.bars
+        keys = self._event_keys()
+        events = np.array([cleaned.event(key) for key in keys], dtype=object)
+        n_rows, n_cols = len(self._rows), len(self._table.sensors)
+        counts = np.zeros((n_rows, n_cols), dtype=int)
+        columns = [
+            cleaned.cleaning.sensors.index(s) if s in cleaned.cleaning.sensors else -1
+            for s in self._table.sensors
+        ]
+        for r, (kind, key) in enumerate(self._ids):
+            if kind == "class":
+                members = np.flatnonzero(bars["fault_class"].to_numpy() == key)
+            elif kind == "well":
+                members = np.flatnonzero(bars["well"].to_numpy() == key)
+            elif kind == "bar":
+                members = np.array([int(key)])
+            else:  # the total row
+                members = (
+                    np.flatnonzero(self._mask) if self._mask is not None else np.arange(len(bars))
+                )
+            rows = [events[m] for m in members if events[m] is not None]
+            if not rows:
+                continue
+            block = cleaned.cleaning.discarded[rows]
+            for c, j in enumerate(columns):
+                if j >= 0:
+                    counts[r, c] = int(block[:, j].sum())
+        self._struck_counts = counts
+        muted = [c for c, j in enumerate(columns) if j >= 0 and cleaned.cleaning.dropped[j]]
+        return counts, muted
 
     def _refresh_pairs(self) -> None:
         table = self._pair_table = self._build_pairs()
@@ -681,6 +1253,18 @@ class AvailabilityPage(QWidget):
             parts.append(
                 f"a sensor with readings in less than {self.threshold:.0%} of the samples of an "
                 f"{noun} counts as absent there"
+            )
+        if self.split:
+            parts.append(
+                "the live share split into measurements (solid) and the samples the historian "
+                "filled in between them (pale)"
+            )
+        if self.cleaning_on:
+            dropped = self._cleaned.cleaning.dropped_sensors()
+            parts.append(
+                "╲ a sensor the Toolkit's CleanSignals would discard in at least one "
+                f"{noun} of the row ({self.clean_rule.describe()})"
+                + (f"; dropped altogether: {', '.join(dropped)}" if dropped else "")
             )
         if self.joined:
             parts.append(
@@ -727,6 +1311,17 @@ class AvailabilityPage(QWidget):
         if availability is None:
             return ""
         version = f"3W {self.info.version} · " if self.info.version else ""
+        if self.correlations_on and self._corr is not None:
+            corr = self._corr
+            linear, nonlinear = corr.global_coefficients(self.smoothing)
+            present = int(corr.present(self.smoothing).sum())
+            figures = f"global linear {linear:.2f}" if np.isfinite(linear) else "no pair to compare"
+            if np.isfinite(nonlinear):
+                figures += f", nonlinear {nonlinear:.2f}"
+            return (
+                f"{version}{present} sensors with co-valid samples over {corr.n_instances} "
+                f"{'bars' if self.joined else 'instances'} · {figures} "
+            )
         if self.pairs and self._pair_table is not None:
             table = self._pair_table
             n = len(table.sensors)
@@ -743,9 +1338,23 @@ class AvailabilityPage(QWidget):
         flagged = int(availability.implausible.any(axis=1).sum())
         wells = self._catalogue["well"].nunique()
         noun = "bar" if self.joined else "real instance"
+        measured = ""
+        if self.split and total.measured:
+            # Over the analog sensors: a valve state is not tested, and would
+            # count as measured throughout.
+            analog = [
+                j for j, name in enumerate(total.sensors) if not self.info.is_enumerated(name)
+            ]
+            genuine = float(total.genuine[0, analog].sum())
+            filled = float(total.filled[0, analog].sum())
+            if genuine + filled > 0:
+                measured = (
+                    f" · {genuine / (genuine + filled):.1%} of the live samples of the analog "
+                    "sensors are measurements"
+                )
         return (
             f"{version}{_plural(n, noun)} on {wells} wells · {s} sensors, {never} never recorded · "
-            f"{_plural(flagged, noun)} with readings outside the plausible range "
+            f"{_plural(flagged, noun)} with readings outside the plausible range{measured} "
         )
 
     # -- pointer
@@ -753,6 +1362,8 @@ class AvailabilityPage(QWidget):
     def _on_hovered(self, row: int, column: int) -> None:
         if self._table is None or (row < 0 and column < 0):
             self.status.emit(self.hint())
+        elif self.correlations_on and self._corr is not None:
+            self.status.emit(self._describe_corr(row, column))
         elif self.pairs and self._pair_table is not None:
             self.status.emit(self._describe_pair(row, column))
         elif row < 0:
@@ -764,7 +1375,7 @@ class AvailabilityPage(QWidget):
 
     def _on_clicked(self, row: int, column: int) -> None:
         """A fault class or a well opens its instances; an instance opens its time series."""
-        if row < 0 or self.pairs:
+        if row < 0 or self.pairs or self.correlations_on:
             return
         kind, key = self._ids[row]
         if kind in ("class", "well"):
@@ -805,6 +1416,9 @@ class AvailabilityPage(QWidget):
                         f"{word} in {shares[code]:.1%} of the samples "
                         f"({counts[code]} of {n_instances} {noun}s{note})"
                     )
+        measured = self._measured_clause(row, column)
+        if measured:
+            parts.append(measured)
         low, high = table.low[row, column], table.high[row, column]
         if not np.isnan(low):
             parts.append(f"readings {low:.4g} to {_quantity(high, unit)}")
@@ -814,7 +1428,53 @@ class AvailabilityPage(QWidget):
             lo, hi = availability.ranges[availability.sensors.index(name)]
             who = "readings" if n_instances == 1 else f"{_plural(flagged, noun)} with readings"
             parts.append(f"⚠ {who} outside the plausible range {lo:g} to {hi:g} {unit}".rstrip())
+        cleaned = self._cleaning_clause(row, column)
+        if cleaned:
+            parts.append(cleaned)
         return " · ".join(parts)
+
+    def _cleaning_clause(self, row: int, column: int) -> str:
+        """What the Toolkit's rule would do to this cell, when the rule is on."""
+        if not self.cleaning_on or self._struck_counts is None:
+            return ""
+        name = self._table.sensors[column]
+        cleaned = self._cleaned
+        if name not in cleaned.cleaning.sensors:
+            return ""
+        j = cleaned.cleaning.sensors.index(name)
+        parts = []
+        if cleaned.cleaning.dropped[j]:
+            parts.append(
+                f"CleanSignals drops {name} altogether: missing in "
+                f"{cleaned.cleaning.missing_shares[j]:.0%} of the {'bars' if self.joined else 'instances'}"
+            )
+        count = int(self._struck_counts[row, column])
+        if count:
+            kind, key = self._ids[row]
+            noun = "bar" if self.joined else "instance"
+            if kind == "bar":
+                why = cleaned.why(self._event_keys()[int(key)], name)
+                parts.append(f"╲ CleanSignals would discard {name} here ({why})")
+            else:
+                n = int(self._table.n_instances[row])
+                parts.append(
+                    f"╲ CleanSignals would discard {name} in {count} of {_plural(n, noun)}"
+                )
+        return " · ".join(parts)
+
+    def _measured_clause(self, row: int, column: int) -> str:
+        """How much of one cell's live signal was measured, when the split is on and known."""
+        table = self._table
+        if not self.split or table is None or not table.measured:
+            return ""
+        share = table.measured_share(row, column)
+        if not np.isfinite(share):
+            return ""
+        spacing = table.spacing_s(row, column)
+        interval = (
+            f", one every {format_spacing(spacing)} of signal" if np.isfinite(spacing) else ""
+        )
+        return f"measurements {share:.1%} of its live samples{interval}, the rest filled in"
 
     def _describe_sensor(self, column: int) -> str:
         table, info, availability = self._table, self.info, self.availability
@@ -837,6 +1497,22 @@ class AvailabilityPage(QWidget):
         )
         lo, hi = availability.ranges[availability.sensors.index(name)]
         parts.append(f"plausible range {lo:g} to {hi:g} {unit}".rstrip())
+        if self.cleaning_on and name in self._cleaned.cleaning.sensors:
+            cleaning = self._cleaned.cleaning
+            j = cleaning.sensors.index(name)
+            if cleaning.dropped[j]:
+                parts.append(
+                    f"CleanSignals drops it altogether: missing in {cleaning.missing_shares[j]:.0%} "
+                    f"of the {noun}s"
+                )
+            elif not cleaning.exempt[j]:
+                lo_m, hi_m = cleaning.mean_bounds[0][j], cleaning.mean_bounds[1][j]
+                lo_s, hi_s = cleaning.std_bounds[0][j], cleaning.std_bounds[1][j]
+                parts.append(
+                    f"CleanSignals keeps a mean between {lo_m:.4g} and {hi_m:.4g} and a spread "
+                    f"between {lo_s:.4g} and {hi_s:.4g}; discarded in "
+                    f"{int(cleaning.discarded[:, j].sum())} {noun}s"
+                )
         return " · ".join(parts)
 
     def _describe_row(self, row: int) -> str:
@@ -866,6 +1542,31 @@ class AvailabilityPage(QWidget):
         return (
             f"{head} · {_plural(len(part), noun)} on {_plural(wells, 'well')} · "
             f"{int(part['n_samples'].sum()):,} samples · {part['hours'].sum():,.0f} h recorded{tail}"
+        )
+
+    def shown_files(self) -> list[tuple[int, str]]:
+        """The instances behind the bars on show, for the file list a Toolkit loader takes."""
+        availability = self.availability
+        if availability is None:
+            return []
+        bars = availability.bars
+        taken = np.arange(len(bars)) if self._mask is None else np.flatnonzero(self._mask)
+        files = []
+        for i in taken:
+            row = bars.iloc[int(i)]
+            data = self._well_by_number[int(row["well"])]
+            origin = data.origin.rows
+            for member in row["members"]:
+                files.append(
+                    (int(origin["fault_class"].iloc[member]), str(origin["file"].iloc[member]))
+                )
+        return files
+
+    def shown_source(self) -> str:
+        """Where the file list came from, for its provenance."""
+        what = self._rows[-1].label if self._rows else self.mode
+        return f"the Availability page · rows: {self.mode} · {what}" + (
+            " · joined bars" if self.joined else ""
         )
 
     def _describe_pair(self, row: int, column: int) -> str:
@@ -915,6 +1616,8 @@ class AvailabilityPage(QWidget):
         """The rich text shown where the pointer is: the figure the cell draws, first of all."""
         if self._table is None:
             return ""
+        if self.correlations_on and self._corr is not None:
+            return self._corr_tooltip(row, column)
         if self.pairs and self._pair_table is not None:
             return self._pair_tooltip(row, column)
         if row < 0 and column < 0:
@@ -957,6 +1660,12 @@ class AvailabilityPage(QWidget):
                 f"{'the samples' if by_bars else f'the {noun}s'} · {counts[LIVE]} live, "
                 f"{counts[FROZEN]} frozen, {counts[ABSENT]} absent of {n}</span>"
             )
+        measured = self._measured_clause(row, column)
+        if measured:
+            lines.append(f'<span style="color:{colors.muted};">{measured}</span>')
+        cleaned = self._cleaning_clause(row, column)
+        if cleaned:
+            lines.append(f'<span style="color:{colors.text};">{cleaned}</span>')
         low, high = table.low[row, column], table.high[row, column]
         if not np.isnan(low):
             lines.append(

@@ -9,12 +9,14 @@ pages write to, and the instance windows the pages open.
 """
 
 from functools import partial
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -22,15 +24,21 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-from overlap_viewer import styling, theme
-from overlap_viewer.availability_page import AvailabilityPage
-from overlap_viewer.config import DEFAULT_GAP_HOURS
-from overlap_viewer.dataset import DatasetInfo, ScanCancelled, WellData, split_wells
-from overlap_viewer.faults_page import FaultsPage
-from overlap_viewer.features_page import FeaturesPage
-from overlap_viewer.help import HelpWindow, real_instance_counts
-from overlap_viewer.loading import FrameCache, catalogue_with_progress
-from overlap_viewer.overview import ElidedLabel, TimelinesPage
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.config import DEFAULT_GAP_HOURS
+from overlap_viewer.backend.dataset import DatasetInfo, ScanCancelled, WellData, split_wells
+from overlap_viewer.backend.export import write_file_list
+from overlap_viewer.backend.model_outputs import ModelOutputs
+from overlap_viewer.frontend import styling
+from overlap_viewer.frontend.availability_page import AvailabilityPage
+from overlap_viewer.frontend.dispersion_page import DispersionPage
+from overlap_viewer.frontend.faults_page import FaultsPage
+from overlap_viewer.frontend.features_page import FeaturesPage
+from overlap_viewer.frontend.help import HelpWindow, real_instance_counts
+from overlap_viewer.frontend.loading import FrameCache, catalogue_with_progress
+from overlap_viewer.frontend.map_page import MapPage
+from overlap_viewer.frontend.overview import ElidedLabel, TimelinesPage
+from overlap_viewer.frontend.passes import Passes
 
 # Which tab of the help answers the questions a page raises.
 HELP_TABS = {
@@ -38,6 +46,8 @@ HELP_TABS = {
     AvailabilityPage: "Data availability",
     FaultsPage: "Fault classes",
     FeaturesPage: "Variables",
+    MapPage: "Instances map",
+    DispersionPage: "Dispersion",
 }
 
 
@@ -57,6 +67,9 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.info = info
         self._frames = frames or FrameCache()
+        # The passes over the data, read once and shared: a page that asks for
+        # one another page has paid for gets it at once.
+        self._passes = Passes(info, self._frames)
         self._windows: list[QMainWindow] = []
         self._help: HelpWindow | None = None
         self._theme_mode = theme_mode
@@ -65,14 +78,20 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
-        self.timelines = TimelinesPage(info, gap_hours=gap_hours, columns=columns)
-        self.availability = AvailabilityPage(info)
-        self.faults = FaultsPage(info, self._frames)
-        self.features = FeaturesPage(info, self._frames)
+        self.timelines = TimelinesPage(
+            info, gap_hours=gap_hours, columns=columns, passes=self._passes
+        )
+        self.availability = AvailabilityPage(info, passes=self._passes)
+        self.faults = FaultsPage(info, self._frames, passes=self._passes)
+        self.features = FeaturesPage(info, self._frames, passes=self._passes)
+        self.map = MapPage(info, passes=self._passes)
+        self.dispersion = DispersionPage(info, passes=self._passes)
         self._tabs.addTab(self.timelines, "Timelines")
         self._tabs.addTab(self.availability, "Availability")
         self._tabs.addTab(self.faults, "Faults")
         self._tabs.addTab(self.features, "Features")
+        self._tabs.addTab(self.map, "Instances")
+        self._tabs.addTab(self.dispersion, "Dispersion")
         self._tabs.setTabToolTip(0, "Every real instance of every well, laid out in time")
         self._tabs.setTabToolTip(
             1, "What the sensors recorded, per fault class, per well, or instance by instance"
@@ -82,6 +101,16 @@ class MainWindow(QMainWindow):
         )
         self._tabs.setTabToolTip(
             3, "One sensor, a section per fault class: what it reads under each event"
+        )
+        self._tabs.setTabToolTip(
+            4,
+            "Every real instance as one point, placed by what its sensors amount to: clusters, "
+            "typicality, and the labels a one-class model disagrees with",
+        )
+        self._tabs.setTabToolTip(
+            5,
+            "Two sensors against each other over every instance, one class or one well: every "
+            "sample a dot, the density behind, the measurements alone on request",
         )
         self._tabs.currentChanged.connect(self._on_page_changed)
         self.setCentralWidget(self._tabs)
@@ -98,6 +127,9 @@ class MainWindow(QMainWindow):
             page.summary_changed.connect(self._refresh_summary)
         self.timelines.open_requested.connect(self.open_instances)
         self.availability.open_requested.connect(self._open_bar)
+        self.map.open_requested.connect(self.open_instances)
+        self.dispersion.open_requested.connect(self.open_instances)
+        self.map.results_changed.connect(self._on_map_results)
 
         self._restyle()
         self.set_catalogue(catalogue)
@@ -113,7 +145,49 @@ class MainWindow(QMainWindow):
 
     @property
     def pages(self) -> tuple:
-        return (self.timelines, self.availability, self.faults, self.features)
+        return (
+            self.timelines,
+            self.availability,
+            self.faults,
+            self.features,
+            self.map,
+            self.dispersion,
+        )
+
+    def _on_map_results(self, results) -> None:
+        """What the Instances map computed, handed to the pages that color and sort by it."""
+        self.timelines.set_map_results(results)
+        self.faults.set_map_results(results)
+        self.features.set_map_results(results)
+
+    def set_model_outputs(self, outputs: ModelOutputs | None) -> None:
+        """Take a set of model outputs (or none) and hand its agreements to every page."""
+        results = self._passes.set_model_outputs(outputs)
+        for page in (self.timelines, self.faults, self.features, self.map):
+            page.set_model_results(results)
+        for window in list(self._windows):
+            window.set_model_results(results)
+        if results is None:
+            self._status.setText("No model outputs loaded.")
+        else:
+            scored = len(results.agreements)
+            self._status.setText(
+                f"{results.outputs.describe()} · {scored} of the {len(self._catalogue)} real "
+                "instances of this catalogue scored"
+            )
+
+    def _load_model_outputs(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Open a folder of model outputs (model.json beside <class>/<instance>.parquet)"
+        )
+        if not folder:
+            return
+        try:
+            outputs = ModelOutputs.load(Path(folder))
+        except (ValueError, OSError) as error:
+            QMessageBox.critical(self, "Could not load the model outputs", str(error))
+            return
+        self.set_model_outputs(outputs)
 
     def _build_toolbar(self) -> None:
         bar = QToolBar("Viewer")
@@ -143,6 +217,26 @@ class MainWindow(QMainWindow):
         rescan.setToolTip("Read every instance again, ignoring the cached catalogue")
         rescan.triggered.connect(self._rescan)
         bar.addAction(rescan)
+        export = QAction("Export file list…", self)
+        export.setToolTip(
+            "Write the instances the current page has on show — the wells filtered, the instances "
+            "ticked, the bars of a joined view — as the JSON of a 3W Toolkit ParquetDatasetConfig "
+            "with split='list', which the Toolkit loads with "
+            "ParquetDatasetConfig(**json.load(open(path))); its provenance is written beside it."
+        )
+        export.triggered.connect(self._export_file_list)
+        bar.addAction(export)
+        load_model = QAction("Load model outputs…", self)
+        load_model.setToolTip(
+            "Open a folder of model outputs — model.json beside one <class>/<instance>.parquet per "
+            "instance scored, with a timestamp index and a label column (see the help) — and draw "
+            "them onto the data: a band under the class band of every instance window, an "
+            "agreement figure per instance that colors the Timelines and the Instances map and "
+            "sorts the instance lists, and the model's labels as a shading of the Faults and "
+            "Features pages. examples/model_outputs holds one such folder, with its provenance."
+        )
+        load_model.triggered.connect(self._load_model_outputs)
+        bar.addAction(load_model)
         help_action = QAction("Help", self)
         help_action.setShortcut("F1")
         help_action.setToolTip("What every fault class, variable and page means (F1)")
@@ -159,8 +253,12 @@ class MainWindow(QMainWindow):
             self._help.deleteLater()
             self._help = None
         self._wells = split_wells(catalogue)
+        self._passes.set_wells(self._wells)
         for page in self.pages:
             page.set_catalogue(catalogue, self._wells)
+        if self._passes.model is not None:
+            for page in (self.timelines, self.faults, self.features, self.map):
+                page.set_model_results(self._passes.model)
         self._refresh_summary()
 
     def _refresh_summary(self, *args) -> None:
@@ -230,10 +328,10 @@ class MainWindow(QMainWindow):
 
         Returns the window, or ``None`` when its files could not be read.
         """
-        from overlap_viewer.instance_window import InstanceWindow
+        from overlap_viewer.frontend.instance_window import InstanceWindow
 
         try:
-            window = InstanceWindow(data, index, self.info, self._frames)
+            window = InstanceWindow(data, index, self.info, self._frames, passes=self._passes)
         except Exception as error:  # noqa: BLE001 - one unreadable file must not take the app down
             QMessageBox.warning(
                 self, "Could not open the instances", f"{type(error).__name__}: {error}"
@@ -254,6 +352,34 @@ class MainWindow(QMainWindow):
         window = self.open_instances(data.joined() if joined else data, bar)
         if window is not None and sensor:
             window.select_features([sensor])
+
+    def _export_file_list(self) -> None:
+        """Write the instances the current page has on show as a Toolkit file list, where the user says."""
+        page = self._tabs.currentWidget()
+        files = page.shown_files() if hasattr(page, "shown_files") else []
+        if not files:
+            QMessageBox.information(
+                self, "Export file list", "The current page has no instances on show to export."
+            )
+            return
+        name = type(page).__name__.removesuffix("Page").lower()
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Export the instances on show as a 3W Toolkit file list",
+            f"file_list_{name}.json",
+            "JSON (*.json)",
+        )
+        if not path:
+            return
+        try:
+            note = write_file_list(Path(path), self.info, files, page.shown_source())
+        except OSError as error:
+            QMessageBox.critical(self, "Export failed", f"{type(error).__name__}: {error}")
+            return
+        self._status.setText(
+            f"{len(set(files))} files written to {path}, their provenance to {note.name} · load "
+            "with ParquetDatasetConfig(**json.load(open(path)))"
+        )
 
     def _rescan(self) -> None:
         try:

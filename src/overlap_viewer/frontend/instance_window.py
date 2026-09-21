@@ -32,21 +32,28 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.availability import implausible_sensors, outside_range
-from overlap_viewer.config import FAULT_SIGNATURES, REACH_LABELS, plausible_range
-from overlap_viewer.dataset import DatasetInfo, WellData, instance_title, merge_instances
-from overlap_viewer.help import HelpWindow
-from overlap_viewer.items import (
-    AnchoredText,
-    HeaderLabel,
-    ScrollFriendlyViewBox,
-    SeamsItem,
-    SegmentsItem,
-    TimeAxisItem,
-    WheelToParent,
+from overlap_viewer.algorithms.interpolation import (
+    GENUINE,
+    describe_sampling,
+    sample_kinds,
+    sampling_of,
 )
-from overlap_viewer.labels import (
+from overlap_viewer.algorithms.spectral import (
+    Histogram,
+    Spectrum,
+    format_period,
+    histogram,
+    lomb_scargle,
+    prepare,
+    prepare_irregular,
+    uniform_series,
+    welch,
+)
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.availability import implausible_sensors, outside_range
+from overlap_viewer.backend.config import FAULT_SIGNATURES, REACH_LABELS, plausible_range
+from overlap_viewer.backend.dataset import DatasetInfo, WellData, instance_title, merge_instances
+from overlap_viewer.backend.labels import (
     FeatureStats,
     Segment,
     at_index_unit,
@@ -64,9 +71,8 @@ from overlap_viewer.labels import (
     sensor_stats_from_json,
     state_name,
 )
-from overlap_viewer.loading import FrameCache
-from overlap_viewer.overview import ElidedLabel
-from overlap_viewer.palette import (
+from overlap_viewer.backend.model_outputs import agrees
+from overlap_viewer.backend.palette import (
     background_color,
     bar_color,
     legend_label,
@@ -74,16 +80,20 @@ from overlap_viewer.palette import (
     tint,
     unknown_background,
 )
-from overlap_viewer.spectral import (
-    Histogram,
-    Spectrum,
-    format_period,
-    histogram,
-    prepare,
-    uniform_series,
-    welch,
+from overlap_viewer.backend.timemap import TimeMap
+from overlap_viewer.frontend.help import HelpWindow
+from overlap_viewer.frontend.items import (
+    AnchoredText,
+    HeaderLabel,
+    ScrollFriendlyViewBox,
+    SeamsItem,
+    SegmentsItem,
+    TimeAxisItem,
+    WheelToParent,
 )
-from overlap_viewer.spectral_items import (
+from overlap_viewer.frontend.loading import FrameCache
+from overlap_viewer.frontend.overview import ElidedLabel
+from overlap_viewer.frontend.spectral_items import (
     PeriodMarker,
     TransformControls,
     add_center_lines,
@@ -100,7 +110,7 @@ from overlap_viewer.spectral_items import (
     spectrum_grid,
     spectrum_xy,
 )
-from overlap_viewer.timemap import TimeMap
+from overlap_viewer.frontend.traces import add_trace
 
 AXIS_WIDTH = 84  # every left axis has this width, so all plots share the same x pixels
 PANEL_WIDTH = 200  # the feature panel: room for the longest variable name and its unit
@@ -140,7 +150,8 @@ VIEW_TIPS = {
         "dominant period and its share of the power — a few percent for a normal instance, half "
         "or more for an oscillating one — and one cycle of that period is laid against the trace, "
         "so the claim can be checked against the waves. It takes a row under the trace, the "
-        "period along the bottom."
+        "period along the bottom. With 'Measurements only' ticked it is the Lomb–Scargle "
+        "periodogram of the measurements at their own instants, the historian's lines left out."
     ),
 }
 
@@ -249,12 +260,23 @@ class InstanceWindow(QMainWindow):
     """
 
     def __init__(
-        self, data: WellData, index: int, info: DatasetInfo, frames: FrameCache, parent=None
+        self,
+        data: WellData,
+        index: int,
+        info: DatasetInfo,
+        frames: FrameCache,
+        passes=None,
+        parent=None,
     ):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.info = info
         self._frames = frames
+        # The passes over the data, when the main window shares them: the
+        # Toolkit's rule on the instances shown, if a page has fitted it, and
+        # the model outputs loaded, drawn as a band under the class band.
+        self._passes = passes
+        self._model_results = passes.model if passes is not None else None
         self.well = data.origin
         # The instance the window is about, kept across a switch: the one
         # clicked, or the first of the bar clicked, which is the one its title
@@ -322,6 +344,7 @@ class InstanceWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         self._seams = [self._seam_positions(members) for members in self.members]
         self._groups_cache: dict[int, tuple[np.ndarray, list]] = {}
+        self._kinds_cache: dict[tuple[int, str], np.ndarray | None] = {}
         self._features = self._feature_table()
         self._signature = self._signature_for_group()
 
@@ -360,6 +383,12 @@ class InstanceWindow(QMainWindow):
         self._join_check.blockSignals(True)
         self._join_check.setChecked(self.joined)
         self._join_check.blockSignals(False)
+
+    def set_model_results(self, results) -> None:
+        """Take the model outputs loaded (or none) and draw, or take down, their band."""
+        self._model_results = results
+        self._header.setText(self._header_html())
+        self._rebuild()
 
     def _seam_positions(self, members: list[int]) -> list[float]:
         """Where, inside one merged block, each instance after the first begins."""
@@ -814,9 +843,26 @@ class InstanceWindow(QMainWindow):
             if flagged
             else ""
         )
+        discarded = self._discarded_sensors(position)
+        cleaning = (
+            f'<span style="font-size:9pt; color:{colors.muted};">&nbsp;╲ the Toolkit\'s '
+            f"CleanSignals would discard {', '.join(discarded)} ·</span>"
+            if discarded
+            else ""
+        )
+        if self._model_results is not None:
+            share = self._model_results.agreement_of_members(self._member_keys(position))
+            verdict = (
+                f"{self._model_results.name} agrees {share:.0%} of the compared time"
+                if np.isfinite(share)
+                else f"not scored by {self._model_results.name}"
+            )
+            cleaning += (
+                f'<span style="font-size:9pt; color:{colors.muted};">&nbsp;{verdict} ·</span>'
+            )
         return (
             f'<span style="font-size:10pt;"><b>{instance_title(row)}</b></span>{badge}'
-            f"&nbsp;&nbsp;{squares}{warning}"
+            f"&nbsp;&nbsp;{squares}{warning}{cleaning}"
             f'<span style="font-size:9pt; color:{colors.muted};"> {what} · {joined}'
             f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} · "
             f"{row['hours']:.1f} h · {int(row['n_samples']):,} samples · level {int(row['lane']) + 1} · "
@@ -826,6 +872,24 @@ class InstanceWindow(QMainWindow):
     def _overlaps(self, a: int, b: int) -> bool:
         ra, rb = self.rows.iloc[a], self.rows.iloc[b]
         return bool(ra["start"] <= rb["end"] and rb["start"] <= ra["end"])
+
+    def _discarded_sensors(self, position: int) -> list[str]:
+        """The sensors the Toolkit's CleanSignals rule would discard in any instance behind one block.
+
+        Only once a page has fitted the rule (the availability page's box, or
+        the Timelines' coloring): this window never reads the data for it.
+        """
+        if self._passes is None:
+            return []
+        cleaned = self._passes.cleaning_if_loaded(False)
+        if cleaned is None:
+            return []
+        origin = self.well.rows
+        names: list[str] = []
+        for member in self.members[position]:
+            key = (int(origin["fault_class"].iloc[member]), str(origin["file"].iloc[member]))
+            names += [name for name in cleaned.discarded(key) if name not in names]
+        return names
 
     # -- the grid
 
@@ -899,6 +963,12 @@ class InstanceWindow(QMainWindow):
             self._add_band(row + 1, self._class_band_segments(position), "class", seams)
             heights += [BAND_PX, BAND_PX]
             row += 2
+            model_segments = self._model_band_segments(position)
+            if model_segments is not None:
+                # The loaded model's verdicts, under the labels they are judged against.
+                self._add_band(row, model_segments, "model", seams)
+                heights.append(BAND_PX)
+                row += 1
             for k, feature in enumerate(features):
                 last = k == len(features) - 1
                 # The time axis closes the last trace of every block; the
@@ -1068,13 +1138,12 @@ class InstanceWindow(QMainWindow):
         if stats.recorded:
             x = self.timemap.to_x(frame.index)
             y = frame[feature].to_numpy(dtype=float)
-            curve = pg.PlotDataItem(x, y, pen=pg.mkPen(colors.trace, width=1), connect="finite")
-            # Added before clipping and downsampling are switched on: while an item is being
-            # added, pyqtgraph resolves its view to the layout widget, which those options query.
-            plot.addItem(curve)
-            curve.setDownsampling(auto=True, method="peak")
-            curve.setClipToView(True)
+            # The measurements as dots, the historian's lines faint between them.
+            kinds = self._kinds_of(position, feature)
+            add_trace(plot, x, y, colors.trace, 1.0, kinds)
             note = format_delta(stats.delta, unit) + (" (flat)" if stats.flat else "")
+            if kinds is not None and not stats.flat:
+                note += " · " + describe_sampling(sampling_of(kinds))
             # A reading no instrument could have produced is drawn in the
             # warning color over the trace, sample by sample, so that the
             # stretch that is garbage is seen for what it is, and called out
@@ -1151,6 +1220,22 @@ class InstanceWindow(QMainWindow):
         if feature not in frame.columns:
             return np.full(len(frame), np.nan), 1
         return uniform_series(frame.index, frame[feature].to_numpy(dtype=float))
+
+    def _kinds_of(self, position: int, feature: str) -> np.ndarray | None:
+        """Which samples of one feature of one block are measurements, held, interpolated or missing.
+
+        ``None`` for an enumerated variable, which is not tested: a valve held
+        in one position for hours is a fact about the well. Computed once per
+        block and feature, the frame never changing under a window.
+        """
+        key = (position, feature)
+        if key not in self._kinds_cache:
+            frame = self.frames[position]
+            if self.info.is_enumerated(feature) or feature not in frame.columns:
+                self._kinds_cache[key] = None
+            else:
+                self._kinds_cache[key] = sample_kinds(frame[feature].to_numpy(dtype=float))
+        return self._kinds_cache[key]
 
     def _schedule_stretch(self, *args) -> None:
         self._stretch_timer.start()
@@ -1229,10 +1314,17 @@ class InstanceWindow(QMainWindow):
         # recorded extent, which is why those samples are drawn in amber over
         # the trace beside this.
         bounds = panel.bounds if params.clamp else None
+        kinds = self._kinds_of(panel.position, panel.feature)
+        measured = params.genuine and kinds is not None
         result = None
         if len(values):
             codes, keys = self._sample_groups(panel.position)
-            result = histogram(values, codes[window], params.bins, bounds, keys=keys)
+            codes = codes[window]
+            if measured:
+                # The measurements alone: the historian's lines between them left out.
+                keep = kinds[window] == GENUINE
+                values, codes = values[keep], codes[keep]
+            result = histogram(values, codes, params.bins, bounds, keys=keys)
         panel.histogram = result
         if result is None:
             panel.hist_note.setHtml(
@@ -1271,8 +1363,9 @@ class InstanceWindow(QMainWindow):
                 if result.left_out
                 else ""
             )
+        noun = "measurements" if measured else "samples"
         panel.hist_note.setHtml(
-            f'<span style="font-size:8pt; color:{colors.text};">{result.total:,} samples<br>'
+            f'<span style="font-size:8pt; color:{colors.text};">{result.total:,} {noun}<br>'
             f"{len(result.edges) - 1} bins of {width}<br>"
             f"mean {format_width(result.mean, panel.unit)} ―<br>"
             f"median {format_width(result.median, panel.unit)} ╌{left_out}</span>"
@@ -1296,18 +1389,17 @@ class InstanceWindow(QMainWindow):
         panel.spec_items = []
         colors = theme.current()
         sub = frame.iloc[window]
-        values, _step = self._series_on_grid(sub, panel.feature)
-        prepared = prepare(values, panel.bounds) if len(values) else None
+        spectrum = self._spectrum_on_screen(sub, panel, window, params)
         vb = plot.getViewBox()
-        if prepared is None:
+        if spectrum is None:
             panel.spectrum = None
             panel.peak.clear()
+            what = "measurements" if params.genuine else "readings"
             panel.spec_note.setHtml(
-                f'<span style="font-size:8pt; color:{colors.faint};">too few readings on screen, '
+                f'<span style="font-size:8pt; color:{colors.faint};">too few {what} on screen, '
                 "or a flat signal, to transform</span>"
             )
             return
-        spectrum = welch(prepared, params)
         panel.spectrum = spectrum
         self._mark_peak(panel, spectrum)
         curve = add_spectrum_curve(plot, spectrum, pg.mkPen(colors.trace, width=1.2), "x")
@@ -1321,7 +1413,7 @@ class InstanceWindow(QMainWindow):
         vb.setYRange(lo - pad, hi + pad, padding=0)
         low, high = period_range(spectrum)
         vb.setXRange(low, high, padding=0.01)
-        if spectrum.segment_s < len(prepared):
+        if not spectrum.lomb_scargle and spectrum.segment_s < len(sub):
             panel.spec_items.append(
                 shade_unresolved(plot, float(np.log10(spectrum.segment_s)), "x")
             )
@@ -1329,6 +1421,22 @@ class InstanceWindow(QMainWindow):
         panel.spec_note.setHtml(
             f'<span style="font-size:8pt; color:{colors.text};">{caption}</span>'
         )
+
+    def _spectrum_on_screen(self, sub: pd.DataFrame, panel: StretchPanel, window: slice, params):
+        """The spectrum of one feature over the stretch on screen: Welch's on the grid, or Lomb–Scargle over the measurements."""
+        if not len(sub) or panel.feature not in sub.columns:
+            return None
+        kinds = self._kinds_of(panel.position, panel.feature)
+        if params.genuine and kinds is not None:
+            keep = kinds[window] == GENUINE
+            seconds = (sub.index - sub.index[0]).total_seconds().to_numpy(dtype=float)
+            prepared = prepare_irregular(
+                seconds[keep], sub[panel.feature].to_numpy(dtype=float)[keep], panel.bounds
+            )
+            return lomb_scargle(*prepared) if prepared is not None else None
+        values, _step = self._series_on_grid(sub, panel.feature)
+        prepared = prepare(values, panel.bounds) if len(values) else None
+        return welch(prepared, params) if prepared is not None else None
 
     @staticmethod
     def _mark_implausible(plot: pg.PlotItem, x: np.ndarray, y: np.ndarray, bounds) -> None:
@@ -1403,6 +1511,58 @@ class InstanceWindow(QMainWindow):
                 a, b, color, label_name(segment.value, self.info.fault_names, offset), unknown
             )
         return segments
+
+    def _member_keys(self, position: int) -> list[tuple[int, str]]:
+        origin = self.well.rows
+        return [
+            (int(origin["fault_class"].iloc[m]), str(origin["file"].iloc[m]))
+            for m in self.members[position]
+        ]
+
+    def _model_band_segments(self, position: int) -> BandSegments | None:
+        """The loaded model's verdicts on one block, colored by their agreement with the labels.
+
+        Where the model agrees with the experts the stretch is plain, in the
+        live blue; where it disagrees, amber; where the experts left the
+        stretch unlabeled there is nothing to compare, and the verdict is
+        drawn faint. ``None`` when no outputs are loaded or the model scored
+        none of the block's instances.
+        """
+        results = self._model_results
+        if results is None:
+            return None
+        outputs = results.outputs
+        keys = [key for key in self._member_keys(position) if outputs.has(*key)]
+        if not keys:
+            return None
+        tracks = [outputs.runs(*key) for key in keys]
+        merged = merge_label_runs(tracks, list(range(len(tracks))))
+        colors = theme.current()
+        offset = self.info.transient_offset
+        kind = outputs.spec.kind
+        class_runs = [segment for segment, _source in self._class_runs(position)]
+        segments = BandSegments([], [], [], [], [])
+        for run, _source in merged:
+            if np.isnan(run.value):
+                continue
+            verdict_name = f"model: {outputs.spec.label_name(run.value)}"
+            # Split the verdict at the boundaries of the labels it is judged against.
+            pieces = [
+                (max(run.start, c.start), min(run.end, c.end), c.value)
+                for c in class_runs
+                if c.start < run.end and c.end > run.start
+            ] or [(run.start, run.end, np.nan)]
+            for start, end, label in pieces:
+                verdict = agrees(run.value, label, kind, offset)
+                if verdict is None:
+                    color, text = tint(colors.live, 0.45), f"{verdict_name} · no label to compare"
+                elif verdict:
+                    color, text = colors.live, f"{verdict_name} · agrees with the label"
+                else:
+                    color, text = colors.warning, f"{verdict_name} · disagrees with the label"
+                a, b = self.timemap.to_x([start, end])
+                segments.add(a, b, color, text, False)
+        return segments if segments.x0 else None
 
     def _state_band_segments(self, position: int) -> BandSegments:
         frame = self.frames[position]

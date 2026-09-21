@@ -52,10 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.config import MAX_SMALL_MULTIPLES, plausible_range
-from overlap_viewer.dataset import DatasetInfo, join_groups, merge_instances, well_label
-from overlap_viewer.faults import (
+from overlap_viewer.algorithms.faults import (
     ALIGNMENT_AXES,
     ALIGNMENT_NAMES,
     ALIGNMENTS,
@@ -64,9 +61,22 @@ from overlap_viewer.faults import (
     window_mask,
     zscore,
 )
-from overlap_viewer.instance_window import AXIS_WIDTH, PlotStack
-from overlap_viewer.items import AnchoredText, HeaderLabel, ScrollFriendlyViewBox, SegmentsItem
-from overlap_viewer.labels import (
+from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
+from overlap_viewer.algorithms.spectral import (
+    Histogram,
+    Spectrum,
+    average_spectra,
+    format_period,
+    histogram,
+    lomb_scargle,
+    prepare,
+    prepare_irregular,
+    welch,
+)
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES, plausible_range
+from overlap_viewer.backend.dataset import DatasetInfo, join_groups, merge_instances, well_label
+from overlap_viewer.backend.labels import (
     Segment,
     at_index_unit,
     column_as_float,
@@ -76,17 +86,22 @@ from overlap_viewer.labels import (
     padded_range,
     state_name,
 )
-from overlap_viewer.palette import background_color, bar_color, tint, unknown_background
-from overlap_viewer.spectral import (
-    Histogram,
-    Spectrum,
-    average_spectra,
-    format_period,
-    histogram,
-    prepare,
-    welch,
+from overlap_viewer.backend.palette import background_color, bar_color, tint, unknown_background
+from overlap_viewer.backend.profiles import (
+    DESCRIPTOR_CHOICES,
+    DESCRIPTOR_MODES,
+    GRID_CAVEAT,
+    DescriptorChoice,
+    descriptor_column,
 )
-from overlap_viewer.spectral_items import (
+from overlap_viewer.frontend.instance_window import AXIS_WIDTH, PlotStack
+from overlap_viewer.frontend.items import (
+    AnchoredText,
+    HeaderLabel,
+    ScrollFriendlyViewBox,
+    SegmentsItem,
+)
+from overlap_viewer.frontend.spectral_items import (
     TransformControls,
     add_center_lines,
     add_peak_marker,
@@ -103,6 +118,7 @@ from overlap_viewer.spectral_items import (
     spectrum_grid,
     spectrum_xy,
 )
+from overlap_viewer.frontend.traces import Trace, add_trace
 
 # The three arrangements of the same sections. *Overall* is not a third way of
 # placing the plots but a reduction before them: the instances of a group are
@@ -141,6 +157,48 @@ ALIGN_MOOT_TIP = (
     "whichever moment it is aligned on. Ask for hours around the onset, or go back to the time "
     "series, to choose it again."
 )
+# How the instance lists can be ordered. The two map orders wait for the
+# Instances map to have computed something on the instances; the model order
+# for a set of model outputs to be loaded.
+SORTS = (
+    "Well and start",
+    "Typicality (Instances map)",
+    "Novelty score (Instances map)",
+    "Agreement with the model outputs",
+    *(choice.name for choice in DESCRIPTOR_CHOICES),
+)
+FIRST_DESCRIPTOR_SORT = (
+    4  # the descriptor orders follow the four above, in DESCRIPTOR_CHOICES order
+)
+SORT_TIP = (
+    "The order of the list: by well and start, as the catalogue is; by typicality, the most "
+    "typical instance of its class first — its distance to the medoid of the class on the "
+    "Instances map, in the representation chosen there; by the one-class model's score, the "
+    "instance that looks most anomalous first; by the agreement of the loaded model outputs "
+    "with the labels, the instance the model disagrees with most first; or by one descriptor of "
+    "the feature on show — the time its autocorrelation takes to halve, its signal-to-noise "
+    "ratio, the slope of Zhang's Gaussianity regression, its skewness or its kurtosis, Melo's "
+    "characterisation of a variable — largest first, taken on the grid or on the measurements "
+    "as the box beside says. The two map orders are offered once the map has been computed on "
+    "the instances (not on the joined bars), the model order once outputs are loaded, the "
+    "descriptor orders once a feature is on show (the first look reads every instance in full, "
+    "behind a progress dialog, and keeps the result in the cache), and the tooltip of every "
+    "instance then carries the figures."
+)
+SORT_MODE_TIP = (
+    "Whether the descriptor is taken on the 1 Hz grid, which is what a pipeline reads, or on the "
+    f"measurements alone: {GRID_CAVEAT}."
+)
+# What shades the label periods behind a small plot: the experts' labels, or
+# the loaded model's verdicts in the same vocabulary.
+SHADINGS = ("Dataset labels", "Model outputs")
+SHADING_TIP = (
+    "What shades the label periods behind every small plot: the class labels the experts gave, "
+    "or the verdicts of the model outputs loaded — a detector's 'anomalous' drawn as the "
+    "instance's own fault, its 'normal' as normal operation; a classifier's classes as "
+    "themselves — so that where the model and the experts differ shows as a shading that does "
+    "not match the trace's list entry. Offered once model outputs are loaded."
+)
 PLOT_PX = 230  # height of one overlaid section plot
 SMALL_PLOT_PX = 132  # height of one small multiple
 SMALL_AXIS_WIDTH = 48  # every small plot keeps this width for its left axis, so the grid aligns
@@ -165,6 +223,8 @@ class Series:
     color: str
     fault: int = 0  # the fault class of the instance itself, for its shading
     runs: list[Segment] = field(default_factory=list)  # its label runs, for the shading
+    # The loaded model's verdicts on it, as label runs in the dataset's vocabulary.
+    model_runs: list[Segment] = field(default_factory=list)
 
     @property
     def label(self) -> str:
@@ -268,9 +328,12 @@ class SeriesPage(QWidget):
         """What the status bar says when the pointer is over nothing in particular."""
         return self.HINT
 
-    def __init__(self, info: DatasetInfo, parent=None):
+    def __init__(self, info: DatasetInfo, passes=None, parent=None):
         super().__init__(parent)
         self.info = info
+        # Where the profiles of the instances come from, when a sort order asks
+        # for them; without it the descriptor orders are not offered.
+        self._passes = passes
         self._series: list[Series] = []
         self._plots: list[pg.PlotItem] = []
         self._curves: dict[int, list[pg.PlotDataItem]] = {}  # series index -> its curve per plot
@@ -286,8 +349,237 @@ class SeriesPage(QWidget):
         self._pool: dict[int, list[int]] = {}
         self._hover = -1
         self._x_range: tuple[float, float] | None = None
+        self._map_results = None  # what the Instances map computed, once it has
+        self._model_results = None  # the model outputs loaded, once they are
+        self._sort: QComboBox | None = None
+        self._sort_mode: QComboBox | None = None
+        self._sort_mode_label: QLabel | None = None
+        self._shading: QComboBox | None = None
+        self._shading_actions: list = []
 
     # -- construction, the parts every page shares
+
+    def add_sort_control(self, layout) -> QComboBox:
+        """The *Sort* box of an instance list, its map orders greyed until the map has run."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addWidget(QLabel("Sort"))
+        self._sort = QComboBox()
+        self._sort.addItems(list(SORTS))
+        self._sort.setToolTip(SORT_TIP)
+        self._sort.currentIndexChanged.connect(self._on_sort_index_changed)
+        row.addWidget(self._sort, 1)
+        # The descriptor orders' own box: on the grid, or on the measurements.
+        self._sort_mode_label = QLabel("on")
+        row.addWidget(self._sort_mode_label)
+        self._sort_mode = QComboBox()
+        self._sort_mode.addItems(list(DESCRIPTOR_MODES))
+        self._sort_mode.setToolTip(SORT_MODE_TIP)
+        self._sort_mode.currentIndexChanged.connect(self.on_sort_changed)
+        row.addWidget(self._sort_mode)
+        layout.addLayout(row)
+        self._sync_sort_control()
+        return self._sort
+
+    def _on_sort_index_changed(self, *args) -> None:
+        self._sync_sort_control()
+        self.on_sort_changed()
+
+    def _sync_sort_control(self) -> None:
+        if self._sort is None:
+            return
+        map_usable = self._map_results is not None and not self._map_results.joined
+        feature = self.sort_feature()
+        descriptors_usable = self._passes is not None and feature is not None
+        usable = {1: map_usable, 2: map_usable, 3: self._model_results is not None}
+        model = self._sort.model()
+        for k, choice in enumerate(DESCRIPTOR_CHOICES, start=FIRST_DESCRIPTOR_SORT):
+            usable[k] = descriptors_usable
+            # The order names the feature it reads, as the feature changes.
+            model.item(k).setText(f"{choice.name} of {feature}" if feature else choice.name)
+        for k, allowed in usable.items():
+            item = model.item(k)
+            flags = item.flags()
+            item.setFlags(
+                flags | Qt.ItemFlag.ItemIsEnabled if allowed else flags & ~Qt.ItemFlag.ItemIsEnabled
+            )
+        current = self._sort.currentIndex()
+        if current and not usable.get(current, True):
+            self._sort.blockSignals(True)
+            self._sort.setCurrentIndex(0)
+            self._sort.blockSignals(False)
+        by_descriptor = self.descriptor_sort() is not None
+        self._sort_mode_label.setVisible(by_descriptor)
+        self._sort_mode.setVisible(by_descriptor)
+
+    def sort_feature(self) -> str | None:
+        """The sensor whose descriptors the descriptor orders read; a page names its own."""
+        return None
+
+    def descriptor_sort(self) -> DescriptorChoice | None:
+        """The descriptor the list is ordered by, or ``None`` under the other orders."""
+        if self._sort is None or self._sort.currentIndex() < FIRST_DESCRIPTOR_SORT:
+            return None
+        return DESCRIPTOR_CHOICES[self._sort.currentIndex() - FIRST_DESCRIPTOR_SORT]
+
+    @property
+    def sort_measured(self) -> bool:
+        """Whether the descriptor orders read the measurements' figures rather than the grid's."""
+        return self._sort_mode is not None and self._sort_mode.currentIndex() == 1
+
+    def _sort_profiles(self):
+        """The profiles the descriptor orders read, reading the data if need be; ``None`` if declined."""
+        if self._passes is None:
+            return None
+        profiles = self._passes.profiles(self.info.sensor_names, parent=self.window())
+        if profiles is None and self._sort is not None:
+            # The pass was declined: back to the order that needs none.
+            self._sort.blockSignals(True)
+            self._sort.setCurrentIndex(0)
+            self._sort.blockSignals(False)
+            self._sync_sort_control()
+        return profiles
+
+    def descriptor_lines(self, entry: dict) -> list[str]:
+        """The descriptor an instance list is ordered by, in one instance, on the grid and on the measurements."""
+        choice, feature = self.descriptor_sort(), self.sort_feature()
+        profiles = (
+            self._passes.profiles_if_loaded(self.info.sensor_names)
+            if self._passes is not None
+            else None
+        )
+        if choice is None or feature is None or profiles is None:
+            return []
+        key = (int(entry["fault"]), str(entry.get("file", "")))
+        grid = profiles.descriptor(key, feature, choice.column)
+        genuine = profiles.descriptor(key, feature, f"{choice.column}_g")
+        lines = [
+            (
+                f"{choice.name} of {feature}: {choice.format(grid)} on the grid, "
+                f"{choice.format(genuine)} on the measurements."
+            )
+        ]
+        if choice.inflated and not self.sort_measured:
+            lines.append(f"Ordered by the grid's figure; {GRID_CAVEAT}.")
+        return lines
+
+    def set_map_results(self, results) -> None:
+        """Take what the Instances map computed; the instance lists gain its figures and its orders."""
+        self._map_results = results
+        self._sync_sort_control()
+        self.on_map_results()
+
+    def set_model_results(self, results) -> None:
+        """Take the model outputs loaded (or none): a sort order, tooltip figures and a shading."""
+        self._model_results = results
+        for action in self._shading_actions:
+            action.setVisible(results is not None)
+        if results is None and self._shading is not None and self._shading.currentIndex() != 0:
+            self._shading.blockSignals(True)
+            self._shading.setCurrentIndex(0)
+            self._shading.blockSignals(False)
+        self._sync_sort_control()
+        self.on_map_results()
+
+    @property
+    def shade_by_model(self) -> bool:
+        """Whether the small plots are shaded by the loaded model's verdicts rather than the labels."""
+        return (
+            self._model_results is not None
+            and self._shading is not None
+            and self._shading.currentIndex() == 1
+        )
+
+    def model_runs_for(self, fault: int, file: str) -> list[Segment]:
+        """The loaded model's verdicts on one instance as label runs, empty without outputs."""
+        if self._model_results is None or not file:
+            return []
+        return self._model_results.class_runs(int(fault), str(file), self.info.transient_offset)
+
+    def on_map_results(self) -> None:
+        """Called once the map's or the model's figures are on hand; a page rebuilds its instance list."""
+
+    def on_sort_changed(self, *args) -> None:
+        """Called when the *Sort* box changes; a page rebuilds its instance list."""
+
+    def map_figures(self, fault: int, file: str) -> tuple[float, float]:
+        """The typicality rank and the novelty score of one instance, NaN when the map has none."""
+        results = self._map_results
+        if results is None or results.joined:
+            return (float("nan"), float("nan"))
+        key = (int(fault), str(file))
+        return (results.typicality_rank(key), results.novelty_score(key))
+
+    def model_agreement(self, fault: int, file: str) -> float:
+        """How far the loaded model agrees with the labels of one instance, NaN without outputs."""
+        if self._model_results is None:
+            return float("nan")
+        return self._model_results.agreement(int(fault), str(file))
+
+    def sorted_entries(self, entries: list[dict]) -> list[dict]:
+        """The entries of an instance list in the order the *Sort* box asks for.
+
+        The catalogue's own order stands; typicality puts the most typical
+        first; the novelty score puts the most anomalous-looking first; the
+        model agreement puts the instance the model disagrees with most
+        first. An instance without the figure goes last.
+        """
+        if self._sort is None or self._sort.currentIndex() == 0:
+            return entries
+        which = self._sort.currentIndex()
+        choice = self.descriptor_sort()
+        if choice is not None:
+            profiles, feature = self._sort_profiles(), self.sort_feature()
+            if profiles is None or feature is None:
+                return entries
+            column = descriptor_column(choice, self.sort_measured)
+
+            def descriptor(entry: dict) -> float:
+                value = profiles.descriptor(
+                    (int(entry["fault"]), str(entry.get("file", ""))), feature, column
+                )
+                # Largest first, an infinite figure largest of all, the unknown last.
+                return np.inf if np.isnan(value) else -value
+
+            return sorted(entries, key=descriptor)
+
+        def figure(entry: dict) -> float:
+            fault, file = entry["fault"], entry.get("file", "")
+            if which == 3:
+                value = self.model_agreement(fault, file)
+            else:
+                rank, score = self.map_figures(fault, file)
+                value = -rank if which == 1 else score
+            return value if np.isfinite(value) else np.inf
+
+        return sorted(entries, key=figure)
+
+    def shown_files(self) -> list[tuple[int, str]]:
+        """The instances ticked, for the file list a Toolkit loader takes."""
+        return [
+            (int(entry["fault"]), str(entry["file"]))
+            for entry in self._checked_instances()
+            if entry.get("file")
+        ]
+
+    def _checked_instances(self) -> list[dict]:
+        """The entries of the instance list that are ticked; a page supplies its own."""
+        return []
+
+    def map_tooltip_lines(self, entry: dict) -> str:
+        """What the map knows about one instance, for the tooltip of its list item."""
+        rank, score = self.map_figures(entry["fault"], entry.get("file", ""))
+        lines = []
+        if np.isfinite(rank):
+            lines.append(f"Typicality {rank:.2f} in its class on the Instances map.")
+        if np.isfinite(score):
+            verdict = "looks anomalous" if score < 0 else "looks normal"
+            lines.append(f"One-class score {score:+.2f}: {verdict} to the Instances map's model.")
+        if self._model_results is not None:
+            lines.append(self._model_results.describe(entry["fault"], entry.get("file", "")) + ".")
+        lines += self.descriptor_lines(entry)
+        return ("\n" + "\n".join(lines)) if lines else ""
 
     def build_body(self, left: QWidget | None, right: QWidget | None) -> QWidget:
         """The plots, with the page's own panels on either side of them."""
@@ -399,6 +691,14 @@ class SeriesPage(QWidget):
         self._normalize.setToolTip(normalize_tip)
         self._normalize.toggled.connect(self._replot)
         bar.addWidget(self._normalize)
+        self._shading_actions = [bar.addWidget(QLabel(" Shade by "))]
+        self._shading = QComboBox()
+        self._shading.addItems(list(SHADINGS))
+        self._shading.setToolTip(SHADING_TIP)
+        self._shading.currentIndexChanged.connect(self._replot)
+        self._shading_actions.append(bar.addWidget(self._shading))
+        for action in self._shading_actions:
+            action.setVisible(False)
 
         self._parameter_separator = bar.addSeparator()
         self._controls = TransformControls()
@@ -629,11 +929,14 @@ class SeriesPage(QWidget):
 
     def _xy(
         self, series: Series, feature: str, normalize: bool, before: float, after: float, bounds
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        """The hours and the readings of one series for one feature, inside the window.
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None] | None:
+        """The hours, the readings and the kinds of sample of one series for one feature, inside the window.
 
-        ``None`` when this instance says nothing about the feature, so that a
-        plot is never built for a blank.
+        The kinds (``interpolation.sample_kinds``: measured, interpolated,
+        held, missing) are found on the raw readings, before any scaling, and
+        are ``None`` for an enumerated variable, which is not tested. ``None``
+        altogether when this instance says nothing about the feature, so that
+        a plot is never built for a blank.
         """
         frame = series.frame
         if feature not in frame.columns:
@@ -641,6 +944,7 @@ class SeriesPage(QWidget):
         y = column_as_float(frame, feature)
         if not (~np.isnan(y)).any():
             return None
+        kinds = None if self.info.is_enumerated(feature) else sample_kinds(y)
         if normalize:
             # Scaled over the plausible readings only, as the pipelines mask the
             # garbage before they normalize: one absurd level would otherwise
@@ -650,12 +954,14 @@ class SeriesPage(QWidget):
                 return None
         mask = window_mask(series.hours, before, after)
         x, y = series.hours[mask], y[mask]
-        return (x, y) if len(x) else None
+        if kinds is not None:
+            kinds = kinds[mask]
+        return (x, y, kinds) if len(x) else None
 
     def _window_values(
         self, series: Series, feature: str, normalize: bool, before: float, after: float, bounds
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        """The readings of one series inside the window, with the label kind of each sample.
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None:
+        """The readings of one series inside the window, with the hours, label kind and sample kind of each.
 
         What the distribution and the spectrum are computed from: the same
         stretch the time series draws, in the same order, so that "2 h after
@@ -664,10 +970,10 @@ class SeriesPage(QWidget):
         got = self._xy(series, feature, normalize, before, after, bounds)
         if got is None:
             return None
-        _x, y = got
+        x, y, kinds = got
         mask = window_mask(series.hours, before, after)
         labels = column_as_float(series.frame, "class")[mask]
-        return y, self._kind_codes(labels)
+        return x, y, self._kind_codes(labels), kinds
 
     def _kind_codes(self, labels: np.ndarray) -> np.ndarray:
         """``label_kind`` of every sample at once, as positions in ``HIST_KINDS``."""
@@ -780,11 +1086,18 @@ class SeriesPage(QWidget):
             keys=list(HIST_KINDS),
         )
 
-    def _spectrum_of(self, values: np.ndarray, bounds, normalize) -> Spectrum | None:
+    def _spectrum_of(
+        self, values: np.ndarray, bounds, normalize, times_s: np.ndarray | None = None
+    ) -> Spectrum | None:
+        """Welch's estimate on the grid, or, given the instants of the measurements, Lomb–Scargle over them."""
         # The spectrum always masks the implausible: interpolating over a spike
         # of 10¹² is the spectrum of the spike, not of the signal. The clamp is
         # about what a histogram counts, which is a question of reading.
-        prepared = prepare(values, None if normalize else bounds)
+        limits = None if normalize else bounds
+        if times_s is not None:
+            prepared = prepare_irregular(times_s, values, limits)
+            return None if prepared is None else lomb_scargle(*prepared)
+        prepared = prepare(values, limits)
         if prepared is None:
             return None
         return welch(prepared, self._controls.params())
@@ -815,12 +1128,11 @@ class SeriesPage(QWidget):
             return
         shade_implausible(plot, self.bounds_of(feature), "x")
 
-    def _add_curve(self, plot: pg.PlotItem, series: Series, x, y) -> pg.PlotDataItem:
-        curve = pg.PlotDataItem(x, y, pen=pg.mkPen(series.color, width=1.2), connect="finite")
-        plot.addItem(curve)
-        curve.setDownsampling(auto=True, method="peak")
-        curve.setClipToView(True)
-        return curve
+    def _add_curve(
+        self, plot: pg.PlotItem, series: Series, x, y, kinds: np.ndarray | None = None
+    ) -> Trace:
+        """One time series in the color of its series: its measurements as dots, the lines between them faint."""
+        return add_trace(plot, x, y, series.color, 1.2, kinds)
 
     def _add_shading(self, plot: pg.PlotItem, series: Series) -> None:
         """Shade the label periods of one instance behind its trace, as the instance window does.
@@ -835,11 +1147,12 @@ class SeriesPage(QWidget):
         grey, and a texture says *nothing is known here* where one more shade
         would just read as one more class.
         """
-        if not series.runs:
+        runs = series.model_runs if self.shade_by_model and series.model_runs else series.runs
+        if not runs:
             return
         offset = self.info.transient_offset
         x0, x1, fills, unknown = [], [], [], []
-        for run in series.runs:
+        for run in runs:
             start, end = relative_hours([run.start, run.end], series.onset)
             kind = label_kind(run.value, offset)
             if kind == "unknown":
@@ -934,8 +1247,8 @@ class SeriesPage(QWidget):
                 got = self._xy(series, feature, normalize, before, after, bounds)
                 if got is None:
                     continue
-                x, y = got
-                self._curves[i].append(self._add_curve(plot, series, x, y))
+                x, y, kinds = got
+                self._curves[i].append(self._add_curve(plot, series, x, y, kinds))
                 drawn.append((i, x, y))
                 low, high = plausible_extent(y, (-np.inf, np.inf) if normalize else bounds)
                 if not np.isnan(low):
@@ -961,14 +1274,14 @@ class SeriesPage(QWidget):
             feature = section.feature
             members = self._drawn_members(section)
             bounds = self.bounds_of(feature)
-            prepared: list[tuple[int, np.ndarray, np.ndarray]] = []
+            prepared: list[tuple[int, np.ndarray, np.ndarray, np.ndarray | None]] = []
             lows, highs = [], []
             for i in members:
                 got = self._xy(self._series[i], feature, normalize, before, after, bounds)
                 if got is None:
                     continue
-                x, y = got
-                prepared.append((i, x, y))
+                x, y, kinds = got
+                prepared.append((i, x, y, kinds))
                 low, high = plausible_extent(y, (-np.inf, np.inf) if normalize else bounds)
                 if not np.isnan(low):
                     lows.append(low)
@@ -986,7 +1299,7 @@ class SeriesPage(QWidget):
 
             n_rows = ceil(len(prepared) / columns)
             section_master = None
-            for k, (i, x, y) in enumerate(prepared):
+            for k, (i, x, y, kinds) in enumerate(prepared):
                 place, column = divmod(k, columns)
                 bottom = place == n_rows - 1
                 plot = self._new_plot(row + place, column)
@@ -1017,7 +1330,7 @@ class SeriesPage(QWidget):
                 else:
                     plot.setYLink(section_master)
                 self._add_shading(plot, self._series[i])
-                self._curves[i].append(self._add_curve(plot, self._series[i], x, y))
+                self._curves[i].append(self._add_curve(plot, self._series[i], x, y, kinds))
                 self._corner_label(plot, self._series[i])
                 self._plots.append(plot)
                 self._plot_series.append([(i, x, y)])
@@ -1039,6 +1352,7 @@ class SeriesPage(QWidget):
         """Per section, what every drawn member gives in the domain chosen: values or a spectrum."""
         normalize = self._normalize.isChecked()
         before, after = self._before.value(), self._after.value()
+        genuine = self._controls.params().genuine
         prepared: dict[object, list] = {}
         for section in sections:
             feature = section.feature
@@ -1051,9 +1365,17 @@ class SeriesPage(QWidget):
                 )
                 if got is None:
                     continue
-                values, codes = got
+                x, values, codes, kinds = got
+                # The measurements alone, when asked: the historian's lines
+                # between them are left out of the count and of the transform.
+                measured = genuine and kinds is not None
+                if measured:
+                    keep = kinds == GENUINE
+                    x, values, codes = x[keep], values[keep], codes[keep]
                 if self.domain == "spectrum":
-                    spectrum = self._spectrum_of(values, bounds, normalize)
+                    spectrum = self._spectrum_of(
+                        values, bounds, normalize, x * 3600.0 if measured else None
+                    )
                     if spectrum is not None:
                         rows.append((i, spectrum))
                 else:
@@ -1413,6 +1735,9 @@ class SeriesPage(QWidget):
             if faded:
                 fill.setAlpha(max(fill.alpha() * FADE_ALPHA // 255, 8))
             for curve in curves:
+                if isinstance(curve, Trace):
+                    curve.set_state("faded" if faded else "front" if i == index else "normal")
+                    continue
                 curve.setPen(pen)
                 curve.setFillBrush(pg.mkBrush(fill))
 

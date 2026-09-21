@@ -18,7 +18,7 @@ a few milliseconds and a grid of widgets would not. Only the rows inside the
 exposed rectangle are painted.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import cos, radians, sin
 
@@ -36,10 +36,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QToolTip, QWidget
 
-from overlap_viewer import theme
-from overlap_viewer.availability import FROZEN, LIVE
-from overlap_viewer.items import MARK_PX, draw_mark
-from overlap_viewer.palette import tint
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.availability import FROZEN, LIVE
+from overlap_viewer.backend.palette import tint
+from overlap_viewer.frontend.items import MARK_PX, draw_mark
 
 CELL_MIN_W, CELL_MAX_W = (
     34,
@@ -56,21 +56,41 @@ PAD = 6
 # recorded in a few samples is told from one not recorded at all.
 RAMP_FLOOR = 0.2
 
-# What a swatch of the key can show: the three states of a cell, the mark, and
-# the ramp of tints a timeline bar takes from the share of samples live.
-SWATCH_KINDS = ("live", "frozen", "absent", "implausible", "ramp")
+# What a swatch of the key can show: the three states of a cell, the filled
+# part of a live cell, the mark, and the ramp of tints a timeline bar takes
+# from the share of samples live.
+SWATCH_KINDS = ("live", "filled", "frozen", "absent", "implausible", "cleaned", "ramp")
 SWATCH_SIZE = (22, 14)
 RAMP_SIZE = (64, 14)
+# How much of the live color the filled part of a cell keeps: pale enough to
+# read as "less", strong enough not to be taken for the ground.
+FILLED_TINT = 0.4
+# The slash of a sensor the Toolkit's rule would discard, in the bottom-left corner.
+SLASH_PX = 6
 
 KEY_LABELS = {
     "live": "live",
+    "filled": "filled in between measurements",
     "frozen": "frozen (one constant reading)",
     "absent": "absent",
     "implausible": "a reading outside the plausible range",
+    "cleaned": "the Toolkit's CleanSignals would discard it",
     "ramp": "share of samples live, from a few to all",
 }
 KEY_TOOLTIPS = {
+    "cleaned": (
+        "In at least one instance of the row the 3W Toolkit's CleanSignals rule would set this "
+        "sensor to missing: its mean or its spread there falls outside the quartiles of the "
+        "dataset's by more than the IQR factor, or it never moves. Hover the cell for how many, "
+        "and for the bound it failed."
+    ),
     "live": "Samples carrying a reading that moves over the instance.",
+    "filled": (
+        "Live samples that were not measured: a straight line the historian drew between two "
+        "measurements, or the last measurement carried forward until the next. They carry a "
+        "reading that moves, but nothing was read there. The solid part of the live share is "
+        "the measurements; this paler part is the rest."
+    ),
     "frozen": (
         "Samples carrying a reading, but one single value from end to end: a dead or "
         "disconnected instrument, which a count of readings would pass off as available. A "
@@ -116,11 +136,31 @@ def ramp_color(live_share: float) -> str:
     return tint(theme.current().live, strength)
 
 
-def paint_cell(p: QPainter, rect: QRect, shares, mark: bool) -> None:
-    """Fill ``rect`` with the live, frozen and absent shares, and the mark if there is one.
+def filled_color() -> str:
+    """The pale live color of the samples the historian filled in."""
+    return tint(theme.current().live, FILLED_TINT)
 
-    Shared with the keys of the pages and with the help, so that a swatch shows
-    exactly what a cell shows.
+
+def draw_slash(p: QPainter, left: float, bottom: float, color: QColor) -> None:
+    """Paint the slash of a sensor the Toolkit's rule would discard, into the bottom-left corner."""
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setPen(QPen(color, 1.6))
+    p.drawLine(QPointF(left + 1, bottom - 1), QPointF(left + 1 + SLASH_PX, bottom - 1 - SLASH_PX))
+    p.restore()
+
+
+def paint_cell(
+    p: QPainter, rect: QRect, shares, mark: bool, filled: float = 0.0, struck: bool = False
+) -> None:
+    """Fill ``rect`` with the live, frozen and absent shares, and the marks if there are any.
+
+    ``filled`` is the share of the cell's samples that are live but were not
+    measured; that much of the live span, at its right end, is drawn in the
+    pale live color, so the solid part is the measurements. ``struck`` puts
+    the slash of the Toolkit's rule in the bottom-left corner. Shared with the
+    keys of the pages and with the help, so that a swatch shows exactly what a
+    cell shows.
     """
     colors = theme.current()
     p.setPen(Qt.PenStyle.NoPen)
@@ -130,6 +170,12 @@ def paint_cell(p: QPainter, rect: QRect, shares, mark: bool) -> None:
     frozen = min(_span(float(shares[FROZEN]), width), width - live)
     if live:
         p.fillRect(QRect(rect.left(), rect.top(), live, rect.height()), QColor(colors.live))
+        pale = min(_span(float(filled), width), live)
+        if pale:
+            p.fillRect(
+                QRect(rect.left() + live - pale, rect.top(), pale, rect.height()),
+                QColor(filled_color()),
+            )
     if frozen:
         frozen_rect = QRect(rect.left() + live, rect.top(), frozen, rect.height())
         p.fillRect(frozen_rect, QColor(colors.frozen))
@@ -139,6 +185,8 @@ def paint_cell(p: QPainter, rect: QRect, shares, mark: bool) -> None:
         p.drawLine(frozen_rect.left(), y, frozen_rect.right(), y)
     if mark:
         draw_mark(p, rect.right() + 1, rect.top(), QColor(colors.warning))
+    if struck:
+        draw_slash(p, rect.left(), rect.bottom() + 1, QColor(colors.text))
 
 
 def swatch_image(kind: str, size: tuple[int, int] | None = None) -> QImage:
@@ -161,11 +209,18 @@ def swatch_image(kind: str, size: tuple[int, int] | None = None) -> QImage:
         painter.fillRect(image.rect(), gradient)
     else:
         shares = np.zeros(3)
-        if kind == "live":
+        if kind in ("live", "filled"):
             shares[LIVE] = 1.0
         elif kind == "frozen":
             shares[FROZEN] = 1.0
-        paint_cell(painter, image.rect(), shares, kind == "implausible")
+        paint_cell(
+            painter,
+            image.rect(),
+            shares,
+            kind == "implausible",
+            1.0 if kind == "filled" else 0.0,
+            kind == "cleaned",
+        )
     painter.setPen(QPen(QColor(theme.current().border), 1))
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawRect(image.rect().adjusted(0, 0, -1, -1))
@@ -203,10 +258,64 @@ class StateKey(QWidget):
         """Reword one entry, e.g. to name the sensor a ramp is about."""
         self._texts[kind].setText(text)
 
+    def set_visible(self, kind: str, shown: bool) -> None:
+        """Show or withdraw one entry, e.g. the filled part while the split is off."""
+        self._texts[kind].setVisible(shown)
+        for chip, name in self._chips:
+            if name == kind:
+                chip.setVisible(shown)
+
     def apply_theme(self) -> None:
         """Paint the swatches again in the theme now in force."""
         for chip, kind in self._chips:
             chip.setPixmap(QPixmap.fromImage(swatch_image(kind)))
+
+
+class ColorKey(QWidget):
+    """A key of plain colors: one swatch and one text per entry, for a matrix of single fills."""
+
+    def __init__(self, entries: Sequence[tuple[str, str]] = (), parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(14)
+        self._chips: list[tuple[QLabel, str]] = []
+        self.set_entries(entries)
+
+    def set_entries(self, entries: Sequence[tuple[str, str]]) -> None:
+        """Replace the entries: ``(color, text)`` pairs, a color being ``#rrggbb``."""
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.layout() is not None:
+                while item.layout().count():
+                    inner = item.layout().takeAt(0)
+                    if inner.widget() is not None:
+                        inner.widget().deleteLater()
+        self._chips = []
+        for color, text in entries:
+            chip = QLabel()
+            label = QLabel(text)
+            entry = QHBoxLayout()
+            entry.setContentsMargins(0, 0, 0, 0)
+            entry.setSpacing(5)
+            entry.addWidget(chip)
+            entry.addWidget(label)
+            self._layout.addLayout(entry)
+            self._chips.append((chip, color))
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        border = theme.current().border
+        for chip, color in self._chips:
+            image = QImage(*SWATCH_SIZE, QImage.Format.Format_ARGB32)
+            image.fill(QColor(color))
+            painter = QPainter(image)
+            painter.setPen(QPen(QColor(border), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(image.rect().adjusted(0, 0, -1, -1))
+            painter.end()
+            chip.setPixmap(QPixmap.fromImage(image))
 
 
 class HeatmapWidget(QWidget):
@@ -232,6 +341,10 @@ class HeatmapWidget(QWidget):
         self._columns: list[str] = []
         self._shares = np.zeros((0, 0, 3))
         self._marks = np.zeros((0, 0), dtype=bool)
+        self._filled: np.ndarray | None = None
+        self._struck: np.ndarray | None = None
+        self._muted_columns: set[int] = set()
+        self._fills: list[list[str | None]] | None = None  # single-color cells, when set
         self._tooltip: Callable[[int, int], str] | None = None
         self._hover = (-1, -1)
         self._left = 0  # x at which the cells start; the row labels sit before it
@@ -242,14 +355,45 @@ class HeatmapWidget(QWidget):
 
     # -- contents
 
-    def set_matrix(self, rows, columns, shares, marks) -> None:
-        """Show ``rows`` by ``columns``; ``shares`` is ``(rows, columns, 3)``, ``marks`` ``(rows, columns)``."""
+    def set_matrix(
+        self, rows, columns, shares, marks, filled=None, struck=None, muted_columns=()
+    ) -> None:
+        """Show ``rows`` by ``columns``; ``shares`` is ``(rows, columns, 3)``, ``marks`` ``(rows, columns)``.
+
+        ``filled``, ``(rows, columns)`` when given, is the share of each cell
+        that is live but was not measured, drawn as the pale end of the live
+        span; ``struck``, ``(rows, columns)`` when given, puts the slash of
+        the Toolkit's rule on a cell; ``muted_columns`` are the positions of
+        the columns whose label is drawn muted, the sensors that rule drops.
+        """
         self._rows = list(rows)
         self._columns = list(columns)
-        self._shares = np.asarray(shares, dtype=float).reshape(
-            len(self._rows), len(self._columns), 3
-        )
-        self._marks = np.asarray(marks, dtype=bool).reshape(len(self._rows), len(self._columns))
+        shape = (len(self._rows), len(self._columns))
+        self._shares = np.asarray(shares, dtype=float).reshape(*shape, 3)
+        self._marks = np.asarray(marks, dtype=bool).reshape(shape)
+        self._filled = None if filled is None else np.asarray(filled, dtype=float).reshape(shape)
+        self._struck = None if struck is None else np.asarray(struck, dtype=bool).reshape(shape)
+        self._muted_columns = set(muted_columns)
+        self._fills = None
+        self._hover = (-1, -1)
+        self._measure()
+        self.update()
+
+    def set_fills(self, rows, columns, fills, muted_columns=()) -> None:
+        """Show ``rows`` by ``columns`` as cells of one color each: ``fills[i][j]`` is ``#rrggbb`` or ``None`` for the ground.
+
+        What a matrix of coefficients is drawn as, where a cell is a value
+        and not a split of shares.
+        """
+        self._rows = list(rows)
+        self._columns = list(columns)
+        shape = (len(self._rows), len(self._columns))
+        self._shares = np.zeros((*shape, 3))
+        self._marks = np.zeros(shape, dtype=bool)
+        self._filled = None
+        self._struck = None
+        self._muted_columns = set(muted_columns)
+        self._fills = [list(row) for row in fills]
         self._hover = (-1, -1)
         self._measure()
         self.update()
@@ -380,7 +524,19 @@ class HeatmapWidget(QWidget):
                 rect = self.cell_rect(i, j).adjusted(
                     CELL_INSET, CELL_INSET, -CELL_INSET, -CELL_INSET
                 )
-                paint_cell(p, rect, self._shares[i, j], bool(self._marks[i, j]))
+                if self._fills is not None:
+                    fill = self._fills[i][j]
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.fillRect(rect, QColor(fill if fill else colors.block_fill))
+                    continue
+                paint_cell(
+                    p,
+                    rect,
+                    self._shares[i, j],
+                    bool(self._marks[i, j]),
+                    float(self._filled[i, j]) if self._filled is not None else 0.0,
+                    bool(self._struck[i, j]) if self._struck is not None else False,
+                )
 
             # The row label, keyed by its swatch; the space of the swatch is
             # kept even when there is none, so the labels line up.
@@ -407,7 +563,10 @@ class HeatmapWidget(QWidget):
         for j, name in enumerate(self._columns):
             font = bold if j == hover_column else normal
             p.setFont(font)
-            p.setPen(QColor(colors.highlight if j == hover_column else colors.text))
+            if j == hover_column:
+                p.setPen(QColor(colors.highlight))
+            else:
+                p.setPen(QColor(colors.faint if j in self._muted_columns else colors.text))
             p.save()
             p.translate(self._left + j * cell_w + cell_w / 2, self._top - 6)
             p.rotate(-LABEL_ANGLE)
@@ -467,9 +626,12 @@ __all__ = [
     "KEY_LABELS",
     "MARK_PX",
     "SWATCH_KINDS",
+    "ColorKey",
     "HeatmapRow",
     "HeatmapWidget",
     "StateKey",
+    "draw_slash",
+    "filled_color",
     "paint_cell",
     "ramp_color",
     "swatch_image",

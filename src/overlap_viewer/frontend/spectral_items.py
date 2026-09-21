@@ -25,14 +25,14 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QSpinBox, QWidget
 
-from overlap_viewer import theme
-from overlap_viewer.spectral import (
+from overlap_viewer.algorithms.spectral import (
     WINDOWS,
     Histogram,
     Spectrum,
     TransformParams,
     format_period,
 )
+from overlap_viewer.backend import theme
 
 # The periods an axis may put a tick at, in seconds: from one second to a month.
 TICK_PERIODS_S = (
@@ -68,6 +68,14 @@ CLAMP_TIP = (
     "histogram is normally asked for: one gauge reporting a pressure of 10¹² Pa would otherwise "
     "put every genuine reading into the first bin. Untick to see the garbage itself — the bins "
     "beyond the range sit on an amber ground, and the axis opens to hold them."
+)
+GENUINE_TIP = (
+    "Count and transform the measurements only, leaving out the samples the historian filled in "
+    "between them — the straight lines it drew from one reading to the next, and the readings it "
+    "carried forward. A histogram then counts what was read; a spectrum becomes the Lomb–Scargle "
+    "periodogram of the readings at their own instants, which needs no grid and is the honest "
+    "spectrum of a series measured every ten seconds or every two minutes. Most sensors of 3W "
+    "were: on the 1 Hz grid, one sample in sixteen is a measurement."
 )
 GRID_ALPHA = 0.25  # the grid of a spectrum plot, faint enough to stay behind the curve
 PEAK_BAR_PX = 14  # how far under the top of a trace plot the bar of one peak period sits
@@ -137,6 +145,10 @@ class TransformControls(QWidget):
         self._clamp = QCheckBox("Plausible only")
         self._clamp.setChecked(True)
         self._clamp.setToolTip(CLAMP_TIP)
+        self._genuine = QCheckBox("Measurements only")
+        self._genuine.setToolTip(GENUINE_TIP)
+        self._spectral_shown = True
+        self._bins_shown = True
 
         for widget in (
             self._segment_label,
@@ -149,6 +161,7 @@ class TransformControls(QWidget):
             self._bins_label,
             self._bins,
             self._clamp,
+            self._genuine,
         ):
             layout.addWidget(widget)
         self._whole.toggled.connect(self._on_whole_toggled)
@@ -157,6 +170,7 @@ class TransformControls(QWidget):
         self._window.currentIndexChanged.connect(self.changed)
         self._bins.valueChanged.connect(self.changed)
         self._clamp.toggled.connect(self.changed)
+        self._genuine.toggled.connect(self.changed)
 
     def _on_whole_toggled(self, checked: bool) -> None:
         self._segment.setEnabled(not checked)
@@ -169,10 +183,16 @@ class TransformControls(QWidget):
             window=self._window.currentText(),
             bins=self._bins.value(),
             clamp=self._clamp.isChecked(),
+            genuine=self._genuine.isChecked(),
         )
+
+    def set_genuine(self, checked: bool) -> None:
+        """Tick or untick *Measurements only*, as a script or a test would."""
+        self._genuine.setChecked(checked)
 
     def show_spectral(self, shown: bool) -> None:
         """Show the segment, overlap and window widgets only while a spectral view is on."""
+        self._spectral_shown = shown
         for widget in (
             self._segment_label,
             self._whole,
@@ -183,6 +203,7 @@ class TransformControls(QWidget):
             self._window,
         ):
             widget.setVisible(shown)
+        self._sync_genuine()
 
     def anything_shown(self) -> bool:
         """Whether any widget is on show, so a toolbar row holding only this can hide with it."""
@@ -190,9 +211,15 @@ class TransformControls(QWidget):
 
     def show_bins(self, shown: bool) -> None:
         """Show the bins widget and the plausibility clamp only while a distribution view is on."""
+        self._bins_shown = shown
         self._bins_label.setVisible(shown)
         self._bins.setVisible(shown)
         self._clamp.setVisible(shown)
+        self._sync_genuine()
+
+    def _sync_genuine(self) -> None:
+        """*Measurements only* serves both views, so it stays while either is on."""
+        self._genuine.setVisible(self._spectral_shown or self._bins_shown)
 
 
 class LogPeriodAxisItem(pg.AxisItem):
@@ -535,9 +562,25 @@ def caption_for(spectrum: Spectrum, unit: str, compact: bool = False) -> str:
     """What a spectrum plot writes in its corner: the dominant period, its share, the segments.
 
     ``compact`` breaks it into short lines, for a plot a couple of hundred
-    pixels wide.
+    pixels wide. A Lomb–Scargle estimate says how many measurements it was
+    taken over, and its share is the variance a sinusoid of the peak period
+    explains, which is what that periodogram measures.
     """
     period, share = spectrum.dominant()
+    if spectrum.lomb_scargle:
+        if np.isfinite(period):
+            line = (
+                f"peak {format_period(period)}<br>explains {share * 100:.0f} % of the variance"
+                if compact
+                else (
+                    f"dominant period {format_period(period)} · a sinusoid of it explains "
+                    f"{share * 100:.0f} % of the variance"
+                )
+            )
+        else:
+            line = "no dominant period"
+        segments = f"Lomb–Scargle over {spectrum.n_points:,} measurements"
+        return f"{line}<br>{segments}" if compact else f"{line} · {segments}"
     if np.isfinite(period):
         line = (
             f"peak {format_period(period)}<br>{share * 100:.0f} % of the power"

@@ -33,8 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from overlap_viewer import theme
-from overlap_viewer.palette import LegendEntry
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.palette import LegendEntry
 
 CHIP_SIZE = (18, 12)
 MAX_POPPED = 4  # entries the retracted key shows at once before counting the rest

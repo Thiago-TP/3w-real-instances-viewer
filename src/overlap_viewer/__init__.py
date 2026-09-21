@@ -8,13 +8,29 @@ the real instances at large, one page per question: a timelines page with one
 interactive timeline per well (an interactive version of the
 ``faults_per_well.pdf`` stage-0 figure of the ``flowml`` pipeline), an
 availability page saying what the sensors of each fault class or well actually
-recorded, and, on click, a window with the time series of an instance and of
-every instance it overlaps, on shared axes.
+recorded, a faults page and a features page comparing the instances' signals,
+and, on click, a window with the time series of an instance and of every
+instance it overlaps, on shared axes.
 
-The backend (``dataset``, ``availability``, ``timemap``, ``labels``,
-``palette``) needs only pandas, numpy and pyarrow; the frontend (``items``,
-``heatmap``, ``overview``, ``availability_page``, ``instance_window``,
-``window``, ``app``) is PySide6 + pyqtgraph.
+The package is laid out by focus, and the dependencies grow from one layer to
+the next:
+
+``backend``
+    What the data is: ``config``, ``dataset`` (the catalogue and its caches),
+    ``labels``, ``timemap``, ``availability``, and the viewer's own data
+    (``theme``, ``palette``, ``help_text``). Pandas, numpy and pyarrow only.
+``algorithms``
+    What is computed from the data: ``faults`` (onsets, scaling), ``spectral``
+    (the signal views) and every analysis derived from the instances. Numpy
+    only; anything heavier is an optional extra, declared in ``pyproject.toml``
+    and looked up through ``backend.extras`` so that a missing one greys a
+    control instead of breaking the viewer.
+``frontend``
+    How it is shown: the pyqtgraph items, the pages, the instance window and
+    the main window. PySide6 and pyqtgraph.
+
+``app`` is the command line and start-up; it is the one module of the top
+level that imports from all three.
 """
 
 __version__ = "0.1.0"

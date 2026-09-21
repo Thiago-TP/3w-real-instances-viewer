@@ -17,8 +17,8 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from overlap_viewer.config import DEFAULT_TRANSIENT_OFFSET
-from overlap_viewer.labels import Segment, column_as_float
+from overlap_viewer.backend.config import DEFAULT_TRANSIENT_OFFSET
+from overlap_viewer.backend.labels import Segment, column_as_float
 
 # Where the instances of a fault can be aligned: the first sample labeled with
 # the transient of the event, the first labeled with its steady state, or the

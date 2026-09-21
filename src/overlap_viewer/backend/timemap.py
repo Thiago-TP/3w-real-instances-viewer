@@ -17,7 +17,7 @@ from itertools import pairwise
 import numpy as np
 import pandas as pd
 
-from overlap_viewer.config import DEFAULT_GAP_HOURS, GAP_SHARE
+from overlap_viewer.backend.config import DEFAULT_GAP_HOURS, GAP_SHARE
 
 HOUR = np.timedelta64(3_600_000_000_000, "ns")
 

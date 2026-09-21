@@ -19,11 +19,13 @@ from pathlib import Path
 import pyqtgraph as pg
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from overlap_viewer import __version__, styling, theme
-from overlap_viewer.config import DEFAULT_GAP_HOURS, RAW_DIR_CANDIDATES, RAW_DIR_ENV
-from overlap_viewer.dataset import DatasetInfo, ScanCancelled
-from overlap_viewer.loading import catalogue_with_progress
-from overlap_viewer.window import MainWindow
+from overlap_viewer import __version__
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.config import DEFAULT_GAP_HOURS, RAW_DIR_CANDIDATES, RAW_DIR_ENV
+from overlap_viewer.backend.dataset import DatasetInfo, ScanCancelled
+from overlap_viewer.frontend import styling
+from overlap_viewer.frontend.loading import catalogue_with_progress
+from overlap_viewer.frontend.window import MainWindow
 
 
 def looks_like_dataset(path: Path) -> bool:

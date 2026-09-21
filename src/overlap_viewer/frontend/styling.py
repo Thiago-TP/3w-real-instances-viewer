@@ -15,8 +15,8 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-from overlap_viewer import theme
-from overlap_viewer.theme import Theme
+from overlap_viewer.backend import theme
+from overlap_viewer.backend.theme import Theme
 
 SETTINGS = ("overlap-viewer", "3W Overlap Viewer")  # organization, application
 THEME_KEY = "appearance/theme"

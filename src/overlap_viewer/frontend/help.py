@@ -302,15 +302,21 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
             "tells the measurements taken there apart.</p>"
         ),
         '<table cellspacing="0" cellpadding="5" width="100%">',
-        "<tr><th>Variable</th><th>Position</th><th>Where it is measured</th><th>What it is</th></tr>",
+        (
+            "<tr><th>Variable</th><th>Unit</th><th>Position</th><th>Where it is measured</th>"
+            "<th>What it is</th></tr>"
+        ),
     ]
     for name in info.sensor_names:
         entry = VARIABLES.get(name)
         unit = info.unit(name)
         described = info.sensor_descriptions.get(name, "")
-        cell = [f"<b>{name}</b>"]
         if unit:
-            cell.append(f' <span class="sub">[{unit}]</span>')
+            unit_cell = unit
+        elif info.is_enumerated(name):
+            unit_cell = '<span class="sub">state</span>'
+        else:
+            unit_cell = "&mdash;"
         what = []
         if described:
             what.append(described)
@@ -323,7 +329,8 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
         where = entry.where if entry is not None else '<span class="muted">not documented</span>'
         position = entry.position if entry is not None and entry.position else "&mdash;"
         parts.append(
-            f'<tr><td valign="top">{"".join(cell)}</td>'
+            f'<tr><td valign="top"><b>{name}</b></td>'
+            f'<td valign="top" align="center">{unit_cell}</td>'
             f'<td valign="top" align="center">{position}</td>'
             f'<td valign="top" class="sub">{where}</td>'
             f'<td valign="top">{"<br>".join(what) or "&mdash;"}</td></tr>'
@@ -396,16 +403,18 @@ def availability_help_page(figures: "Figures | None" = None) -> str:
             "the variable:</p>"
         ),
         '<table cellspacing="0" cellpadding="5">',
-        "<tr><th>Quantity</th><th>Range</th><th>Why</th></tr>",
+        "<tr><th>Quantity</th><th>Unit</th><th>Range</th><th>Why</th></tr>",
     ]
     for unit, (low, high) in PLAUSIBLE_RANGES.items():
         quantity, why = PLAUSIBLE_RANGE_NOTES.get(unit, (unit, ""))
         parts.append(
-            f'<tr><td valign="top"><b>{quantity}</b> <span class="sub">[{unit}]</span></td>'
+            f'<tr><td valign="top"><b>{quantity}</b></td>'
+            f'<td valign="top" align="center">{unit}</td>'
             f'<td valign="top">{low:g} to {high:g}</td><td valign="top" class="sub">{why}</td></tr>'
         )
     parts.append(
-        f'<tr><td valign="top"><b>Everything</b></td><td valign="top">|reading| below '
+        f'<tr><td valign="top"><b>Everything</b></td><td valign="top" align="center">&mdash;</td>'
+        f'<td valign="top">|reading| below '
         f'{EXTREME_VALUE_LIMIT:g}</td><td valign="top" class="sub">{MAGNITUDE_NOTE}</td></tr>'
     )
     parts.append("</table>")

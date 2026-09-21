@@ -488,8 +488,9 @@ def pack_lanes(starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
     exactly when they do not overlap, so the number of lanes is the deepest
     pile-up of the well, and a chain of sliding windows alternates between
     two lanes, its overlaps visible as the horizontal offset between them.
-    This is the very rule the ``flowml`` pipeline drops overlapping instances
-    by (it keeps the bottom lane only).
+    This is the rule a simple deduplication would use to drop overlapping
+    instances by (keep the bottom lane only); the viewer draws every lane
+    instead.
 
     Returns the lane index (0-based) per instance, in the input order.
     """

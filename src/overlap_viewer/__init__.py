@@ -5,12 +5,10 @@ one well are windows cut from the same continuous recording, so they often
 overlap in time, and the shared samples then carry two different labels. This
 package started as a viewer of those overlaps and is growing into a viewer of
 the real instances at large, one page per question: a timelines page with one
-interactive timeline per well (an interactive version of the
-``faults_per_well.pdf`` stage-0 figure of the ``flowml`` pipeline), an
-availability page saying what the sensors of each fault class or well actually
-recorded, a faults page and a features page comparing the instances' signals,
-and, on click, a window with the time series of an instance and of every
-instance it overlaps, on shared axes.
+interactive timeline per well, an availability page saying what the sensors
+of each fault class or well actually recorded, a faults page and a features
+page comparing the instances' signals, and, on click, a window with the time
+series of an instance and of every instance it overlaps, on shared axes.
 
 The package is laid out by focus, and the dependencies grow from one layer to
 the next:

@@ -129,7 +129,7 @@ def test_the_descriptors_are_what_the_thesis_defines():
 
 
 def test_the_spectrum_of_the_measurements_needs_no_grid():
-    """Lomb–Scargle over the instants of measurement finds the cycle Welch finds on the grid, in the same units."""
+    """Lomb-Scargle over the instants of measurement finds the cycle Welch finds on the grid, in the same units."""
     t_meas, v_meas, grid = historian(3600, 10)
     prepared = prepare_irregular(t_meas, v_meas)
     assert prepared is not None

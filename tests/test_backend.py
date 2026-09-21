@@ -1276,7 +1276,9 @@ def test_the_optional_groups_are_declared_once_and_answer_for_themselves(monkeyp
     readme = (PROJECT_DIR / "README.md").read_text(encoding="utf-8")
     for name, extra in extras.EXTRAS.items():
         assert extra.name == name
-        assert f"| `{name}` |" in readme, f"the README table does not list the {name} group"
+        # Tolerate the padding a markdown formatter puts in to align the columns.
+        listed = re.search(rf"^\|\s*`{re.escape(name)}`\s*\|", readme, re.MULTILINE)
+        assert listed, f"the README table does not list the {name} group"
         assert extra.enables in readme, f"the README does not say what {name} enables"
     # A group that imports answers None; one that does not says what and how.
     extras.forget()

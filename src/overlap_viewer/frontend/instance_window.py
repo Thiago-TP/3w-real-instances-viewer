@@ -150,7 +150,7 @@ VIEW_TIPS = {
         "dominant period and its share of the power — a few percent for a normal instance, half "
         "or more for an oscillating one — and one cycle of that period is laid against the trace, "
         "so the claim can be checked against the waves. It takes a row under the trace, the "
-        "period along the bottom. With 'Measurements only' ticked it is the Lomb–Scargle "
+        "period along the bottom. With 'Measurements only' ticked it is the Lomb-Scargle "
         "periodogram of the measurements at their own instants, the historian's lines left out."
     ),
 }
@@ -1423,7 +1423,7 @@ class InstanceWindow(QMainWindow):
         )
 
     def _spectrum_on_screen(self, sub: pd.DataFrame, panel: StretchPanel, window: slice, params):
-        """The spectrum of one feature over the stretch on screen: Welch's on the grid, or Lomb–Scargle over the measurements."""
+        """The spectrum of one feature over the stretch on screen: Welch's on the grid, or Lomb-Scargle over the measurements."""
         if not len(sub) or panel.feature not in sub.columns:
             return None
         kinds = self._kinds_of(panel.position, panel.feature)

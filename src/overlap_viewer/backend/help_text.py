@@ -1,6 +1,6 @@
 """What the help window says about the dataset. Text only, no Qt.
 
-Everything here comes from the three documents in ``docs/papers`` and from the
+Everything here comes from Vargas' founding works and from the
 ``dataset.ini`` shipped with the dataset:
 
 - the **2.0.0 data article** (Vargas et al., 2025), which describes the dataset
@@ -37,8 +37,8 @@ class Figure:
 # one says so, since the reader has just been told what the viewer's colors mean.
 TOOL_COLORS = (
     "The colors are the labeling tool's, not this viewer's: the lower half of each panel is the "
-    "class label — light green normal operation, yellow the transient, red the steady state of "
-    "the event — and the upper half the well status, dark green for Open."
+    "class label (light green normal operation, yellow the transient, red the steady state of "
+    "the event) and the upper half the well status, dark green for Open."
 )
 TOOL_UNITS = (
     "Pressures are in the tool's own units (bar, kPa, kgf/cm²) rather than the pascal of the "
@@ -147,8 +147,8 @@ FIGURES: dict[str, Figure] = {
         width=866,
         caption=(
             "A real Hydrate in Production Line (2019-05-03 20:15 to 2019-05-06 08:00, two and a "
-            "half days). Upstream of the forming plug the pressures drift up — downhole (P-PDG) "
-            "from 167 to about 197 kgf/cm², at the tree (P-TPT) from 12.2 to about 15 MPa — while "
+            "half days). Upstream of the forming plug the pressures drift up (downhole (P-PDG) "
+            "from 167 to about 197 kgf/cm², at the tree (P-TPT) from 12.2 to about 15 MPa) while "
             "downstream of it the pressure upstream of the choke (P-MON-CKP) sags from 5.3 to "
             "about 2.5 MPa and the tree temperature (T-TPT) cools from 25.5 to about 21.5 °C. "
             "Nothing steps: the labels leave normal operation early on 4 May and stay in the "
@@ -187,7 +187,7 @@ TRANSIENT_CAPABLE = set(DEFAULT_TRANSIENT_CAPABLE)
 # How long a window the well-monitoring analysts at Petrobras look at before
 # they will confirm an occurrence (table 1 of both articles and of the thesis).
 # It is the time the evidence takes to become conclusive to a human, not how
-# long the event lasts — but it is the best published measure of the pace of
+# long the event lasts, but it is the best published measure of the pace of
 # each event, and it says why some of them need a whole instance on screen and
 # others a few minutes. Hydrate in Service Line arrived with version 2.0.0 and
 # has no published figure.
@@ -208,8 +208,8 @@ FAULTS: dict[int, FaultHelp] = {
         what=(
             "The well is in full production, in a steady regime with no significant anomaly. Every "
             "event in the dataset starts from this state. The thesis names four mutually exclusive "
-            "states a naturally flowing well can be in — closed, normal operation, starting and "
-            "closing — and warns that no standard or authority defines them, so the vocabulary is "
+            "states a naturally flowing well can be in, i.e., closed, normal operation, starting and "
+            "closing, and warns that no standard or authority defines them, so the vocabulary is "
             "Petrobras's own; version 2.0.0 of the dataset replaced them with the nine operational "
             "statuses this viewer draws in the state band."
         ),
@@ -262,9 +262,9 @@ FAULTS: dict[int, FaultHelp] = {
             "hydraulic actuator; it is built to fail closed, so that the well shuts itself in if "
             "the platform is lost. Occasionally it closes on its own, and both the article and the "
             "thesis stress that this usually happens <b>with no indication at the surface at "
-            "all</b> — not even a pressure drop in the actuator — which leaves the process "
+            "all</b>, not even a pressure drop in the actuator, which leaves the process "
             "variables as the only evidence. Caught in time it can be reopened by a corrective "
-            "procedure, which is exactly what makes predicting it worth something."
+            "procedure, which is exactly what makes predicting it worthwhile."
         ),
         signature=(
             "The closed valve splits the well in two and the readings diverge accordingly: below "
@@ -282,7 +282,7 @@ FAULTS: dict[int, FaultHelp] = {
         what=(
             "The critical flow instability: liquid accumulates and is then expelled in surges, "
             "which cycles the pressure of the whole production path and can stress or damage "
-            "equipment in the well and in the plant. Two marks define it — a well-defined "
+            "equipment in the well and in the plant. Two marks define it: a well-defined "
             "periodicity, around 30, 45 or 60 minutes, and an intensity usually large enough to be "
             "seen by every sensor along the production circuit. Recognized early, the well's "
             "operation can be changed to reverse it."
@@ -316,7 +316,7 @@ FAULTS: dict[int, FaultHelp] = {
             "The same variables as severe slugging, without the rhythm: the tree pressure and "
             "temperature and the readings around the choke wander aperiodically, by a fraction of "
             "their own level, over minutes to hours. Periodic and intense is severe slugging; "
-            "aperiodic and tolerable is flow instability — that contrast is the only discriminator "
+            "aperiodic and tolerable is flow instability. This contrast is the only discriminator "
             "the sources state."
         ),
         notes=(
@@ -329,8 +329,8 @@ FAULTS: dict[int, FaultHelp] = {
     5: FaultHelp(
         name="Rapid Productivity Loss",
         what=(
-            "The productivity of a naturally flowing well rests on reservoir properties — static "
-            "pressure, water and sediment content, productivity index, gas-oil ratio, viscosity — "
+            "The productivity of a naturally flowing well rests on reservoir properties (static "
+            "pressure, water and sediment content, productivity index, gas-oil ratio, viscosity, etc.) "
             "and the reservoir keeps changing as it empties. When those properties change so far "
             "that the system's energy no longer overcomes its losses, the fluid can no longer "
             "reach the surface and production ceases: in the limit, the well loses its natural "
@@ -357,12 +357,12 @@ FAULTS: dict[int, FaultHelp] = {
             "the well at the surface, and it is generally operated by hand, so an operational slip "
             "can restrict it sharply. The term is internal to Petrobras and undefined in the "
             "literature; the working definition is a restriction of more than some reference "
-            "amplitude, 5 % say, within a short time, ten seconds say. Being a manual valve, an "
+            "amplitude, say, 5 %, within a short time, day, 10 seconds. Being a manual valve, an "
             "unwanted restriction can also be undone quickly."
         ),
         signature=(
-            "The choke opening (ABER-CKP) steps down and every pressure behind it rises together — "
-            "upstream of the choke (P-MON-CKP), at the tree (P-TPT) and downhole (P-PDG) — while "
+            "The choke opening (ABER-CKP) steps down and every pressure behind it rises together "
+            "(upstream of the choke (P-MON-CKP), at the tree (P-TPT) and downhole (P-PDG)) while "
             "the tree temperature and the temperature downstream of the choke fall. It develops in "
             "minutes: about eleven, in the thesis's example."
         ),
@@ -384,15 +384,15 @@ FAULTS: dict[int, FaultHelp] = {
         ),
         signature=(
             "The 2.0.0 article publishes no example, but the thesis's worked instance gives "
-            "<b>the same directions as a quick restriction of the same valve</b> — the tree "
+            "<b>the same directions as a quick restriction of the same valve</b> (the tree "
             "pressure and the pressure upstream of the choke climb while the tree temperature and "
-            "the temperature downstream of the choke fall — spread over some ten hours instead of "
-            "ten minutes. Timescale, not direction, is what tells the two apart: analysts confirm "
+            "the temperature downstream of the choke fall) spread over some ten hours instead of "
+            "ten minutes. Timescale is what tells the two apart: analysts confirm "
             "a restriction within a quarter of an hour and scaling over three days."
         ),
         notes=(
             "The only event that stays rare even after the simulated and hand-drawn instances are "
-            "counted, and the one the OLGA simulations could not produce at all — hence its "
+            "counted, and the one the OLGA simulations could not produce at all, hence its "
             "hand-drawn instances."
         ),
         source="thesis, section 2.3.7 and figure 9; 1.0.0 article",
@@ -404,13 +404,13 @@ FAULTS: dict[int, FaultHelp] = {
             "needs water and gas together at high pressure and low temperature, so lines carrying "
             "dead oil never see it and gas wells see it most, but an oil well can be blocked "
             "outright. Clearing a plug costs days or weeks of production, and sometimes an "
-            "offshore rig at more than half a million dollars a day — which is why the shut-in "
+            "offshore rig at more than half a million dollars a day, which is why the shut-in "
             "procedures in the state band exist: depressurizing, flushing the line with diesel or "
             "gas, bullheading."
         ),
         signature=(
-            "Pressures rise upstream of the forming plug — downhole (P-PDG) and at the tree "
-            "(P-TPT) — while the pressure downstream of it, upstream of the production choke "
+            "Pressures rise upstream of the forming plug (downhole (P-PDG) and at the tree "
+            "(P-TPT)) while the pressure downstream of it, upstream of the production choke "
             "(P-MON-CKP), falls and the tree temperature (T-TPT) drifts down. It is a slow drift "
             "over hours or days rather than a step. In the thesis's example the collapse of the "
             "tree temperature is what says the flow had stopped completely."
@@ -428,8 +428,8 @@ FAULTS: dict[int, FaultHelp] = {
     9: FaultHelp(
         name="Hydrate in Service Line",
         what=(
-            "The same crystalline blockage as in the production line, but in the service line — "
-            "the line that carries diesel or gas down to the well for flushing and the other "
+            "The same crystalline blockage as in the production line, but in the service line, "
+            "the line that carries diesel or gas down to the well for flushing and other "
             "operations against hydrates. The 2.0.0 article says its signature patterns are "
             "distinct from the production line's, without saying what they are."
         ),
@@ -450,9 +450,9 @@ class VariableHelp:
     """Where one variable is measured, and what is worth knowing about it.
 
     ``position`` is the number that marks the sensor in figure 1 of the 2.0.0
-    article (the ``platform`` figure above the table), from its table 2: the
-    figure before the point names a spot in the production system — 2 is the
-    production choke, 14 the downhole gauge, 15 the tree transducer — and the
+    article (the ``platform`` figure above the table), from its table 2. The
+    figure before the point names a spot in the production system: 2 is the
+    production choke, 14 the downhole gauge, 15 the tree transducer. The
     figure after it tells the measurements taken at that spot apart.
     """
 
@@ -536,7 +536,7 @@ VARIABLES: dict[str, VariableHelp] = {
         DOWNHOLE,
         "Pressure at the permanent downhole gauge, the deepest measurement there is, next to the "
         "reservoir. It rises whenever something downstream of it closes or blocks. With the tree "
-        "pressure it is the most relevant reading for flow analysis — and, the thesis notes, also "
+        "pressure it is the most relevant reading for flow analysis and, the thesis notes, also "
         "the one that most often fails or is missing, since the gauge is screwed to the production "
         "tubing and replacing it means pulling the tubing.",
         position="14.1",
@@ -547,8 +547,7 @@ VARIABLES: dict[str, VariableHelp] = {
     "P-TPT": VariableHelp(
         TREE,
         "Pressure at the tree transducer, between the well and the flowline, inside the christmas "
-        "tree and considered reliable. It takes part in the signature of every event the "
-        "literature illustrates.",
+        "tree and considered reliable. It takes part in the signature of every event illustrated.",
         position="15.1",
     ),
     "QBS": VariableHelp(SERVICE, "Flow rate at the service pump.", position="13.2"),
@@ -625,7 +624,7 @@ DATASET_NOTES = [
     (
         "One file, one instance",
         (
-            "The dataset stores one parquet file per instance, sampled once a second, in a folder "
+            "The dataset stores one parquet file per instance, sampled/interpolated once a second, in a folder "
             "named after the class of the event it carries. A real instance is named after its "
             "well and the timestamp of its first sample, which is the name this viewer writes "
             "inside each bar."
@@ -639,7 +638,7 @@ DATASET_NOTES = [
             "enter a dataset twice, and often under different labels, since the end of one "
             "instance can be the normal period that precedes the event another one records. None "
             "of the three documents says how the windows were cut, or whether they may overlap; "
-            "showing that they do is what this viewer is for."
+            "showing that they do is what this viewer is for. Thankfully, label conflicts are trivial."
         ),
     ),
     (
@@ -655,15 +654,14 @@ DATASET_NOTES = [
     (
         "The data is left as it was recorded",
         (
-            "Real instances keep their frozen sensors, their missing variables and their outliers: "
-            "the papers leave them untreated on purpose, so that methods have to cope with them. A "
-            "variable counts as <i>missing</i> when every one of its readings is missing in that "
-            "instance, and as <i>frozen</i> when they all carry one single value — not always a "
-            "fault, but a symptom of a sensor, configuration or network problem, and a variable "
-            "that cannot show the pattern of an event. About two thirds of the variable-instance "
-            "pairs of version 2.0.0 are missing and about a tenth frozen, which is why so many "
-            "panels in this viewer read <i>not recorded</i> or <i>flat</i>. The Availability page "
-            "counts them, sensor by sensor."
+            "Real instances keep their frozen sensors, their missing variables and their outliers "
+            "so that methods have to cope with them. A variable counts as <i>missing</i> when "
+            "every one of its readings is missing in that instance, and as <i>frozen</i> when "
+            "they all carry one single value; not always a fault, but a symptom of a sensor, "
+            "configuration or network problem, and a variable that cannot show the pattern of an event. "
+            "About two thirds of the variable-instance pairs of version 2.0.0 are missing and about "
+            "a tenth frozen, which is why so many panels in this viewer read <i>not recorded</i> or "
+            "<i>flat</i>. The Availability page counts them, sensor by sensor."
         ),
     ),
     (
@@ -683,7 +681,7 @@ DATASET_NOTES = [
             "The class column is 0 during normal operation, the number of the event once it has "
             "installed itself (its steady state), and that number plus 100 while it is installing "
             "itself (its transient period). An instance therefore holds up to three periods in "
-            "order — normal, faulty transient, faulty steady state — and no instance carries more "
+            "order (normal, faulty transient, faulty steady state) and no instance carries more "
             "than one event. The transient period is the point of the whole design: it is the "
             "stretch where the dynamics of the event are still under way, so learning it means "
             "<i>predicting</i> the steady state rather than merely detecting it. Severe Slugging "
@@ -695,9 +693,9 @@ DATASET_NOTES = [
         "The labels are expert judgement",
         (
             "Instances were labeled by Petrobras specialists in each event, and the thesis "
-            "describes the onset of a transient as the moment <i>indicated by a specialist</i> — a "
-            "judgement, not a measurement. None of the documents reports how far two labelers "
-            "would agree."
+            "describes the onset of a transient as the moment <i>indicated by a specialist</i>. "
+            "This is a matter of judgement, not a measurement. None of the documents reports how "
+            "far two labelers would agree."
         ),
     ),
     (
@@ -776,7 +774,7 @@ AVAILABILITY_STATES: list[tuple[str, str, str]] = [
             "The mark of a reading no instrument could have produced, in at least one instance "
             "of the row: a negative absolute pressure, a temperature outside the band below, a "
             "magnitude beyond 1e8. Such a sensor is still live, since its readings are there and "
-            "move, but what they say is not a measurement. Hover the cell for how many "
+            "move, but what they say is not plausably a measurement. Hover the cell for how many "
             "instances, and the plots of the instance window call the readings out in the same "
             "amber."
         ),
@@ -784,7 +782,7 @@ AVAILABILITY_STATES: list[tuple[str, str, str]] = [
 ]
 
 # Why each plausible range is what it is, per unit of ``config.PLAUSIBLE_RANGES``:
-# the quantity, and the reasoning of the ``flowml`` survey of 3W 2.0.0.
+# the quantity, and the reasoning behind the survey of 3W 2.0.0 that found it.
 PLAUSIBLE_RANGE_NOTES: dict[str, tuple[str, str]] = {
     "Pa": (
         "Pressures",
@@ -799,8 +797,7 @@ PLAUSIBLE_RANGE_NOTES: dict[str, tuple[str, str]] = {
         "Temperatures",
         (
             "The floor is below every genuine reading of the dataset (T-TPT reaches -33.8 °C "
-            "during a blowdown, which is real: the cooling of a gas expanding is exactly the "
-            "condition hydrates form in) and the ceiling twice the hottest one (127.7 °C). The "
+            "during a blowdown) and the ceiling twice the hottest one (127.7 °C). The "
             "band catches the sentinels -999 and -99.99 the plant's information system leaks "
             "into the data, and T-PDG readings of 30,000 °C."
         ),
@@ -832,14 +829,14 @@ AVAILABILITY_NOTES = [
             "4.2.5): the readings sit on straight lines between a few extremes, the plant's PI "
             "historian having interpolated linearly between the values it archived, and the "
             "scatter plot of two such series shows trajectories that are nothing but the ups and "
-            "downs of two interpolations — spurious dynamics and spurious correlations, an "
+            "downs of two interpolations, creating spurious dynamics and spurious correlations, an "
             "impediment to the exploratory analysis he set out to do, so he stopped there. The "
             "viewer takes the direct route he considered too uncertain to take on the whole "
             "dataset: a straight line is a run of samples whose first difference is constant. A "
             "sample that lies on the line between its two neighbours, to one part in a million "
             "of the reading (the interpolation was evidently done in single precision), is "
             "<b>interpolated</b>; one that repeats the sample before it is <b>held</b>; the rest "
-            "— the ends of every line and the first of every held run — are the "
+            "(the ends of every line and the first of every held run) are the "
             "<b>measurements</b>, one per value the historian archived. Interpolated and held "
             "together are <i>filled</i>. What the test cannot decide it counts as filled: a "
             "quantized sensor that repeats a value for three seconds, or climbs one step a "
@@ -856,18 +853,18 @@ AVAILABILITY_NOTES = [
             "halve on the grid and 73 s on the measurements. Wherever the viewer shows such a "
             "figure taken on the grid, it says so.<br><br>"
             "The viewer shows the measurements in four places. Every time series draws them as "
-            "dots, with the line through every sample — which between two dots is exactly the "
-            "historian's line — faint beneath: dense dots are a sensor read every second, sparse "
+            "dots, with the line through every sample (which between two dots is exactly the "
+            "historian's line) faint beneath: dense dots are a sensor read every second, sparse "
             "dots on a faint line a sensor filled in. <i>Measured vs filled</i>, on this page, "
             "splits the live share of every cell, and the Timelines' <i>Bar color: Measurements "
             "of a sensor</i> tints every bar by the share of its live samples that were measured. "
             "And <i>Measurements only</i>, in the toolbar of the signal views, counts and "
             "transforms the measurements alone: the histograms count what was read, and the "
-            "spectrum becomes the Lomb–Scargle periodogram of the readings at their own instants, "
+            "spectrum becomes the Lomb-Scargle periodogram of the readings at their own instants, "
             "which needs no grid and is the honest spectrum of an irregularly sampled series, "
             "scaled so that it integrates to their variance as a density does. The pass that "
-            "finds all this reads every file in full — about a minute and a half for the whole "
-            "dataset, once, cached — and profiles every sensor of every instance and of every bar "
+            "finds all this reads every file in full (about a minute and a half for the whole "
+            "dataset, once, cached) and profiles every sensor of every instance and of every bar "
             "of the joined view as the merged recording it is, so that the joined view and the "
             "plain one never disagree."
         ),
@@ -880,13 +877,13 @@ AVAILABILITY_NOTES = [
             "every sensor it takes the mean and the spread (standard deviation) of the signal in "
             "every instance and puts bounds at the quartiles of those figures, three interquartile "
             "ranges out on either side; an instance whose mean or whose spread falls outside them "
-            "loses the sensor, set to missing — a signal frozen, or stuck at a level no other "
-            "instance shows. The lower bound on the spread is floored at an absolute 1e-6, so a "
-            "signal that never moves is always discarded. A sensor entirely missing in 60 % or "
-            "more of the instances is dropped from all of them. The valve states are exempt."
+            "loses the sensor, set to missing. The lower bound on the spread is floored at an "
+            "absolute 1e-6, so a signal that never moves is always discarded. A sensor entirely "
+            "missing in 60 % or more of the instances is dropped from all of them. "
+            "The valve states are exempt."
             "<br><br>"
-            "<i>Toolkit's CleanSignals</i>, on this page, applies the rule to the bars on show — "
-            "the instances, or the joined bars, on which it is fitted afresh — and marks every "
+            "<i>Toolkit's CleanSignals</i>, on this page, applies the rule to the bars on show "
+            "(the instances, or the joined bars, on which it is fitted afresh) and marks every "
             "cell in which the rule would discard the sensor in at least one instance of the row "
             "with a slash in its corner; the columns it would drop are greyed. The tooltip and "
             "the status bar say in how many instances, and for a single instance which bound it "
@@ -900,7 +897,7 @@ AVAILABILITY_NOTES = [
             "spread and the emptiness of every sensor in every instance, which the profile pass "
             "holds, so it costs nothing once that pass has run. One difference from the Toolkit "
             "is kept on purpose: the profiles describe the plausible readings, so a sensor whose "
-            "readings are instrument garbage is not discarded here by a mean of 10⁴² — it wears "
+            "readings are instrument garbage is not discarded here by a mean of 1e42, it wears "
             "the amber mark instead, which says more."
         ),
     ),
@@ -1040,8 +1037,8 @@ AVAILABILITY_SOURCES = (
     "(Universidade de Brasília, 2026, in <code>docs/papers</code>), whose section 2.3.2 measures "
     "the missing data per sensor and class (figure 2.8), the coverage of every sensor (figure 2.9) "
     "and of every pair of sensors (figure 2.10), and whose section 5.3.1 relates coverage to what "
-    "the models learn; the <b>flowml</b> pipeline, whose cleaning rules the plausible ranges "
-    "are; and the doctoral thesis of <b>A. Melo</b> (in <code>docs/papers</code>), whose section "
+    "the models learn; a survey of every instance of 3W 2.0.0 for the plausible ranges shown in "
+    "this help; and the doctoral thesis of <b>A. Melo</b> (in <code>docs/papers</code>), whose section "
     "4.1.5 reads the relations between variables through the Pearson, mutual-information and "
     "nonlinear coefficients the correlation matrix shows, and whose section 4.2.5 found the "
     "historian's lines. This page counts the real instances only, and every one of them, where "
@@ -1096,7 +1093,7 @@ MAP_NOTES = [
             "averaged into 400 blocks — a matter of cost, since the distance costs the product of "
             "the two lengths and a six-hour instance has 21,600 samples; the blocks stay "
             "proportional to the length of the instance, so this is not the resampling of every "
-            "instance to one common length, which changes what a shape is. A Sakoe–Chiba window "
+            "instance to one common length, which changes what a shape is. A Sakoe-Chiba window "
             "of a tenth of the length keeps the alignment from running away. It is taken within "
             "one class, the class and the sensor chosen in the toolbar, and the points are then "
             "that class's instances alone."
@@ -1732,7 +1729,7 @@ USAGE = {
         ),
         (
             "<b>'Plausible only'</b>, beside 'Bins', is what every histogram counts by default: "
-            "the readings inside the plausible range of the flowml pipeline. It is what a "
+            "the readings inside the plausible range. It is what a "
             "histogram is normally asked for — one gauge reporting 10¹² Pa would otherwise put "
             "every genuine reading into the first bin — but it hides the very thing a data "
             "review is looking for, so unticking it counts the garbage too, on an amber ground "
@@ -1811,7 +1808,7 @@ USAGE = {
             "<b>'Measurements only'</b>, beside 'Plausible only', counts and transforms the "
             "measurements alone, leaving out the samples the historian filled in between them. A "
             "histogram then counts what was read, its caption saying so; a spectrum becomes the "
-            "<b>Lomb–Scargle periodogram</b> of the readings at their own instants, which fits a "
+            "<b>Lomb-Scargle periodogram</b> of the readings at their own instants, which fits a "
             "sinusoid of each period to them by least squares and needs no grid — the honest "
             "spectrum of a series read every ten seconds or every two minutes, where a transform "
             "of the 1 Hz grid is a transform of the historian's lines. Its caption gives the "

@@ -25,7 +25,7 @@ The 1 Hz grid is itself an interpolation for most sensors of the dataset (see
 measurements taken every ten seconds or every two minutes. A transform of the
 grid is therefore a transform of those lines. Asked for the **measurements
 only**, the views count the histogram over the genuine samples and take the
-spectrum with the Lomb–Scargle periodogram, which needs no grid: it fits a
+spectrum with the Lomb-Scargle periodogram, which needs no grid: it fits a
 sinusoid of each period to the measurements at the instants they were taken,
 and is the honest spectrum of an irregularly sampled series.
 """
@@ -36,7 +36,7 @@ import numpy as np
 
 from overlap_viewer.backend.labels import is_flat
 
-# The Lomb–Scargle periodogram is evaluated at this many periods, equally
+# The Lomb-Scargle periodogram is evaluated at this many periods, equally
 # spaced in log period, and over at most this many measurements (thinned
 # evenly beyond it: a merged recording of days has hundreds of thousands, and
 # the periods of interest are minutes to hours).
@@ -75,7 +75,7 @@ class TransformParams:
     garbage be looked at rather than only counted. ``genuine`` restricts every
     view to the measurements, leaving out the samples the historian filled in
     between them: the histograms count the measurements alone and the spectra
-    become Lomb–Scargle periodograms over the instants of measurement.
+    become Lomb-Scargle periodograms over the instants of measurement.
     """
 
     segment_s: int = 0
@@ -102,7 +102,7 @@ class Spectrum:
     segment length; ``power`` is the density in the unit of the series squared
     per hertz. ``segment_s`` is the segment the estimate averaged over, which is
     also the longest period it can resolve; ``n_segments`` how many.
-    ``n_points`` is how many measurements a Lomb–Scargle estimate was taken
+    ``n_points`` is how many measurements a Lomb-Scargle estimate was taken
     over, and zero for Welch's, which works on the grid; ``explained`` is
     then, per period, the share of the variance a sinusoid of that period
     explains, the periodogram's own reading of the peak.
@@ -126,7 +126,7 @@ class Spectrum:
         Only periods the segment holds ``MIN_CYCLES`` of are candidates; the
         share is of the power over every period, so a normal instance, whose
         power is spread thin, scores a few percent where an oscillating one
-        scores half or more. For a Lomb–Scargle estimate the share is the
+        scores half or more. For a Lomb-Scargle estimate the share is the
         variance a sinusoid of the period explains, which is what its
         periodogram measures and does not depend on how finely the periods
         were laid out.
@@ -386,7 +386,7 @@ def average_spectra(spectra: list[Spectrum], n_bins: int = 160) -> Spectrum | No
 def prepare_irregular(
     times_s: np.ndarray, values: np.ndarray, bounds: tuple[float, float] | None = None
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """The instants and the readings of the measurements, fit for a Lomb–Scargle transform.
+    """The instants and the readings of the measurements, fit for a Lomb-Scargle transform.
 
     Readings outside ``bounds`` and missing ones are dropped with their
     instants; the mean and the linear trend are removed, as ``prepare`` does
@@ -413,7 +413,7 @@ def prepare_irregular(
 
 
 def lomb_scargle_power(times_s: np.ndarray, values: np.ndarray, periods: np.ndarray) -> np.ndarray:
-    """The generalised Lomb–Scargle periodogram at each period: the share of the variance a sinusoid explains.
+    """The generalised Lomb-Scargle periodogram at each period: the share of the variance a sinusoid explains.
 
     Zechmeister and Kürster's floating-mean form, with equal weights: at each
     frequency the sinusoid ``a·cos + b·sin + c`` is fitted by least squares to

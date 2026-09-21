@@ -1089,7 +1089,7 @@ class SeriesPage(QWidget):
     def _spectrum_of(
         self, values: np.ndarray, bounds, normalize, times_s: np.ndarray | None = None
     ) -> Spectrum | None:
-        """Welch's estimate on the grid, or, given the instants of the measurements, Lomb–Scargle over them."""
+        """Welch's estimate on the grid, or, given the instants of the measurements, Lomb-Scargle over them."""
         # The spectrum always masks the implausible: interpolating over a spike
         # of 10¹² is the spectrum of the spike, not of the signal. The clamp is
         # about what a histogram counts, which is a question of reading.

@@ -104,9 +104,8 @@ REAL_PREFIX = "WELL-"
 
 # What a reading must satisfy to be a measurement rather than instrument
 # garbage, by physical quantity, which the viewer tells from the unit the
-# dataset declares for the variable. The limits are the ones the ``flowml``
-# pipeline masks readings by (its ``config.py``), found by surveying every
-# instance of 3W 2.0.0:
+# dataset declares for the variable. The limits below come from a survey of
+# every instance of 3W 2.0.0:
 #
 # - Magnitude. Some sensors are frozen at absurd levels (one well reports
 #   P-PDG = -1.2e42 Pa for whole instances) or off by orders of magnitude
@@ -128,7 +127,7 @@ EXTREME_VALUE_LIMIT = 1e8
 PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
     "Pa": (0.0, EXTREME_VALUE_LIMIT),
     "°C": (-50.0, 250.0),
-    "%": (0.0, EXTREME_VALUE_LIMIT),
+    "%": (0.0, 100.0),
 }
 PLAUSIBLE_RANGE_DEFAULT = (-EXTREME_VALUE_LIMIT, EXTREME_VALUE_LIMIT)
 
@@ -197,8 +196,8 @@ MAX_SMALL_MULTIPLES = 48
 
 # -- Locating the dataset ---------------------------------------------------------
 
-# Environment variable naming the dataset root (shared with the flowml pipeline).
-RAW_DIR_ENV = "FLOWML_RAW_DATA_DIR"
+# Environment variable naming the dataset root.
+RAW_DIR_ENV = "OVERLAP_VIEWER_RAW_DATA_DIR"
 
 # Where the dataset usually sits relative to the working directory: next to a
 # checkout of this project (``../3W/dataset``) or inside the 3W repository.

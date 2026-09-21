@@ -16,7 +16,7 @@ the instance, and a shape a few minutes long survives it. This is not the
 resampling of every instance to one common length, which changes what a shape
 is and was not taken up.
 
-The distances come from ``dtaidistance``, in C, under a Sakoe–Chiba window of
+The distances come from ``dtaidistance``, in C, under a Sakoe-Chiba window of
 a tenth of the length, which forbids the alignment from running away.
 """
 
@@ -25,7 +25,7 @@ from collections.abc import Sequence
 import numpy as np
 
 N_BLOCKS = 400  # the length a series is decimated to
-WINDOW_SHARE = 0.1  # the Sakoe–Chiba window, as a share of the length
+WINDOW_SHARE = 0.1  # the Sakoe-Chiba window, as a share of the length
 MIN_READINGS = 32
 
 

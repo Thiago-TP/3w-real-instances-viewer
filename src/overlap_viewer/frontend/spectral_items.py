@@ -64,7 +64,7 @@ DEFAULT_SEGMENT_MIN = 45  # what the box offers once the whole stretch is untick
 DEFAULT_OVERLAP_PCT = 50  # Rabelo's windows overlap by half
 DEFAULT_BINS = 40
 CLAMP_TIP = (
-    "Count only the readings inside the plausible range of the flowml pipeline, which is what a "
+    "Count only the readings inside the plausible range, which is what a "
     "histogram is normally asked for: one gauge reporting a pressure of 10¹² Pa would otherwise "
     "put every genuine reading into the first bin. Untick to see the garbage itself — the bins "
     "beyond the range sit on an amber ground, and the axis opens to hold them."
@@ -72,7 +72,7 @@ CLAMP_TIP = (
 GENUINE_TIP = (
     "Count and transform the measurements only, leaving out the samples the historian filled in "
     "between them — the straight lines it drew from one reading to the next, and the readings it "
-    "carried forward. A histogram then counts what was read; a spectrum becomes the Lomb–Scargle "
+    "carried forward. A histogram then counts what was read; a spectrum becomes the Lomb-Scargle "
     "periodogram of the readings at their own instants, which needs no grid and is the honest "
     "spectrum of a series measured every ten seconds or every two minutes. Most sensors of 3W "
     "were: on the 1 Hz grid, one sample in sixteen is a measurement."
@@ -562,7 +562,7 @@ def caption_for(spectrum: Spectrum, unit: str, compact: bool = False) -> str:
     """What a spectrum plot writes in its corner: the dominant period, its share, the segments.
 
     ``compact`` breaks it into short lines, for a plot a couple of hundred
-    pixels wide. A Lomb–Scargle estimate says how many measurements it was
+    pixels wide. A Lomb-Scargle estimate says how many measurements it was
     taken over, and its share is the variance a sinusoid of the peak period
     explains, which is what that periodogram measures.
     """
@@ -579,7 +579,7 @@ def caption_for(spectrum: Spectrum, unit: str, compact: bool = False) -> str:
             )
         else:
             line = "no dominant period"
-        segments = f"Lomb–Scargle over {spectrum.n_points:,} measurements"
+        segments = f"Lomb-Scargle over {spectrum.n_points:,} measurements"
         return f"{line}<br>{segments}" if compact else f"{line} · {segments}"
     if np.isfinite(period):
         line = (

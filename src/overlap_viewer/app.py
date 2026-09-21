@@ -6,7 +6,7 @@ Usage
                    [--theme MODE]
 
 The dataset root is taken from ``--raw-dir``, else from the
-``FLOWML_RAW_DATA_DIR`` environment variable, else from the usual relative
+``OVERLAP_VIEWER_RAW_DATA_DIR`` environment variable, else from the usual relative
 locations (``../3W/dataset``, ``dataset``); when none holds a dataset, a
 folder dialog asks for it.
 """

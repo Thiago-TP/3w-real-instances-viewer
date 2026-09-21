@@ -297,7 +297,7 @@ def chi2_1_quantile(p: np.ndarray) -> np.ndarray:
 
 
 def gaussianity(values: np.ndarray) -> tuple[float, float, float, bool]:
-    """Zhang's regression of the squared distances on their reference quantiles (thesis eqs. 4.1–4.8).
+    """Zhang's regression of the squared distances on their reference quantiles (thesis eqs. 4.1-4.8).
 
     Returns the slope ``b`` of ``F = a + b·D``, the offset ``a`` and the
     residual scatter ``s``, both as shares of the mean reference quantile,

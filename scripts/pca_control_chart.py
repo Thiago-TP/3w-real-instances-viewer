@@ -47,6 +47,12 @@ from overlap_viewer.backend.model_outputs import ModelSpec, write_outputs
 MIN_NORMAL = 600  # samples of normal operation a model needs
 VARIANCE_KEPT = 0.90  # the components kept explain at least this share of the normal variance
 LIMIT_QUANTILE = 0.99  # the limit of each statistic: this quantile over the training samples
+# The score is a ratio to the model's limit, 1 at the limit, read as a color or
+# a figure and never to more than a decimal or two. Three decimals is past
+# anything a reader of it can see, and it is what makes an example of this
+# affordable: a float that moves every second is the one column that does not
+# compress, and rounding it takes the outputs of four wells from 20 MB to 7.
+SCORE_DECIMALS = 3
 
 
 @dataclass(frozen=True)
@@ -134,7 +140,11 @@ def score(model: Model, frame: pd.DataFrame, info: DatasetInfo) -> pd.DataFrame:
     t2, q = statistics(Z, model.loadings, model.variance)
     ratio = np.maximum(t2 / max(model.t2_limit, 1e-12), q / max(model.q_limit, 1e-12))
     return pd.DataFrame(
-        {"label": (ratio > 1.0).astype(np.int8), "score": ratio.astype(np.float32)},
+        {
+            "label": (ratio > 1.0).astype(np.int8),
+            # Rounded after the label is decided, so no sample is relabeled by it.
+            "score": np.round(ratio, SCORE_DECIMALS).astype(np.float32),
+        },
         index=pd.Index(frame.index, name="timestamp"),
     )
 
@@ -229,19 +239,23 @@ def main(argv=None) -> int:
             f"samples); the components kept explain {VARIANCE_KEPT:.0%} of the training variance. A "
             f"sample is anomalous when T² or Q exceeds the {LIMIT_QUANTILE:.0%} quantile of its "
             "statistic over the training samples; the score is the larger of the two ratios to their "
-            "limits, 1 at the limit. A sensor an instance lacks sits at the training mean."
+            f"limits, 1 at the limit, rounded to {SCORE_DECIMALS} decimals after the label is "
+            "decided. A sensor an instance lacks sits at the training mean."
         ),
         provenance={
             "producer": "scripts/pca_control_chart.py of the 3W Overlap Viewer",
+            # Forward slashes whatever platform wrote it: the command is there
+            # to be read and run again, and Windows takes them too.
             "command": (
-                f"python scripts/pca_control_chart.py --raw-dir {args.raw_dir} {choice} "
-                f"--fit {args.fit} -o {args.output}"
+                f"python scripts/pca_control_chart.py --raw-dir {args.raw_dir.as_posix()} "
+                f"{choice} --fit {args.fit} -o {args.output.as_posix()}"
             ).replace("  ", " "),
             "parameters": {
                 "fit": args.fit,
                 "min_training_samples": MIN_NORMAL,
                 "variance_kept": VARIANCE_KEPT,
                 "limit_quantile": LIMIT_QUANTILE,
+                "score_decimals": SCORE_DECIMALS,
             },
             "dataset": str(info.raw_dir),
             "dataset_version": info.version or "unknown",

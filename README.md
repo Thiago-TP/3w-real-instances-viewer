@@ -211,14 +211,19 @@ outputs* on the Faults and Features pages, the latter shading the label periods 
 plots with the model's verdicts in the dataset's own vocabulary (a detector's *anomalous* as the
 instance's own fault), so that where the two differ is seen against the trace.
 
-**The example.** [`examples/model_outputs/pca_control_chart_well7`](examples/README.md) holds the
-outputs of a PCA control chart over the twelve real instances of WELL-00007: one model fitted on the
-well's two Normal Operation instances over the ten analog sensors live in both, Hotelling's T² and
-Q followed along every instance of the well, a sample called anomalous beyond the 99th percentile
-of either statistic over the training samples. It was produced by
+**The example.** [`examples/model_outputs/pca_control_chart_wells_1_4_6_7`](examples/README.md)
+holds the outputs of a PCA control chart over the 319 real instances of four wells: one model per
+well, fitted on that well's Normal Operation instances over the analog sensors live in all of them,
+Hotelling's T² and Q followed along every instance of the well, a sample called anomalous beyond
+the 99th percentile of either statistic over the training samples. It was produced by
 [`scripts/pca_control_chart.py`](scripts/pca_control_chart.py), whose command, parameters and
-fitted limits are in the example's `model.json`; on WELL-00007 it agrees with the labels 98 % of
-the time on the normal instances and 100 % on the ten severe-slugging ones. It is one producer of
+fitted limits are in the example's `model.json`. It agrees with the labels 98 % of the time on the
+normal instances of every one of the four wells, and between 100 % and 5 % on their fault
+instances — the same method and the same event, flow instability, reading 100 % on WELL-00007 and
+5 % on WELL-00001, because a model fitted on two normal instances of a ten-sensor well draws a
+tight normal region and one fitted on ninety-three instances of a five-sensor well draws a wide
+one. The agreement figure says as much about a well's normal data as about the event; the
+[example's README](examples/README.md) gives the figures well by well. It is one producer of
 the format among many — the U-Net segmentation of Lopes *et al.*, the Toolkit's own models with an
 export that carries the instance and the instant, a hand-labeled review — and the model itself is
 not built into the viewer: its outputs are stored and shown.

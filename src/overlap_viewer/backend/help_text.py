@@ -1266,19 +1266,25 @@ MODEL_NOTES = [
     (
         "The example, and its provenance",
         (
-            "<code>examples/model_outputs/pca_control_chart_well7</code> holds the outputs of a "
-            "<b>PCA control chart</b> over the twelve real instances of WELL-00007 in 3W 2.0.0: "
+            "<code>examples/model_outputs/pca_control_chart_wells_1_4_6_7</code> holds the outputs "
+            "of a <b>PCA control chart</b> over the 319 real instances of four wells of 3W 2.0.0: "
             "the oldest tool of multivariate process monitoring, and the one Melo's thesis and his "
-            "BibMon package build on. One model was fitted per well, on every sample of the well's "
-            "two Normal Operation instances over the ten analog sensors live in both, and followed "
+            "BibMon package build on. One model was fitted per well, on every sample of that "
+            "well's Normal Operation instances over the analog sensors live in all of them, and "
+            "followed "
             "two statistics along every instance of the well, Hotelling's T² (the distance of a "
             "sample inside the model's plane) and Q (its distance off the plane), calling a sample "
             "anomalous when either exceeded the 99th percentile of its statistic over the training "
             "samples; the score is the larger of the two ratios to their limits. It was produced by "
             "<code>scripts/pca_control_chart.py</code>, whose command, parameters and fitted limits "
-            "are written in the example's <code>model.json</code>. On WELL-00007 it agrees with the "
-            "labels 98 % of the time on the normal instances and 100 % on the ten severe-slugging "
-            "ones. It is one producer of the format among many: the U-Net segmentation of Lopes "
+            "are written in the example's <code>model.json</code>. It agrees with the labels 98 % "
+            "of the time on the normal instances of all four wells, and between 100 % and 5 % on "
+            "their fault instances: the same method on the same event, flow instability, reads "
+            "100 % on WELL-00007 and 5 % on WELL-00001, because a model fitted on two normal "
+            "instances of a ten-sensor well draws a tight normal region while one fitted on "
+            "ninety-three instances of a five-sensor well draws a wide one. <b>An agreement figure "
+            "says as much about a well's normal data as about the event</b>, wherever this viewer "
+            "shows one. It is one producer of the format among many: the U-Net segmentation of Lopes "
             "<i>et al.</i>, the Toolkit's own models with an export that carries the instance and "
             "the instant, or a hand-labeled review would all fill it the same way. The outputs of a "
             "model are stored and shown; the model itself is not built into the viewer."
@@ -1953,7 +1959,7 @@ USAGE = {
             "outputs' on the Faults and Features pages, whose tooltips carry the figure."
         ),
         (
-            "examples/model_outputs holds one set, a PCA control chart over WELL-00007, with its "
+            "examples/model_outputs holds one set, a PCA control chart over four wells, with its "
             "provenance in its model.json; scripts/pca_control_chart.py produced it and can score "
             "any choice of wells and faults the same way."
         ),

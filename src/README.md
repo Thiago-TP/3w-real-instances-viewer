@@ -263,7 +263,9 @@ and the agreement measurement between model verdicts and dataset labels.
 - `ModelOutputs` — a folder of outputs opened once, read lazily and cached; classmethod
   `load(folder)`; methods `frame(fault_class, file)`, `runs(fault_class, file)`,
   `agreement(fault_class, file, class_runs, offset)`, `describe()`.
-- `write_outputs(folder, spec, outputs, provenance=None)` — writes a full output folder.
+- `write_outputs(folder, spec, outputs, provenance=None)` — writes a full output folder, the
+  `timestamp` index delta encoded and the whole compressed with zstd: a verdict per second is
+  mostly its own timestamp, which written plainly is four fifths of a file.
 
 ### `theme.py`
 

@@ -61,6 +61,18 @@ uv sync                    # creates .venv with PySide6, pyqtgraph, pandas, nump
 uv run overlap-viewer --raw-dir /path/to/3W/dataset
 ```
 
+A plain `uv sync` installs the core alone, and every page opens; the heavier analyses (the Instances
+map, the UMAP embedding, the DTW representation, the mutual-information matrices) live in
+[optional extras](#optional-extras) and their controls are greyed until the extra is installed.
+`uv sync --all-extras` installs them all, which is the command to use unless the environment has to
+stay light.
+
+> [!WARNING]
+> `uv sync` makes the environment match exactly what is asked of it, so naming one extra **removes
+> the others**: `uv sync --extra analysis` uninstalls `umap-learn` and `dtaidistance` if they were
+> there. Name every extra wanted in the one command (`uv sync --extra analysis --extra umap`), or
+> simply use `uv sync --all-extras`.
+
 Without `--raw-dir`, the dataset is taken from the `OVERLAP_VIEWER_RAW_DATA_DIR` environment variable,
 then from `../3W/dataset`, `dataset` or `3W/dataset` relative to the working directory; if none holds a
 dataset, a folder dialog asks for it. `uv run main.py` and `uv run python -m overlap_viewer` are
@@ -107,9 +119,15 @@ group and the command that installs it; nothing else changes.
 | `dtw`      | dtaidistance | the DTW representation of the Instances map: each instance's shape compared with the others of its class, the 3W Toolkit's rule |
 
 ```bash
-uv sync --extra analysis           # one group
-uv sync --all-extras               # every group
+uv sync --extra analysis                  # this group alone, removing any other extra
+uv sync --extra analysis --extra umap     # these two, removing any other extra
+uv sync --all-extras                      # every group
 ```
+
+Each command states the whole set of extras the environment is to have, not an addition to it: a
+group left out of the command is uninstalled if a previous sync had installed it. The viewer keeps
+working either way — a control whose group has gone is greyed again — but a sync meant to add one
+capability can quietly take another away, so `uv sync --all-extras` is the simplest habit.
 
 The table lives in [`backend/extras.py`](src/overlap_viewer/backend/extras.py) as well as in
 `pyproject.toml`, and the tests check that the two agree.

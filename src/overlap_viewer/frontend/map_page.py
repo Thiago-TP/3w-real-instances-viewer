@@ -57,7 +57,7 @@ from overlap_viewer.backend.extras import missing
 from overlap_viewer.backend.palette import fault_color, tint
 from overlap_viewer.backend.profiles import DESCRIPTOR_MODES, Profiles
 from overlap_viewer.frontend.heatmap import ramp_color
-from overlap_viewer.frontend.items import ScrollFriendlyViewBox
+from overlap_viewer.frontend.items import ScrollFriendlyViewBox, restyle_axes
 from overlap_viewer.frontend.loading import progress_dialog
 from overlap_viewer.frontend.overview import ElidedLabel
 from overlap_viewer.frontend.passes import Passes
@@ -391,13 +391,24 @@ class MapPage(QWidget):
     def _restyle(self) -> None:
         colors = theme.current()
         self._plot_widget.setBackground(colors.plot_background)
+        # This page keeps one plot for its whole life, so its axes have to be
+        # given the new foreground themselves: pyqtgraph froze the old one into
+        # their pens when they were built, grid included.
+        restyle_axes(self._plot_widget.getPlotItem())
         self._note.setStyleSheet(f"color: {colors.muted}; font-size: 8pt;")
         self._audit_note.setStyleSheet(f"color: {colors.muted}; font-size: 8pt;")
         self._scores_label.setStyleSheet(f"color: {colors.muted};")
 
     def apply_theme(self) -> None:
+        """Take the colors of the theme now in force: the plot, the points, and the audit's headings.
+
+        Nothing is computed again: the map on show was placed by the data, and
+        only what carries a color is made afresh.
+        """
         self._restyle()
         self._redraw()
+        if self._points:  # its class headings are written in the fault colors
+            self._fill_audit()
 
     # -- the state of the boxes
 
@@ -463,9 +474,20 @@ class MapPage(QWidget):
     # -- data
 
     def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
-        """Take a new catalogue; the map is computed when the page is next on show."""
+        """Take a new catalogue; the map is computed when the page is next on show.
+
+        The very same catalogue again is the main window laying the pages out
+        in a new theme, not new data: the points were placed by what the
+        sensors amount to and not by the colors, so the map stands and
+        ``apply_theme`` has already drawn it again. Computing it afresh would
+        embed every instance once more, and under the DTW representation read
+        a class of instances again behind a dialog.
+        """
+        same = catalogue is self._catalogue and bool(self._points)
         self._catalogue = catalogue
         self._wells = list(wells)
+        if same:
+            return
         self._profiles = None
         self._fill_dtw_boxes()
         self._pending = True

@@ -47,7 +47,7 @@ from overlap_viewer.backend.dataset import (
 )
 from overlap_viewer.backend.palette import fault_color, tint
 from overlap_viewer.frontend.heatmap import ColorKey
-from overlap_viewer.frontend.items import ScrollFriendlyViewBox
+from overlap_viewer.frontend.items import ScrollFriendlyViewBox, restyle_axes
 from overlap_viewer.frontend.loading import progress_dialog
 from overlap_viewer.frontend.overview import ElidedLabel
 from overlap_viewer.frontend.passes import Passes
@@ -273,6 +273,10 @@ class DispersionPage(QWidget):
     def _restyle(self) -> None:
         colors = theme.current()
         self._plot_widget.setBackground(colors.plot_background)
+        # This page keeps one plot for its whole life, so its axes have to be
+        # given the new foreground themselves: pyqtgraph froze the old one into
+        # their pens when they were built, grid included.
+        restyle_axes(self._plot_widget.getPlotItem())
         self._note.setStyleSheet(f"color: {colors.muted}; font-size: 8pt;")
 
     def apply_theme(self) -> None:
@@ -323,13 +327,20 @@ class DispersionPage(QWidget):
     # -- data
 
     def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
-        """Take a new catalogue: what was read described the old one and is dropped."""
+        """Take a new catalogue: what was read described the old one and is dropped.
+
+        The very same catalogue again is the main window laying the pages out
+        in a new theme, not new data: the clouds read over it are as true in
+        one theme as in the other, and each of them is a pass over every
+        instance of its scope. They are kept, and only drawn again.
+        """
+        if catalogue is not self._catalogue:
+            self._clouds = {}
+            self._cloud = None
+            self._pair = None
         self._catalogue = catalogue
         self._wells = list(wells)
         self._availability = Availability.from_wells(wells, self.info)
-        self._clouds = {}
-        self._cloud = None
-        self._pair = None
         self._fill_sensors()
         self._fill_scopes()
         self._pending = True

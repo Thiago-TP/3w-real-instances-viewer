@@ -276,16 +276,20 @@ class MainWindow(QMainWindow):
         others for when they are next shown, which is what a theme switch
         wants: the same catalogue in new colors, and five hidden pages that
         need not be drawn now.
+
+        The very same catalogue again is a theme switch, not new data: the
+        wells split from it and every pass read over it still describe it, and
+        dropping them would make a change of color cost the minutes those
+        passes took. They are kept, and the pages are handed the wells they
+        already hold, so that a page can tell the two cases apart by identity.
         """
-        if catalogue is not self._catalogue:
+        same = catalogue is self._catalogue and bool(self._wells)
+        if not same:
             self._map_results = None  # computed on the old catalogue
+            self._discard_help()  # its instance counts describe the old catalogue
+            self._wells = split_wells(catalogue)
+            self._passes.set_wells(self._wells)
         self._catalogue = catalogue
-        if self._help is not None:  # its instance counts describe the old catalogue
-            self._help.close()
-            self._help.deleteLater()
-            self._help = None
-        self._wells = split_wells(catalogue)
-        self._passes.set_wells(self._wells)
         current = self._tabs.currentWidget()
         self._stale = set()
         for title, page in zip(self.PAGE_TITLES, self.pages):
@@ -304,6 +308,13 @@ class MainWindow(QMainWindow):
             page.set_model_results(self._passes.model)
         if self._map_results is not None and hasattr(page, "set_map_results"):
             page.set_map_results(self._map_results)
+
+    def _discard_help(self) -> None:
+        """Throw the help window away, so that the next F1 builds it over what is true now."""
+        if self._help is not None:
+            self._help.close()
+            self._help.deleteLater()
+            self._help = None
 
     def _refresh_summary(self, *args) -> None:
         self._dataset_label.setText(self._tabs.currentWidget().summary())
@@ -334,11 +345,14 @@ class MainWindow(QMainWindow):
     def set_theme_mode(self, mode: str) -> None:
         """Switch to ``light``, ``dark`` or ``system``, and repaint every open window.
 
-        The plots cannot be recolored in place: pyqtgraph reads its background
+        Most plots cannot be recolored in place: pyqtgraph reads its background
         and its foreground when an item is built, so the pages are laid out
         again from the same catalogue, the page on show now and the others
         when they are next shown. Laying every page out at once took seven
-        seconds on 3W 2.0.0, five of them for pages nobody was looking at.
+        seconds on 3W 2.0.0, five of them for pages nobody was looking at. The
+        catalogue handed back is the very same object, which is what tells the
+        pages and the passes that no data has changed and nothing read over it
+        need be read again.
         """
         self._theme_mode = mode
         styling.save_mode(mode)
@@ -352,6 +366,7 @@ class MainWindow(QMainWindow):
             if styling.apply(mode) is before:
                 return  # e.g. System on a light desktop, chosen while already light
             self._restyle()
+            self._discard_help()  # its swatches carry the colors of the old theme
             for page in self.pages:
                 page.apply_theme()
             for window in list(self._windows):

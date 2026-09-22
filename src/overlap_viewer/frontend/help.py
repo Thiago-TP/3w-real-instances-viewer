@@ -458,7 +458,7 @@ def usage_page() -> str:
         parts.append(f"<h3>{section}</h3><ul>")
         parts.extend(f"<li>{line}</li>" for line in lines)
         parts.append("</ul>")
-    parts.append("<h2>About the data</h2>")
+    parts.append("<h2>Notes on the data</h2>")
     for title, text in DATASET_NOTES:
         parts.append(f"<h3>{title}</h3><p>{text}</p>")
     parts.append(f'<hr><p class="sub">Source: {PAPER}</p>')

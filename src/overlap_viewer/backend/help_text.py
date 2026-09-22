@@ -710,22 +710,6 @@ DATASET_NOTES = [
             "here is what these documents say it means."
         ),
     ),
-    (
-        "How slow the events are",
-        (
-            "The 2.0.0 article shows a severe slugging instance with pressure oscillations above "
-            "10 bar and says nothing of their period. Measured on the real instances with the "
-            "spectrum view, severe slugging on WELL-00014 cycles every 50 to 90 minutes, the "
-            "period drifting from 90 minutes on 18 September 2017 to 51 by 28 October; flow "
-            "instability on WELL-00001 cycles every 45 minutes, with up to 95 % of the power in "
-            "that one line; the pressures of a spurious DHSV closure oscillate every 45 to 80 "
-            "minutes; a normal instance has no line to speak of, 1 to 2 % of the power in its "
-            "strongest one. A six-hour instance therefore holds four to seven cycles of the "
-            "events, which is why the viewer's spectral axis is a period rather than a frequency "
-            "and why the default spectrum is taken over the whole stretch: a segment short enough "
-            "to be one of several holds no cycle of the events at all."
-        ),
-    ),
 ]
 
 # What the availability page shows, for the help tab of the same name.

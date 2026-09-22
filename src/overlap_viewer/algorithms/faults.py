@@ -30,9 +30,9 @@ ALIGNMENT_NAMES = {
     "start": "Start of the instance",
 }
 ALIGNMENT_AXES = {
-    "transient": "hours from the onset of the transient",
-    "steady": "hours from the onset of the steady state",
-    "start": "hours from the start of the instance",
+    "transient": "Hours from the onset of the transient",
+    "steady": "Hours from the onset of the steady state",
+    "start": "Hours from the start of the instance",
 }
 
 

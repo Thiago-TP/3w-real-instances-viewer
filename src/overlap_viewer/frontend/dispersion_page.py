@@ -144,6 +144,9 @@ class DispersionPage(QWidget):
         self._hover_instance = -1
         self._summary = ""
         self._read_s = 0.0
+        # What the view was last framed on: the cloud and the pair and filters
+        # drawn of it. The view is framed afresh only when that changes.
+        self._framed: tuple | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -317,6 +320,7 @@ class DispersionPage(QWidget):
         """
         if catalogue is not self._catalogue:
             self._clouds = {}
+            self._framed = None
             self._cloud = None
             self._pair = None
         self._catalogue = catalogue
@@ -608,8 +612,13 @@ class DispersionPage(QWidget):
         unit_x, unit_y = self.info.unit(x), self.info.unit(y)
         plot.setLabel("bottom", f"{x}{f' [{unit_x}]' if unit_x else ''}")
         plot.setLabel("left", f"{y}{f' [{unit_y}]' if unit_y else ''}")
-        if pair.n:
+        # Framed afresh only when what is drawn changes: a new cloud, pair or
+        # filter moves the points, while the coloring and the density behind
+        # them do not, and throwing away a zoom for those would be a nuisance.
+        framing = (self._scope_key(), x, y, tuple(self.periods), self.genuine_only)
+        if pair.n and framing != self._framed:
             plot.getViewBox().autoRange(padding=0.04)
+            self._framed = framing
         self._note.setText(self._caption(pair))
         self._summary = self._summary_text(pair)
         self.summary_changed.emit()

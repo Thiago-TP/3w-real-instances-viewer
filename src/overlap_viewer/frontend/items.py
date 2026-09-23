@@ -223,6 +223,10 @@ class SegmentsItem(pg.GraphicsObject):
     def __init__(self, z: float = -10.0, label_px: int = LABEL_FONT_PX):
         super().__init__()
         self.setZValue(z)
+        # Taken when the item is built, not when it is painted, like every
+        # color it draws: a window can keep a theme of its own, in force only
+        # while that window builds its plots.
+        self._hatch = hatch_brush()
         self._label_px = label_px
         self._x0 = np.empty(0)
         self._x1 = np.empty(0)
@@ -300,7 +304,7 @@ class SegmentsItem(pg.GraphicsObject):
 
         if any(self._hatched):
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(hatch_brush())
+            p.setBrush(self._hatch)
             for x0, x1, hatched in zip(self._x0, self._x1, self._hatched):
                 if hatched:
                     p.drawRect(device_rect(x0, x1))
@@ -337,6 +341,8 @@ class SeamsItem(pg.GraphicsObject):
         super().__init__()
         self.setZValue(z)
         self._x = np.empty(0)
+        # Taken at build time: see ``SegmentsItem``.
+        self._color = QColor(theme.current().gap_line)
 
     def set_seams(self, x: Sequence[float]) -> None:
         self._x = np.sort(np.asarray(x, dtype=float))
@@ -373,7 +379,7 @@ class SeamsItem(pg.GraphicsObject):
         transform = p.transform()
         p.save()
         p.resetTransform()
-        p.setPen(QPen(QColor(theme.current().gap_line), 1.0, Qt.PenStyle.DashLine))
+        p.setPen(QPen(self._color, 1.0, Qt.PenStyle.DashLine))
         top = transform.map(QPointF(0.0, ymin)).y()
         bottom = transform.map(QPointF(0.0, ymax)).y()
         drawn = None

@@ -10,6 +10,8 @@ A mode is ``light``, ``dark``, or ``system`` for the desktop's own choice. The
 choice is remembered between runs; ``--theme`` overrides it for one run.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from html import escape
 
 import pyqtgraph as pg
@@ -138,6 +140,33 @@ def apply(mode: str) -> Theme:
     if app is not None:
         app.setPalette(qt_palette(colors))
     return colors
+
+
+@contextmanager
+def theme_scope(name: str | None) -> Iterator[Theme]:
+    """Put the theme ``name`` in force for what is built inside the block, then give the old one back.
+
+    For a window that keeps a theme of its own while the application keeps
+    another: every color is read from ``theme.current()`` when an item is
+    built, and pyqtgraph's foreground when an axis is, so a window that builds
+    its plots inside this block gets its own colors and leaves everyone else's
+    alone. Only the theme and pyqtgraph's options move; the palette of the
+    window is the caller's to set. ``None``, or the theme already in force,
+    changes nothing.
+    """
+    previous = theme.current()
+    if name is None or name == previous.name:
+        yield previous
+        return
+    colors = theme.use(name)
+    pg.setConfigOptions(background=colors.plot_background, foreground=colors.plot_foreground)
+    try:
+        yield colors
+    finally:
+        theme.use(previous.name)
+        pg.setConfigOptions(
+            background=previous.plot_background, foreground=previous.plot_foreground
+        )
 
 
 # -- Check boxes that can be seen in the dark -------------------------------------

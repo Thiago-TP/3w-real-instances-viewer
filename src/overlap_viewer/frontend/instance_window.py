@@ -10,18 +10,20 @@ pointer through all of them. An interactive counterpart of the
 ``fault_<n>_real_instances.pdf`` pages of the stage-0 figures.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QCursor
+from PySide6.QtGui import QAction, QCursor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -87,6 +89,7 @@ from overlap_viewer.backend.palette import (
     unknown_background,
 )
 from overlap_viewer.backend.timemap import TimeMap
+from overlap_viewer.frontend import styling
 from overlap_viewer.frontend.help import HelpWindow
 from overlap_viewer.frontend.items import (
     AnchoredText,
@@ -138,6 +141,31 @@ STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch vie
 # the slugging period drifts, and everywhere else it said what the spectrum
 # beside it already said while taking a row of its own from every feature of
 # every block, which is the scarce thing in a window that stacks them.
+# What this window can be painted in: whatever the main window is in, or a
+# mode of its own that no other window follows.
+WINDOW_THEMES = (("As the main window", None), ("Light", "light"), ("Dark", "dark"))
+WINDOW_THEME_TIP = (
+    "Paint this window, and only this one, light or dark, whatever the main window is in; 'As the "
+    "main window' follows it again. The choice lasts as long as the window."
+)
+
+
+def in_own_theme(method: Callable) -> Callable:
+    """Run a method of the window with the window's own theme in force, if it keeps one.
+
+    Put on every entry point that builds or paints something of the window
+    (the stack, the stretch views, the chrome, the header, the help), which
+    are the only places colors are read.
+    """
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with styling.theme_scope(self._theme_name):
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 NORMALIZE_TIP = (
     "Scale every trace to its own level: each reading as standard deviations from the mean of that "
     "sensor over the whole block, readings outside the plausible range left out first, as the "
@@ -334,6 +362,8 @@ class InstanceWindow(QMainWindow):
         self._master: pg.PlotItem | None = None
         self._x_range: tuple[float, float] | None = None
         self._help: HelpWindow | None = None
+        # The theme this window keeps, or ``None`` to follow the main window's.
+        self._theme_name: str | None = None
         self._stretch_timer = QTimer(self)
         self._stretch_timer.setSingleShot(True)
         self._stretch_timer.setInterval(STRETCH_DELAY_MS)
@@ -409,6 +439,7 @@ class InstanceWindow(QMainWindow):
         self._join_check.setChecked(self.joined)
         self._join_check.blockSignals(False)
 
+    @in_own_theme
     def set_model_results(self, results) -> None:
         """Take the model outputs loaded (or none) and draw, or take down, their band."""
         self._model_results = results
@@ -549,6 +580,16 @@ class InstanceWindow(QMainWindow):
         )
         self._show_features.toggled.connect(self._on_features_toggled)
         toolbar.addAction(self._show_features)
+        toolbar.addSeparator()
+        toolbar.addWidget(QLabel(" Theme "))
+        self._theme_box = QComboBox()
+        for text, name in WINDOW_THEMES:
+            self._theme_box.addItem(text, name)
+        self._theme_box.setToolTip(WINDOW_THEME_TIP)
+        self._theme_box.currentIndexChanged.connect(
+            lambda *_: self.set_window_theme(self._theme_box.currentData())
+        )
+        toolbar.addWidget(self._theme_box)
         # The views and their parameters get a row of their own: on one row
         # with the rest they fell behind the toolbar's overflow chevron as soon
         # as the window was narrower than a screen.
@@ -610,6 +651,7 @@ class InstanceWindow(QMainWindow):
         self._restyle()
         self.resize(1360, 860)
 
+    @in_own_theme
     def _restyle(self) -> None:
         """Take the colors of the theme now in force, for the chrome outside the plots."""
         colors = theme.current()
@@ -618,13 +660,42 @@ class InstanceWindow(QMainWindow):
         self._header.setText(self._header_html())
 
     def apply_theme(self) -> None:
-        """Repaint this window in the theme now in force.
+        """Repaint this window in the theme now in force, unless it keeps one of its own.
 
         The stack is laid out again rather than recolored: pyqtgraph fixes the
         colors of an axis when it is built, and every plot here is thrown away
         and rebuilt whenever the feature selection changes anyway. The view is
         kept as it was, only its colors being new.
         """
+        if self._theme_name is not None:
+            return  # the main window changed its mode; this window keeps its own
+        self._repaint()
+
+    def set_window_theme(self, name: str | None) -> None:
+        """Paint this window alone ``light`` or ``dark``, or ``None`` to follow the main window again.
+
+        The window's palette carries its chrome (and the check boxes, whose
+        edge the style reads off it); ``in_own_theme`` carries its plots.
+        """
+        if name not in (None, *theme.THEMES):
+            raise ValueError(
+                f"unknown theme {name!r}; expected None or one of {sorted(theme.THEMES)}"
+            )
+        if name == self._theme_name:
+            return
+        self._theme_name = name
+        index = self._theme_box.findData(name)
+        if index != self._theme_box.currentIndex():
+            self._theme_box.blockSignals(True)
+            self._theme_box.setCurrentIndex(index)
+            self._theme_box.blockSignals(False)
+        # An empty palette sets no role, so the window inherits the
+        # application's again and follows it from then on.
+        self.setPalette(styling.qt_palette(theme.THEMES[name]) if name else QPalette())
+        self._repaint()
+
+    def _repaint(self) -> None:
+        """Take the window's colors afresh: the chrome, the help, and the stack with its views kept."""
         self._restyle()
         if self._help is not None:  # its swatches carry the colors of the old theme
             self._help.close()
@@ -893,10 +964,13 @@ class InstanceWindow(QMainWindow):
             check.blockSignals(False)
         self._rebuild()
 
+    @in_own_theme
     def show_help(self) -> None:
         """Open (or raise) the help window, on the tab explaining the variables."""
         if self._help is None:
             self._help = HelpWindow(self.info, parent=self)
+            if self._theme_name is not None:
+                self._help.setPalette(self.palette())
         self._help.show_tab("Variables")
 
     def _header_html(self) -> str:
@@ -1028,6 +1102,7 @@ class InstanceWindow(QMainWindow):
             self._x_range = tuple(self._master.getViewBox().viewRange()[0])
         self._relayout()
 
+    @in_own_theme
     def _relayout(self) -> None:
         """Lay out header, bands and the selected feature plots of every block."""
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
@@ -1380,6 +1455,7 @@ class InstanceWindow(QMainWindow):
         )
         return slice(start, max(stop, start))
 
+    @in_own_theme
     def _refresh_stretch(self) -> None:
         """Count the histograms and the spectra again over the stretch of time on screen."""
         if not self._stretch_panels:

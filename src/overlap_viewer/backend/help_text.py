@@ -1664,6 +1664,11 @@ USAGE = {
             "opened."
         ),
         (
+            "'Theme', in the toolbar, paints this window alone light or dark, whatever the main "
+            "window is in; 'As the main window' follows it again. A window with a theme of its own "
+            "ignores the main window's switches."
+        ),
+        (
             "'Normalize per instance', in the Views row, draws every trace as z-scores over its own "
             "block, readings outside the plausible range left out first, so that blocks recorded at "
             "different levels share one value axis and their shapes compare; the histograms, the "

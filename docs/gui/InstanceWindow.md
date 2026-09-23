@@ -42,6 +42,9 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   cycling in phase, as figure 6 of the paper describes.
 - All plots **share the time axis**, and the plots of one feature **share their value axis** across
   instances, so the same reading is at the same height everywhere.
+- **Theme**, in the toolbar, paints this window alone light or dark, whatever the main window is
+  in, and *As the main window* follows it again. A window with a theme of its own ignores the main
+  window's switches; the others follow them, keeping their zoom.
 - **Normalize per instance**, in the Views row, draws every trace as z-scores over its own block
   (readings outside the plausible range left out first), as the Faults and Features pages do.
   Blocks recorded at different levels then share one value axis per feature, and the shape of the

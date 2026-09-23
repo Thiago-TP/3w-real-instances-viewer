@@ -332,6 +332,8 @@ class PeriodMarker(pg.GraphicsObject):
     def __init__(self, z: float = 30.0):
         super().__init__()
         self.setZValue(z)
+        # Taken at build time, for a window that keeps a theme of its own.
+        self._color = QColor(theme.current().text)
         self._x0 = np.nan
         self._length = 0.0
         self._label = ""
@@ -371,7 +373,6 @@ class PeriodMarker(pg.GraphicsObject):
         rect = self._view_rect()
         if rect.isNull():
             return
-        colors = theme.current()
         transform = p.transform()
         left = transform.map(QPointF(self._x0, rect.top()))
         right = transform.map(QPointF(self._x0 + self._length, rect.top()))
@@ -380,7 +381,7 @@ class PeriodMarker(pg.GraphicsObject):
         p.save()
         p.resetTransform()
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        pen = QPen(QColor(colors.text), 1.6)
+        pen = QPen(self._color, 1.6)
         p.setPen(pen)
         p.drawLine(QPointF(left.x(), y), QPointF(right.x(), y))
         for end in (left.x(), right.x()):

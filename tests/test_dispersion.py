@@ -86,23 +86,10 @@ def test_the_pass_keeps_an_even_subsample_of_every_instance_with_its_periods_and
     assert len(pair.dots(limit=5000)) == pair.n
 
 
-def test_smoothing_averages_the_rows_and_leaves_no_measurement_to_speak_of():
+def test_implausible_readings_and_an_empty_pass():
     n = 3600
     a = instance(n, "2017-02-01", 1e7)
     ref = di.InstanceRef(1, 0, 0, "a.parquet", "a", a.index[0])
-    plain = di.DispersionPass(SENSORS, BOUNDS, 1, window=1, budget=3600)
-    plain.add(a, ref)
-    smoothed = di.DispersionPass(SENSORS, BOUNDS, 1, window=60, budget=3600)
-    smoothed.add(a, ref)
-    raw, avg = plain.result(), smoothed.result()
-    assert raw.window == 1 and avg.window == 60
-    # The noisy temperature loses its sample-to-sample roughness once averaged over a minute.
-    rough = np.nanstd(np.diff(raw.values[:, 1].astype(float)))
-    assert np.nanstd(np.diff(avg.values[:, 1].astype(float))) < 0.2 * rough
-    # The first 59 rows have no full window behind them.
-    assert np.isnan(avg.values[:59, 1]).all() and np.isfinite(avg.values[59:, 1]).all()
-    assert not avg.genuine.any()
-    assert avg.pair("P-TPT", "T-TPT", genuine_only=True).n == 0
     # Readings outside the plausible range are dropped before anything else.
     hot = a.copy()
     hot["T-TPT"] = 400.0

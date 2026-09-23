@@ -5,14 +5,12 @@ relation between two variables off their scatter plot, and on 3W that plot
 is where the historian's lines show themselves: the cloud of two series is
 mostly the trajectories of two interpolations, straight segments between the
 few instants that were measured: "spurious dynamics" that no pooled
-coefficient betrays (the correlation matrix hardly moves with smoothing) and
-every scatter plot does. So the view draws the cloud three ways: every
+coefficient betrays and every scatter plot does. So the view draws the cloud three ways: every
 sample as a dot, the density of the samples behind the dots, and the
 measurements alone, the readings the historian archived.
 
 A scope (every real instance, one fault class or one well, as instances or
-as the joined bars) is read once per smoothing window and kept for the
-session. Every instance contributes an even subsample of its rows, ``BUDGET``
+as the joined bars) is read once and kept for the session. Every instance contributes an even subsample of its rows, ``BUDGET``
 rows in all, each row carrying every analog sensor, its label period, which
 of its readings were measured and when it was, so that changing the pair of
 sensors, the coloring, the label periods or the measurements filter costs
@@ -27,7 +25,6 @@ from math import ceil
 import numpy as np
 import pandas as pd
 
-from overlap_viewer.algorithms.correlation import smooth
 from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
 from overlap_viewer.backend.labels import column_as_float
 
@@ -128,12 +125,10 @@ class Cloud:
     Attributes
     ----------
     values : np.ndarray
-        ``(rows, sensors)`` readings, NaN where missing or implausible,
-        smoothed by ``window`` samples when ``window > 1``.
+        ``(rows, sensors)`` readings, NaN where missing or implausible.
     genuine : np.ndarray
         ``(rows, sensors)``: whether the reading was measured rather than
-        drawn by the historian; all ``False`` once smoothed, a moving average
-        being no measurement of anything.
+        drawn by the historian.
     period, fault, well, instance, seconds : np.ndarray
         Per row: its label period code, the fault folder and the well of its
         instance, the position of its instance in ``instances``, and the
@@ -143,7 +138,6 @@ class Cloud:
     """
 
     sensors: list[str]
-    window: int
     values: np.ndarray
     genuine: np.ndarray
     period: np.ndarray
@@ -202,13 +196,11 @@ class DispersionPass:
         sensors: Sequence[str],
         bounds: Sequence[tuple[float, float]],
         n_instances: int,
-        window: int = 1,
         budget: int = BUDGET,
         transient_offset: int = 100,
     ):
         self.sensors = list(sensors)
         self.bounds = list(bounds)
-        self.window = int(window)
         self.transient_offset = int(transient_offset)
         self.per_instance = max(budget // max(int(n_instances), 1), 50)
         self._values: list[np.ndarray] = []
@@ -230,9 +222,7 @@ class DispersionPass:
             low, high = self.bounds[j]
             values = np.where((values < low) | (values > high), np.nan, values)
             raw[:, j] = values
-            if self.window == 1:
-                genuine[:, j] = sample_kinds(values) == GENUINE
-        smoothed = smooth(raw, self.window) if self.window > 1 else raw
+            genuine[:, j] = sample_kinds(values) == GENUINE
         period = period_codes(column_as_float(frame, "class"), self.transient_offset)
         if n:
             index = frame.index
@@ -241,7 +231,7 @@ class DispersionPass:
             seconds = np.zeros(0)
         stride = max(1, ceil(n / self.per_instance))
         take = np.arange(0, n, stride)
-        self._values.append(smoothed[take].astype(np.float32))
+        self._values.append(raw[take].astype(np.float32))
         self._genuine.append(genuine[take])
         self._period.append(period[take])
         self._seconds.append(seconds[take])
@@ -256,7 +246,6 @@ class DispersionPass:
         well = np.repeat(np.array([r.well for r in self._instances], dtype=np.int16), counts)
         return Cloud(
             self.sensors,
-            self.window,
             np.vstack(self._values) if self._values else np.zeros((0, s), dtype=np.float32),
             np.vstack(self._genuine) if self._genuine else np.zeros((0, s), dtype=bool),
             np.concatenate(self._period) if self._period else np.zeros(0, dtype=np.int8),

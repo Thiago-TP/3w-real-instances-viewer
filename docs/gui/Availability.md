@@ -109,15 +109,14 @@ between variables three ways at once, and the matrix offers the three
   title sums each into Melo's global coefficient (his equations 4.16 and 4.15). A pair with fewer
   than 300 co-valid samples is left blank, and the valve states are left out: a position is not a
   measurement. The two nonlinear coefficients need the `analysis` extra.
-- **Smoothing** takes a moving average of 5 s to 5 min before the coefficients, all lengths in one
-  pass; the tooltip of a cell gives the Pearson coefficient at every length. Melo's figures 4.11
-  and 4.26 show a process's coefficients rising as the window grows, and the historian's lines
-  between measurements (below) were his reason to distrust any coefficient taken on the grid. What
-  3W 2.0.0 says is more sobering: pooled over a scope, the coefficients hardly move with smoothing
-  (the global coefficient of the whole dataset goes from 0.420 to 0.424 between none and five
-  minutes), because a pooled coefficient is set by the levels the sensors sit at from one instance
-  to the next, not by what happens between two measurements. The lines' spurious dynamics live
-  inside one instance, at the scale of seconds, where the Dispersions page looks.
+- There is **no smoothing**. Melo's figures 4.11 and 4.26 show a process's coefficients rising as a
+  moving average grows, and the historian's lines between measurements (below) were his reason to
+  distrust any coefficient taken on the grid. On 3W 2.0.0 the pooled coefficients hardly moved
+  with one (the global coefficient of the whole dataset went from 0.420 to 0.424 between none and
+  five minutes), because a pooled coefficient is set by the levels the sensors sit at from one
+  instance to the next, not by what happens between two measurements; so the viewer takes them
+  on the grid as it is. The lines' spurious dynamics live inside one instance, at the scale of
+  seconds, where the Dispersions page looks.
 - **Over** is the scope, and it carries the caveat that does bite, stated in the title: pooling the
   instances of a class or of the whole dataset mixes the levels of different wells into the
   coefficient. With every well pooled the mutual-information coefficient of almost every pair reads

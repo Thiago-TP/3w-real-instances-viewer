@@ -58,8 +58,6 @@ from overlap_viewer.algorithms.cleaning import Cleaned, CleanRule
 from overlap_viewer.algorithms.correlation import (
     COEFFICIENTS,
     MIN_PAIRS,
-    WINDOW_NAMES,
-    WINDOWS,
     CorrelationPass,
     Correlations,
 )
@@ -118,7 +116,7 @@ PAIR_HINT = (
 CORR_HINT = (
     "Every cell is a pair of sensors: how they move together over the samples of the instances "
     "on show, pooled | blue positive, amber negative, full at ±1 | hover one for all three "
-    "coefficients | Smoothing shows what a moving average does to them | F1 for help"
+    "coefficients | F1 for help"
 )
 
 
@@ -134,15 +132,6 @@ CORR_TIP = (
     "of the same samples, 0 for independent variables and 1 for a deterministic relation, equal "
     "to |Pearson| when the two are jointly Gaussian. Nonlinear: what the second says beyond the "
     "first, ρ_I × (1 − |ρ|), Zhang's coefficient. All three after Melo (thesis §4.1.5)."
-)
-SMOOTH_TIP = (
-    "A moving average of this many samples applied to every series before the coefficients are "
-    "taken, computed for every length in one pass. Melo's figures 4.11 and 4.26 show a process's "
-    "coefficients rising as the window grows, the noise hiding the relations. On 3W the pooled "
-    "coefficients hardly move with it (the whole dataset's global coefficient goes from 0.420 to "
-    "0.424 between none and five minutes), because they are set by the levels the sensors sit at "
-    "from one instance to the next; the historian's lines between measurements matter inside one "
-    "instance, at the scale of seconds, where the Dispersions page looks."
 )
 
 
@@ -404,13 +393,6 @@ class AvailabilityPage(QWidget):
                 item.setToolTip(reason)
         self._coefficient.currentIndexChanged.connect(self._refresh)
         self._corr_only.append(bar.addWidget(self._coefficient))
-        self._corr_only.append(bar.addWidget(QLabel(" Smoothing ")))
-        self._smoothing = QComboBox()
-        for window in WINDOWS:
-            self._smoothing.addItem(WINDOW_NAMES[window], window)
-        self._smoothing.setToolTip(SMOOTH_TIP)
-        self._smoothing.currentIndexChanged.connect(self._refresh)
-        self._corr_only.append(bar.addWidget(self._smoothing))
 
         bar.addWidget(QLabel(" Available from "))
         self._threshold = QSpinBox()
@@ -509,11 +491,6 @@ class AvailabilityPage(QWidget):
     @property
     def coefficient(self) -> str:
         return self._coefficient.currentText()
-
-    @property
-    def smoothing(self) -> int:
-        """The moving-average window on show, in samples."""
-        return int(self._smoothing.currentData() or 1)
 
     @property
     def live_pairs(self) -> bool:
@@ -1005,12 +982,11 @@ class AvailabilityPage(QWidget):
 
     def _refresh_correlations(self) -> None:
         corr = self._corr
-        matrix = corr.matrix(self.coefficient, self.smoothing)
-        window = self.smoothing
+        matrix = corr.matrix(self.coefficient)
         n = len(corr.sensors)
         order = list(range(n))
         if self._order.currentText() == "By coverage":
-            own = np.diag(corr.pairs[window])
+            own = np.diag(corr.pairs)
             order = sorted(order, key=lambda j: (-own[j], j))
         self._corr_order = order
         sensors = [corr.sensors[j] for j in order]
@@ -1021,7 +997,7 @@ class AvailabilityPage(QWidget):
         self._rows = [HeatmapRow(name) for name in sensors]
         self._ids = [("sensor", j) for j in order]
         self._mask = self._scope_mask()  # so that the export covers the scope
-        present = corr.present(window)
+        present = corr.present()
         muted = [k for k, j in enumerate(order) if not present[j]]
         self._heatmap.set_fills(self._rows, sensors, fills, muted)
         colors = theme.current()
@@ -1042,8 +1018,7 @@ class AvailabilityPage(QWidget):
 
     def _corr_title_text(self) -> str:
         corr = self._corr
-        window = self.smoothing
-        linear, nonlinear = corr.global_coefficients(window)
+        linear, nonlinear = corr.global_coefficients()
         scope = self._scope.currentText().split(" (")[0] or "All real instances"
         noun = "bars" if self.joined else "instances"
         parts = [
@@ -1051,7 +1026,6 @@ class AvailabilityPage(QWidget):
                 f"Per pair of sensors: the {self.coefficient} coefficient over the samples of the "
                 f"{corr.n_instances} {noun} of {scope}, pooled"
             ),
-            f"smoothing: {WINDOW_NAMES[window]}",
         ]
         if np.isfinite(linear):
             summary = f"global linear coefficient {linear:.2f}"
@@ -1077,25 +1051,23 @@ class AvailabilityPage(QWidget):
     def _corr_values(self, row: int, column: int) -> dict[str, float]:
         corr = self._corr
         i, j = self._corr_order[row], self._corr_order[column]
-        window = self.smoothing
-        values = {"Pearson": float(corr.pearson[window][i, j])}
+        values = {"Pearson": float(corr.pearson[i, j])}
         if corr.mi_coefficient is not None:
-            values["Mutual information"] = float(corr.mi_coefficient[window][i, j])
-            values["Nonlinear"] = float(corr.nonlinear[window][i, j])
-        values["pairs"] = float(corr.pairs[window][i, j])
+            values["Mutual information"] = float(corr.mi_coefficient[i, j])
+            values["Nonlinear"] = float(corr.nonlinear[i, j])
+        values["pairs"] = float(corr.pairs[i, j])
         return values
 
     def _describe_corr(self, row: int, column: int) -> str:
         """One line about a cell, a row or a column of the correlation matrix."""
         corr = self._corr
-        window = self.smoothing
         if row < 0 or column < 0:
             k = column if row < 0 else row
             j = self._corr_order[k]
             name = corr.sensors[j]
-            rho = corr.pearson[window][j].copy()
+            rho = corr.pearson[j].copy()
             rho[j] = np.nan
-            own = int(corr.pairs[window][j, j])
+            own = int(corr.pairs[j, j])
             if np.isfinite(rho).any():
                 partner = int(np.nanargmax(np.abs(rho)))
                 strongest = f"strongest with {corr.sensors[partner]}: Pearson {rho[partner]:+.2f}"
@@ -1111,17 +1083,7 @@ class AvailabilityPage(QWidget):
         if "Mutual information" in values:
             parts.append(f"mutual-information coefficient {values['Mutual information']:.2f}")
             parts.append(f"nonlinear {values['Nonlinear']:.2f}")
-        parts.append(
-            f"over {int(values['pairs']):,} co-valid samples, smoothing {WINDOW_NAMES[window]}"
-        )
-        others = [
-            f"{WINDOW_NAMES[w]}: {corr.pearson[w][self._corr_order[row], self._corr_order[column]]:+.2f}"
-            for w in corr.windows
-            if w != window
-            and np.isfinite(corr.pearson[w][self._corr_order[row], self._corr_order[column]])
-        ]
-        if others:
-            parts.append("Pearson at other smoothings: " + ", ".join(others))
+        parts.append(f"over {int(values['pairs']):,} co-valid samples")
         return " | ".join(parts)
 
     def _corr_tooltip(self, row: int, column: int) -> str:
@@ -1154,8 +1116,7 @@ class AvailabilityPage(QWidget):
         if rest:
             lines.append(f'<span style="color:{colors.muted};">{" | ".join(rest)}</span>')
         lines.append(
-            f'<span style="color:{colors.muted};">{int(values["pairs"]):,} co-valid samples | '
-            f"smoothing {WINDOW_NAMES[self.smoothing]}</span>"
+            f'<span style="color:{colors.muted};">{int(values["pairs"]):,} co-valid samples</span>'
         )
         return "<br>".join(lines)
 
@@ -1313,8 +1274,8 @@ class AvailabilityPage(QWidget):
         version = f"3W {self.info.version} | " if self.info.version else ""
         if self.correlations_on and self._corr is not None:
             corr = self._corr
-            linear, nonlinear = corr.global_coefficients(self.smoothing)
-            present = int(corr.present(self.smoothing).sum())
+            linear, nonlinear = corr.global_coefficients()
+            present = int(corr.present().sum())
             figures = f"global linear {linear:.2f}" if np.isfinite(linear) else "no pair to compare"
             if np.isfinite(nonlinear):
                 figures += f", nonlinear {nonlinear:.2f}"

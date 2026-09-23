@@ -29,9 +29,7 @@ the measurements alone
   own: a historian archives a reading when it has moved enough, so the instants at which both
   sensors were archived are instants at which both moved, and this cloud favours the relation
   between them: over the severe-slugging instances P-TPT × T-TPT reads +0.40 on every sample and
-  +0.95 on the 5 % at which both were measured. **Smoothing** applies a moving average of 5 s to
-  5 min to both series first, which is what a pipeline's smoothing does to the cloud (and reads the
-  scope again, once per window). The caption gives the counts, one in how many, and the Pearson
+  +0.95 on the 5 % at which both were measured. The caption gives the counts, one in how many, and the Pearson
   coefficient over the samples on show, so that the cloud and the correlation matrix can be read
   against each other: no pooled coefficient betrays the lines, every scatter plot does.
 - **Hover** a dot for its instance, its instant, its label period, its two readings and whether

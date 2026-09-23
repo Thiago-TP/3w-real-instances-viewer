@@ -10,9 +10,8 @@ looked at: every dot is a sample that names its instance and its instant on
 hover, lights up every other dot of that instance while the rest of the
 cloud fades, and opens it on click; the density of the samples sits behind
 the dots; the label periods are switched on and off; the dots can be the
-measurements alone; and a moving average shows what smoothing does to the
-cloud. The reading is done once per scope and smoothing window, every analog
-sensor at once, so that everything else is instant.
+measurements alone. The reading is done once per scope, every analog sensor
+at once, so that everything else is instant.
 """
 
 import time
@@ -35,7 +34,6 @@ from PySide6.QtWidgets import (
 )
 
 from overlap_viewer.algorithms import dispersion as di
-from overlap_viewer.algorithms.correlation import WINDOW_NAMES, WINDOWS
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.availability import LIVE, Availability
 from overlap_viewer.backend.dataset import (
@@ -82,12 +80,6 @@ COLORING_TIP = (
     "period the sample was in (normal operation, transient, steady state, unlabeled). Density "
     "hides the dots and shows the two-dimensional histogram of the samples alone, darkest where "
     "most of them fall."
-)
-SMOOTH_TIP = (
-    "A moving average of this many samples applied to both series before they are drawn, which "
-    "is what a pipeline's smoothing does to the cloud: the historian's straight lines between "
-    "measurements shrink toward the process. Changing it reads the scope again. Measurements "
-    "only is not offered on a smoothed series: an average is no measurement."
 )
 GENUINE_TIP = (
     "Draw only the samples at which both sensors were actually measured (the readings the "
@@ -138,7 +130,7 @@ class DispersionPage(QWidget):
         self._catalogue: pd.DataFrame | None = None
         self._wells: list[WellData] = []
         self._availability: Availability | None = None
-        # The clouds read so far, by (scope kind, scope key, joined, window).
+        # The clouds read so far, by (scope kind, scope key, joined).
         self._clouds: dict[tuple, di.Cloud] = {}
         self._cloud: di.Cloud | None = None
         self._pair: di.Pair | None = None
@@ -227,13 +219,6 @@ class DispersionPage(QWidget):
         bar.addWidget(self._coloring)
 
         bar.addSeparator()
-        bar.addWidget(QLabel(" Smoothing "))
-        self._smoothing = QComboBox()
-        for window in WINDOWS:
-            self._smoothing.addItem(WINDOW_NAMES[window], window)
-        self._smoothing.setToolTip(SMOOTH_TIP)
-        self._smoothing.currentIndexChanged.connect(self._on_smoothing_changed)
-        bar.addWidget(self._smoothing)
         self._genuine = QCheckBox("Measurements only")
         self._genuine.setToolTip(GENUINE_TIP)
         self._genuine.toggled.connect(self._redraw)
@@ -305,12 +290,8 @@ class DispersionPage(QWidget):
         return self._coloring.currentText()
 
     @property
-    def smoothing(self) -> int:
-        return int(self._smoothing.currentData() or 1)
-
-    @property
     def genuine_only(self) -> bool:
-        return self._genuine.isChecked() and self._genuine.isEnabled()
+        return self._genuine.isChecked()
 
     @property
     def periods(self) -> list[int]:
@@ -318,7 +299,7 @@ class DispersionPage(QWidget):
 
     def _scope_key(self) -> tuple:
         kind, key = self._scope.currentData() or ("all", -1)
-        return (str(kind), int(key), self.joined, self.smoothing)
+        return (str(kind), int(key), self.joined)
 
     def _scope_name(self) -> str:
         text = self._scope.currentText().split(" (")[0]
@@ -438,14 +419,14 @@ class DispersionPage(QWidget):
         return load_instance(path)
 
     def _load_cloud(self) -> bool:
-        """Have the cloud of the scope, window and view on show, reading the data if need be; ``False`` if cancelled."""
+        """Have the cloud of the scope and view on show, reading the data if need be; ``False`` if cancelled."""
         key = self._scope_key()
         if key in self._clouds:
             self._cloud = self._clouds[key]
             return True
         if self._availability is None:
             return False
-        kind, scope_key, joined, window = key
+        kind, scope_key, joined = key
         bars = [
             (data, index)
             for data in self._view_wells(joined)
@@ -456,7 +437,7 @@ class DispersionPage(QWidget):
         availability = self._availability
         bounds = [availability.ranges[availability.sensors.index(name)] for name in analog]
         reader = di.DispersionPass(
-            analog, bounds, len(bars), window=window, transient_offset=self.info.transient_offset
+            analog, bounds, len(bars), transient_offset=self.info.transient_offset
         )
         noun = "bars" if joined else "instances"
         dialog, progress = progress_dialog(
@@ -488,11 +469,6 @@ class DispersionPage(QWidget):
         self._read_s = time.perf_counter() - started
         self._cloud = self._clouds[key] = reader.result()
         return True
-
-    def _on_smoothing_changed(self, *args) -> None:
-        # An average is no measurement: the filter rests while the series are smoothed.
-        self._genuine.setEnabled(self.smoothing == 1)
-        self._refresh()
 
     def _refresh(self, *args) -> None:
         """Have the cloud of the boxes, reading if need be, and draw it."""
@@ -655,9 +631,7 @@ class DispersionPage(QWidget):
         rho = pair.pearson()
         if np.isfinite(rho):
             parts.append(f"Pearson over these samples {rho:+.2f}")
-        if cloud.window > 1:
-            parts.append(f"smoothed over {WINDOW_NAMES[cloud.window]}")
-        elif self.genuine_only:
+        if self.genuine_only:
             parts.append(
                 f"measurements only: both sensors read at the instant, "
                 f"{pair.n / max(pair.n_candidates, 1):.1%} of the samples"
@@ -803,12 +777,10 @@ class DispersionPage(QWidget):
         period = di.PERIOD_NAMES[di.PERIODS[int(cloud.period[row])]]
         unit_x, unit_y = self.info.unit(self.x), self.info.unit(self.y)
         i, j = cloud.sensors.index(self.x), cloud.sensors.index(self.y)
-        measured = []
-        if cloud.window == 1:
-            measured = [
-                f"{name} {'measured' if cloud.genuine[row, k] else 'filled in'}"
-                for name, k in ((self.x, i), (self.y, j))
-            ]
+        measured = [
+            f"{name} {'measured' if cloud.genuine[row, k] else 'filled in'}"
+            for name, k in ((self.x, i), (self.y, j))
+        ]
         parts = [
             f"{well_label(ref.well)} | {ref.title} | {self.info.fault_name(ref.fault)} ({period})",
             f"{when:%Y-%m-%d %H:%M:%S}",
@@ -824,7 +796,7 @@ class DispersionPage(QWidget):
         """The instances behind the cloud on show, for the file list a Toolkit loader takes."""
         if self._availability is None:
             return []
-        kind, key, joined, _window = self._scope_key()
+        kind, key, joined = self._scope_key()
         files = []
         for data in self._view_wells(joined):
             origin = data.origin.rows

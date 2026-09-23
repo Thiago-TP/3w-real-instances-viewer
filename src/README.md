@@ -41,7 +41,7 @@ src/overlap_viewer/
 │   ├── cleaning.py       the Toolkit's CleanSignals rule on the profiles: bounds at the quartiles, the sensors discarded and dropped
 │   ├── embedding.py      the Instances map: representations, PCA and MDS in numpy, t-SNE and UMAP, the clusterings and their scores, typicality, the one-class audit
 │   ├── dtw.py            the DTW distance between the decimated, z-scored series of one sensor (the `dtw` extra)
-│   ├── correlation.py    how the sensors move together over a scope: Pearson exact over the pooled samples, the mutual-information and nonlinear coefficients, per smoothing window
+│   ├── correlation.py    how the sensors move together over a scope: Pearson exact over the pooled samples, the mutual-information and nonlinear coefficients
 │   ├── dispersion.py     two sensors against each other over a scope: an even subsample of every instance with its label periods and measurements, the pair, its density
 │   └── spectral.py       the signal views: a series prepared, Welch's density and the dominant period, the Lomb-Scargle periodogram of the measurements, histograms stacked by label, with their peak
 └── frontend/             how it is shown: PySide6 and pyqtgraph
@@ -418,15 +418,13 @@ one fault class, for the Instances map's DTW representation. Requires the `dtw` 
 
 Computes how sensors move together over a scope (all instances, one class, or one well, pooled):
 exact Pearson correlation via streaming sufficient statistics, plus (via the `analysis` extra) a
-nonlinear mutual-information-based coefficient, at several smoothing windows at once (Melo's thesis
-§4.1.5).
+nonlinear mutual-information-based coefficient (Melo's thesis §4.1.5).
 
-- `Correlations` (frozen dataclass): per-window Pearson/pair-count/MI/nonlinear matrices; methods
-  `matrix(coefficient, window)`, `present(window)`, `global_coefficients(window)` (Melo's pooled
-  figures, eqs. 4.15-4.16).
+- `Correlations` (frozen dataclass): the Pearson, pair-count, MI and nonlinear matrices; methods
+  `matrix(coefficient)`, `present()`, `global_coefficients()` (Melo's pooled figures,
+  eqs. 4.15-4.16).
 - `mi_coefficient(mutual_information)`: Laarne et al.'s `sqrt(1 - exp(-2I))` normalization into a
   [0,1] coefficient.
-- `smooth(values, window)`: moving average over `window` samples.
 - `CorrelationPass`: streaming accumulator; `.add(frame)` folds one instance into running sums;
   `.result(mutual_information=True)` finalizes into a `Correlations`.
 
@@ -441,7 +439,7 @@ Backs the two-sensor scatter/density view: reads an even subsample of every inst
   `density(bins)`, `pearson()`.
 - `Cloud` (dataclass): the full scope read; method `pair(x, y, periods, genuine_only)` extracts one
   sensor pair.
-- `DispersionPass`: streaming builder; `.add(frame, ref)` clips, classifies, smooths and subsamples
+- `DispersionPass`: streaming builder; `.add(frame, ref)` clips, classifies and subsamples
   one frame; `.result()` concatenates into a `Cloud`.
 
 ### `spectral.py`
@@ -634,7 +632,7 @@ correlations.
 
 - `AvailabilityPage(QWidget)`: signals `status`, `summary_changed`, `open_requested(well, bar,
   sensor, joined)`. The toolbar offers *Matrix* (availability/pairs/correlations), *Rows*, *Over*,
-  *Sensors*, *Cells*, *Available from*, *Join*, plus per-matrix controls (coefficient, smoothing,
+  *Sensors*, *Cells*, *Available from*, *Join*, plus per-matrix controls (coefficient,
   IQR × for the Toolkit rule). `_ensure_data()` dispatches which passes the current matrix needs;
   `_refresh()` redraws whichever matrix is selected. `summary()`, `shown_files()`, `shown_source()`.
 
@@ -700,12 +698,12 @@ clustering scores and a "label audit" list of instances a one-class model disagr
 ### `dispersion_page.py`
 
 The Dispersions page: draws two chosen sensors against each other as a point cloud over a scope
-(all/one class/one well, optionally joined), with density shading, coloring modes, smoothing,
+(all/one class/one well, optionally joined), with density shading, coloring modes,
 measurements-only filtering, label-period filters, and hover/click on individual samples.
 
 - `DispersionPage(QWidget)`: signals `status`, `summary_changed`, `open_requested(WellData, index)`.
   `_load_cloud()` reads every analog sensor of every instance in scope via
-  `algorithms.dispersion.DispersionPass`, progress-dialog-gated and cached by scope and smoothing.
+  `algorithms.dispersion.DispersionPass`, progress-dialog-gated and cached by scope.
   `_redraw()` draws the density image (a log-scaled 2D histogram) and, per color group, a
   `ScatterPlotItem` of the dot cloud (subsampled to `MAX_DOTS`). `_light_instance(instance)`
   brings every drawn dot of one instance forward and fades the groups while a dot of it is

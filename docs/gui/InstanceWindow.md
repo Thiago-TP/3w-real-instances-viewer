@@ -42,6 +42,11 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   cycling in phase, as figure 6 of the paper describes.
 - All plots **share the time axis**, and the plots of one feature **share their value axis** across
   instances, so the same reading is at the same height everywhere.
+- **Normalize per instance**, in the Views row, draws every trace as z-scores over its own block
+  (readings outside the plausible range left out first), as the Faults and Features pages do.
+  Blocks recorded at different levels then share one value axis per feature, and the shape of the
+  change is what is compared. The histograms, the spectra and the readout under the crosshair
+  read the same scaled readings; the figures beside each trace stay in the sensor's unit.
 - A **crosshair** follows the pointer through every plot; the status bar gives the time under it and,
   per instance, the label, the operational status and the selected readings at that time.
 - Each plot reports the total variation of the signal (Δ = max − min, marked *flat* for a frozen

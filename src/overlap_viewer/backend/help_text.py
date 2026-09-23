@@ -1664,6 +1664,12 @@ USAGE = {
             "opened."
         ),
         (
+            "'Normalize per instance', in the Views row, draws every trace as z-scores over its own "
+            "block, readings outside the plausible range left out first, so that blocks recorded at "
+            "different levels share one value axis and their shapes compare; the histograms, the "
+            "spectra and the readout follow, and the figures beside each trace stay in its unit."
+        ),
+        (
             "'Signature' ticks the variables whose joint behavior identifies the event: those of "
             "the paper's figure where it illustrates the event, a best effort from the thesis "
             "where it does not, which the tooltip says. A window opens with it ticked, unless it "

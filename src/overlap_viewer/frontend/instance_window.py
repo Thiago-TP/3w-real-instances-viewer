@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from overlap_viewer.algorithms.faults import zscore
 from overlap_viewer.algorithms.interpolation import (
     GENUINE,
     describe_sampling,
@@ -137,6 +138,15 @@ STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch vie
 # the slugging period drifts, and everywhere else it said what the spectrum
 # beside it already said while taking a row of its own from every feature of
 # every block, which is the scarce thing in a window that stacks them.
+NORMALIZE_TIP = (
+    "Scale every trace to its own level: each reading as standard deviations from the mean of that "
+    "sensor over the whole block, readings outside the plausible range left out first, as the "
+    "Faults and Features pages and Rabelo's pipeline normalize. Blocks recorded at different "
+    "levels then share one value axis per feature, and the shape of the change is what is "
+    "compared. The histograms and the spectra read the same scaled readings; the figures beside "
+    "each trace (its total variation, how it was measured, its coverage) stay in the sensor's "
+    "unit."
+)
 DOTS_TIP = (
     "Mark, on every trace, the samples the plant's PI historian actually archived: they are drawn "
     "as dots in the full color, and the line through every sample, which between two dots is "
@@ -359,6 +369,7 @@ class InstanceWindow(QMainWindow):
         self._seams = [self._seam_positions(members) for members in self.members]
         self._groups_cache: dict[int, tuple[np.ndarray, list]] = {}
         self._kinds_cache: dict[tuple[int, str], np.ndarray | None] = {}
+        self._scaled_cache: dict[tuple[int, str], np.ndarray] = {}
         self._features = self._feature_table()
         self._signature = self._signature_for_group()
 
@@ -557,6 +568,10 @@ class InstanceWindow(QMainWindow):
         self._dots_check.setToolTip(DOTS_TIP)
         self._dots_check.toggled.connect(self._rebuild)
         views_bar.addWidget(self._dots_check)
+        self._normalize_check = QCheckBox("Normalize per instance")
+        self._normalize_check.setToolTip(NORMALIZE_TIP)
+        self._normalize_check.toggled.connect(self._on_normalize_toggled)
+        views_bar.addWidget(self._normalize_check)
         views_bar.addSeparator()
         self._controls = TransformControls()
         self._controls.changed.connect(self._rebuild)
@@ -643,6 +658,48 @@ class InstanceWindow(QMainWindow):
     def dots_shown(self) -> bool:
         """Whether a trace marks the samples the historian actually archived."""
         return self._dots_check.isChecked()
+
+    @property
+    def normalized(self) -> bool:
+        """Whether every trace is drawn as z-scores over its block rather than in its unit."""
+        return self._normalize_check.isChecked()
+
+    def set_normalized(self, normalized: bool) -> None:
+        """Draw the traces scaled to their blocks, or in their units, as the box would."""
+        self._normalize_check.setChecked(normalized)
+
+    def _on_normalize_toggled(self, *args) -> None:
+        # The value axes change their unit, so they are fitted again; the
+        # stretch of time on screen is kept.
+        self._rebuild()
+
+    def _display_values(self, position: int, feature: str) -> np.ndarray:
+        """The readings of one feature of one block as drawn: in its unit, or as z-scores.
+
+        Every view reads its values through here (the trace, the value axis,
+        the histogram, the spectrum, the readout under the crosshair), so that
+        they always agree on what is on the axis. Scaled, the readings outside
+        the plausible range are left out first, as the pipelines mask the
+        garbage before they normalize: one absurd level would otherwise squash
+        every genuine reading into zero.
+        """
+        frame = self.frames[position]
+        if feature not in frame.columns:
+            return np.full(len(frame), np.nan)
+        values = frame[feature].to_numpy(dtype=float)
+        if not self.normalized:
+            return values
+        key = (position, feature)
+        if key not in self._scaled_cache:
+            low, high = plausible_range(self.info.unit(feature))
+            self._scaled_cache[key] = zscore(
+                np.where((values >= low) & (values <= high), values, np.nan)
+            )
+        return self._scaled_cache[key]
+
+    def _display_unit(self, feature: str) -> str:
+        """The unit of what is drawn of a feature: its own, or none for z-scores."""
+        return "" if self.normalized else self.info.unit(feature)
 
     def view_on(self, view: str) -> bool:
         check = self._views.get(view)
@@ -1043,8 +1100,12 @@ class InstanceWindow(QMainWindow):
                 panel = StretchPanel(
                     position,
                     feature,
-                    self.info.unit(feature),
-                    plausible_range(self.info.unit(feature)),
+                    self._display_unit(feature),
+                    # Scaled readings have had the implausible ones taken out
+                    # already, and have no range of their own to be held to.
+                    (-np.inf, np.inf)
+                    if self.normalized
+                    else plausible_range(self.info.unit(feature)),
                 )
                 self._add_feature_plot(row, position, feature, show_axis=trace_axis)
                 if self.view_on("distribution"):
@@ -1184,7 +1245,10 @@ class InstanceWindow(QMainWindow):
         frame = self.frames[position]
         unit = self.info.unit(feature)
         axis = plot.getAxis("left")
-        if unit in SI_UNITS:
+        if self.normalized:
+            axis.enableAutoSIPrefix(False)
+            plot.setLabel("left", f"{feature} (z-score)")
+        elif unit in SI_UNITS:
             axis.enableAutoSIPrefix(True)
             plot.setLabel("left", feature, units=unit)
         else:
@@ -1203,7 +1267,7 @@ class InstanceWindow(QMainWindow):
         stats = feature_stats(frame, feature)
         if stats.recorded:
             x = self.timemap.to_x(frame.index)
-            y = frame[feature].to_numpy(dtype=float)
+            y = self._display_values(position, feature)
             # The measurements as dots, the historian's lines faint between them.
             kinds = self._kinds_of(position, feature)
             add_trace(plot, x, y, colors.trace, 1.0, kinds if self.dots_shown else None)
@@ -1217,7 +1281,8 @@ class InstanceWindow(QMainWindow):
             bounds = plausible_range(unit)
             warning = ""
             if outside_range(stats.low, stats.high, bounds):
-                self._mark_implausible(plot, x, y, bounds)
+                if not self.normalized:  # scaled, they were left out before the scaling
+                    self._mark_implausible(plot, x, y, bounds)
                 warning = (
                     f' | <span style="color:{colors.warning};">⚠ readings outside '
                     f"{bounds[0]:g} to {bounds[1]:g} {unit}</span>"
@@ -1280,12 +1345,6 @@ class InstanceWindow(QMainWindow):
         # the caption goes to the left, where it is not.
         panel.spec_note = AnchoredText("", frac=(0.0, 1.0), anchor=(-0.03, -0.25))
         panel.spec_note.attach(plot)
-
-    def _series_on_grid(self, frame: pd.DataFrame, feature: str) -> tuple[np.ndarray, int]:
-        """The readings of one feature on the fixed 1 Hz grid, and how many seconds a sample spans."""
-        if feature not in frame.columns:
-            return np.full(len(frame), np.nan), 1
-        return uniform_series(frame.index, frame[feature].to_numpy(dtype=float))
 
     def _kinds_of(self, position: int, feature: str) -> np.ndarray | None:
         """Which samples of one feature of one block are measurements, held, interpolated or missing.
@@ -1369,7 +1428,7 @@ class InstanceWindow(QMainWindow):
         panel.hist_items = []
         colors = theme.current()
         values = (
-            frame[panel.feature].to_numpy(dtype=float)[window]
+            self._display_values(panel.position, panel.feature)[window]
             if panel.feature in frame.columns
             else np.array([])
         )
@@ -1430,11 +1489,16 @@ class InstanceWindow(QMainWindow):
                 else ""
             )
         noun = "measurements" if measured else "samples"
+
+        def figure(value: float) -> str:
+            # A z-score's mean is zero up to rounding, which would print as 1e-16.
+            return f"{value:+.2f} σ" if self.normalized else format_width(value, panel.unit)
+
         panel.hist_note.setHtml(
             f'<span style="font-size:8pt; color:{colors.text};">{result.total:,} {noun}<br>'
             f"{len(result.edges) - 1} bins of {width}<br>"
-            f"mean {format_width(result.mean, panel.unit)} ―<br>"
-            f"median {format_width(result.median, panel.unit)} ╌{left_out}</span>"
+            f"mean {figure(result.mean)} ―<br>"
+            f"median {figure(result.median)} ╌{left_out}</span>"
         )
 
     def _mark_peak(self, panel: StretchPanel, spectrum: Spectrum) -> None:
@@ -1496,11 +1560,12 @@ class InstanceWindow(QMainWindow):
         if params.genuine and kinds is not None:
             keep = kinds[window] == GENUINE
             seconds = (sub.index - sub.index[0]).total_seconds().to_numpy(dtype=float)
-            prepared = prepare_irregular(
-                seconds[keep], sub[panel.feature].to_numpy(dtype=float)[keep], panel.bounds
-            )
+            readings = self._display_values(panel.position, panel.feature)[window]
+            prepared = prepare_irregular(seconds[keep], readings[keep], panel.bounds)
             return lomb_scargle(*prepared) if prepared is not None else None
-        values, _step = self._series_on_grid(sub, panel.feature)
+        values, _step = uniform_series(
+            sub.index, self._display_values(panel.position, panel.feature)[window]
+        )
         prepared = prepare(values, panel.bounds) if len(values) else None
         return welch(prepared, params) if prepared is not None else None
 
@@ -1660,6 +1725,12 @@ class InstanceWindow(QMainWindow):
         for feature, master in self._feature_masters.items():
             lows, highs = [], []
             for position in range(len(self.rows)):
+                if self.normalized:
+                    scaled = self._display_values(position, feature)
+                    if np.isfinite(scaled).any():
+                        lows.append(float(np.nanmin(scaled)))
+                        highs.append(float(np.nanmax(scaled)))
+                    continue
                 stats: FeatureStats = feature_stats(self.frames[position], feature)
                 if stats.recorded:
                     lows.append(stats.low)
@@ -1710,8 +1781,9 @@ class InstanceWindow(QMainWindow):
             values = []
             for feature in self.selected_features():
                 if feature in frame.columns:
-                    value = frame[feature].iloc[i]
-                    values.append(f"{feature} = {'-' if pd.isna(value) else f'{value:.4g}'}")
+                    value = self._display_values(position, feature)[i]
+                    shown = "-" if pd.isna(value) else f"{value:.4g}"
+                    values.append(f"{feature} = {shown}{' σ' if self.normalized else ''}")
             reading = f" | {', '.join(values)}" if values else ""
             parts.append(
                 f"{title}: {label_name(klass, self.info.fault_names, offset)} / {state_name(state)}{reading}"

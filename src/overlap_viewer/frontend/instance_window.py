@@ -556,8 +556,23 @@ class InstanceWindow(QMainWindow):
         toolbar = QToolBar("View")
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-        reset = QAction("Reset view", self)
+        # In the main window's order: the theme, then the actions, then what
+        # belongs to this window alone.
+        toolbar.addWidget(QLabel(" Theme "))
+        self._theme_box = QComboBox()
+        for text, name in WINDOW_THEMES:
+            self._theme_box.addItem(text, name)
+        self._theme_box.setToolTip(WINDOW_THEME_TIP)
+        self._theme_box.currentIndexChanged.connect(
+            lambda *_: self.set_window_theme(self._theme_box.currentData())
+        )
+        toolbar.addWidget(self._theme_box)
+        toolbar.addSeparator()
+        reset = QAction("Reset views", self)
         reset.setShortcut("Ctrl+R")
+        reset.setToolTip(
+            "Show every block whole again, each value axis fitted to its readings (Ctrl+R)"
+        )
         reset.triggered.connect(self.reset_view)
         toolbar.addAction(reset)
         help_action = QAction("Help", self)
@@ -580,16 +595,6 @@ class InstanceWindow(QMainWindow):
         )
         self._show_features.toggled.connect(self._on_features_toggled)
         toolbar.addAction(self._show_features)
-        toolbar.addSeparator()
-        toolbar.addWidget(QLabel(" Theme "))
-        self._theme_box = QComboBox()
-        for text, name in WINDOW_THEMES:
-            self._theme_box.addItem(text, name)
-        self._theme_box.setToolTip(WINDOW_THEME_TIP)
-        self._theme_box.currentIndexChanged.connect(
-            lambda *_: self.set_window_theme(self._theme_box.currentData())
-        )
-        toolbar.addWidget(self._theme_box)
         # The views and their parameters get a row of their own: on one row
         # with the rest they fell behind the toolbar's overflow chevron as soon
         # as the window was narrower than a screen.

@@ -839,7 +839,7 @@ class DispersionPage(QWidget):
 
     def shown_source(self) -> str:
         """Where the file list came from, for its provenance."""
-        return f"the Dispersion page | {self.x} × {self.y} | over {self._scope_name()}" + (
+        return f"the Dispersions page | {self.x} × {self.y} | over {self._scope_name()}" + (
             " | joined bars" if self.joined else ""
         )
 

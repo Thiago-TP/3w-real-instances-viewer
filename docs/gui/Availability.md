@@ -117,7 +117,7 @@ between variables three ways at once, and the matrix offers the three
   (the global coefficient of the whole dataset goes from 0.420 to 0.424 between none and five
   minutes), because a pooled coefficient is set by the levels the sensors sit at from one instance
   to the next, not by what happens between two measurements. The lines' spurious dynamics live
-  inside one instance, at the scale of seconds, where the Dispersion page looks.
+  inside one instance, at the scale of seconds, where the Dispersions page looks.
 - **Over** is the scope, and it carries the caveat that does bite, stated in the title: pooling the
   instances of a class or of the whole dataset mixes the levels of different wells into the
   coefficient. With every well pooled the mutual-information coefficient of almost every pair reads

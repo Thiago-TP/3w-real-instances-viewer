@@ -116,7 +116,7 @@ def restyle_axes(plot_item: pg.PlotItem) -> None:
     background, and the grid appears to vanish. Most pages throw their plots
     away and build them again whenever the catalogue is laid out, and need none
     of this; the pages that keep one plot for their whole life (the Instances
-    map and the Dispersion cloud) call this from ``apply_theme``. The tick pen
+    map and the Dispersions cloud) call this from ``apply_theme``. The tick pen
     is left alone: unset, it follows the axis pen.
     """
     foreground = theme.current().plot_foreground

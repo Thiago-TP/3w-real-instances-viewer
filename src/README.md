@@ -60,7 +60,7 @@ src/overlap_viewer/
     ├── faults_page.py        the faults page: one fault, a section per feature, its instances in the color of their well
     ├── features_page.py      the features page: one sensor, a section per fault class, the classes over one another when overlaid
     ├── map_page.py           the Instances map: the points, their colorings, the clustering scores, the label audit
-    ├── dispersion_page.py    the Dispersion page: two sensors against each other over a scope, the dots, the density, the measurements alone
+    ├── dispersion_page.py    the Dispersions page: two sensors against each other over a scope, the dots, the density, the measurements alone
     ├── instance_window.py    the time series of a group of overlapping instances, with their distributions and spectra
     └── window.py             the main window: the pages, the shared toolbar and status bar, the windows they open
 ```
@@ -693,11 +693,13 @@ clustering scores and a "label audit" list of instances a one-class model disagr
   `results_changed(MapResults)`. `_compute()` is the master pipeline: build representation → embed →
   cluster (+ score) → typicality → novelty → redraw → fill the audit panel → emit `results_changed`.
   Toolbar controls that need a missing optional extra are greyed with the install command
-  (`_grey(box, index, reason)`).
+  (`_grey(box, index, reason)`). The audit panel sits on a `QSplitter` beside the plot and is
+  toggled by the *Label audit* action; `_sync_audit_panel()` retracts it under the DTW
+  representation and restores the user's choice on leaving it.
 
 ### `dispersion_page.py`
 
-The Dispersion page: draws two chosen sensors against each other as a point cloud over a scope
+The Dispersions page: draws two chosen sensors against each other as a point cloud over a scope
 (all/one class/one well, optionally joined), with density shading, coloring modes, smoothing,
 measurements-only filtering, label-period filters, and hover/click on individual samples.
 

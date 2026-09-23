@@ -142,7 +142,7 @@ SMOOTH_TIP = (
     "coefficients hardly move with it (the whole dataset's global coefficient goes from 0.420 to "
     "0.424 between none and five minutes), because they are set by the levels the sensors sit at "
     "from one instance to the next; the historian's lines between measurements matter inside one "
-    "instance, at the scale of seconds, where the Dispersion page looks."
+    "instance, at the scale of seconds, where the Dispersions page looks."
 )
 
 

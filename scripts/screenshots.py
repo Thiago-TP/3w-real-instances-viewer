@@ -196,7 +196,7 @@ def main(argv=None) -> int:
     if page(window.map, "instances", wait=8.0):
         shooter.save(window, "instances")
 
-    # -- Dispersion ------------------------------------------------------------
+    # -- Dispersions -----------------------------------------------------------
     # A handful of readings at 8e7 Pa push the whole cloud into the bottom
     # fifth of an auto-ranged view, so the frame is set on the cloud itself.
     if page(window.dispersion, "dispersion", wait=1.0):

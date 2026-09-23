@@ -444,7 +444,7 @@ def model_help_page() -> str:
 
 def dispersion_help_page() -> str:
     """The dispersion page: the cloud, the historian's lines in it, the scopes and the cost."""
-    parts = ["<h2>Dispersion</h2>", f"<p>{DISPERSION_INTRO}</p>"]
+    parts = ["<h2>Dispersions</h2>", f"<p>{DISPERSION_INTRO}</p>"]
     for title, text in DISPERSION_NOTES:
         parts.append(f"<h3>{title}</h3><p>{text}</p>")
     parts.append(f'<hr><p class="sub">{DISPERSION_SOURCES}</p>')
@@ -474,7 +474,7 @@ class HelpWindow(QDialog):
         "Well status",
         "Data availability",
         "Instances map",
-        "Dispersion",
+        "Dispersions",
         "Model outputs",
         "Using the viewer",
     )

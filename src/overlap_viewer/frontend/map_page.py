@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QToolBar,
     QTreeWidget,
     QTreeWidgetItem,
@@ -66,7 +67,14 @@ from overlap_viewer.frontend.series_page import LIST_WIDTH
 HINT = (
     "Every point is one real instance, or one joined bar | hover a point to name it, click it to "
     "open its time series | the boxes choose what places the points, what colors them and how "
-    "they are grouped | the list on the right is the label audit | F1 for help"
+    "they are grouped | the list on the right is the label audit, drag its edge to resize it | "
+    "F1 for help"
+)
+AUDIT_MIN_WIDTH = 200  # the audit can be dragged narrower than this only by retracting it
+AUDIT_TOGGLE_TIP = (
+    "Show or hide the label audit on the right, to give the map its width; drag its left edge to "
+    "widen or narrow it. It retracts by itself under the DTW representation, which compares the "
+    "instances of one class, and comes back as it was on leaving it."
 )
 
 COLORINGS = ("Fault class", "Well", "Cluster", "Typicality", "Novelty", "Model agreement")
@@ -244,8 +252,17 @@ class MapPage(QWidget):
         plot.addItem(self._highlight, ignoreBounds=True)
         self._plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
         self._plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
-        body_layout.addWidget(self._plot_widget, 1)
-        body_layout.addWidget(self._build_audit_panel())
+        # The audit beside the map on a splitter, so that its handle trades the
+        # width of one for the other; the toggle on the second row retracts it.
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.addWidget(self._plot_widget)
+        self._audit_panel = self._build_audit_panel()
+        self._splitter.addWidget(self._audit_panel)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._splitter.setSizes([10 * LIST_WIDTH, LIST_WIDTH])
+        body_layout.addWidget(self._splitter, 1)
         layout.addWidget(body, 1)
         self._note = ElidedLabel("")
         self._note.setContentsMargins(8, 0, 8, 2)
@@ -339,12 +356,27 @@ class MapPage(QWidget):
         self._scores_label = QLabel("")
         self._scores_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(self._scores_label)
+        bar.addSeparator()
+        self._show_audit = QAction("Label audit", self)
+        self._show_audit.setCheckable(True)
+        self._show_audit.setChecked(True)
+        self._show_audit.setToolTip(AUDIT_TOGGLE_TIP)
+        self._show_audit.toggled.connect(self._on_audit_toggled)
+        bar.addAction(self._show_audit)
+        # What the user asked of the audit outside the DTW representation,
+        # which hides it: leaving DTW gives it back as it was.
+        self._audit_wanted = True
         self._sync_clustering_controls()
         return bar
 
+    def _on_audit_toggled(self, shown: bool) -> None:
+        self._audit_panel.setVisible(shown)
+        if self.representation != "dtw":
+            self._audit_wanted = shown
+
     def _build_audit_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setFixedWidth(LIST_WIDTH)
+        panel.setMinimumWidth(AUDIT_MIN_WIDTH)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel("<b>Label audit</b>"))
@@ -380,6 +412,19 @@ class MapPage(QWidget):
             action.setVisible(not dtw)
         for action in self._dtw_actions:
             action.setVisible(dtw)
+
+    def _sync_audit_panel(self) -> None:
+        """Retract the audit under the DTW representation, and give it back as it was on leaving.
+
+        DTW compares the instances of one class only, so its map has the whole
+        width to itself; the toggle still shows the audit if it is asked for.
+        """
+        wanted = self._audit_wanted and self.representation != "dtw"
+        if self._show_audit.isChecked() != wanted:
+            self._show_audit.blockSignals(True)
+            self._show_audit.setChecked(wanted)
+            self._show_audit.blockSignals(False)
+        self._audit_panel.setVisible(wanted)
 
     def _sync_clustering_controls(self) -> None:
         wants_k = self.clustering in ("k-means", "Gaussian mixture", "Agglomerative")
@@ -545,6 +590,7 @@ class MapPage(QWidget):
 
     def _on_representation_changed(self, *args) -> None:
         self._sync_representation_controls()
+        self._sync_audit_panel()
         self._recompute()
 
     def _on_clustering_changed(self, *args) -> None:

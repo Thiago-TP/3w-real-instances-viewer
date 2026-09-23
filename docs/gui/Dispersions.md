@@ -1,4 +1,4 @@
-# Dispersion page
+# Dispersions page
 Two sensors against each other, every sample of the instances of a scope one
 dot, the density of the samples shaded behind. It is the scatter plot of Melo's exploratory
 methodology made readable: his figures of two 3W variables (thesis, section 4.2.5) were where he
@@ -10,7 +10,7 @@ the measurements alone
 ([`algorithms/dispersion.py`](../../src/overlap_viewer/algorithms/dispersion.py),
 [`frontend/dispersion_page.py`](../../src/overlap_viewer/frontend/dispersion_page.py)).
 
-![Dispersion page](../assets/dispersion.png)
+![Dispersions page](../assets/dispersion.png)
 
 - **X**, **Y** are the two sensors (analog ones; readings outside the plausible range left out) and
   **Over** the scope: every real instance, one fault class or one well, the joined bars with **Join

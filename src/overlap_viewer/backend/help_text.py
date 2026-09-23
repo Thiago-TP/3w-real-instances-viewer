@@ -949,7 +949,7 @@ AVAILABILITY_NOTES = [
             "the severe-slugging class moves by more than 0.03) because a pooled coefficient is "
             "set by the levels the sensors sit at from one instance to the next, not by what "
             "happens between two measurements. The lines' spurious dynamics live inside one "
-            "instance, at the scale of seconds, which is where the Dispersion page looks. The "
+            "instance, at the scale of seconds, which is where the Dispersions page looks. The "
             "caveat that does bite stands in the title: pooling the instances of a class, or of "
             "the whole dataset, mixes the levels of different wells into the coefficient, two "
             "sensors that both run higher on one well than on another correlate through the "
@@ -1286,7 +1286,7 @@ MODEL_SOURCES = (
 )
 
 DISPERSION_INTRO = (
-    "The <b>Dispersion</b> page draws two sensors against each other, every sample of the "
+    "The <b>Dispersions</b> page draws two sensors against each other, every sample of the "
     "instances of a scope one dot (over every real instance, one fault class or one well, as "
     "instances or as the joined bars), with the density of the samples shaded behind the dots. "
     "It is the scatter plot of Melo's exploratory methodology made readable: a static scatter of "
@@ -1856,7 +1856,10 @@ USAGE = {
             "The list on the right is the label audit: class by class, the instances whose label "
             "disagrees with the one-class model of the normal instances: fault instances that "
             "look normal, normal instances that look anomalous. Hover one to find its point, click "
-            "it to open it."
+            "it to open it. Drag its left edge to widen or narrow it; 'Label audit', at the right "
+            "of the second row, hides it to give the map its width. It hides itself under the DTW "
+            "representation, which compares the instances of one class, and comes back as it was "
+            "on leaving it."
         ),
         (
             "What the map computes travels: 'Bar color' on the Timelines can take the cluster or "
@@ -1882,7 +1885,7 @@ USAGE = {
             "representation."
         ),
     ],
-    "Dispersion page": [
+    "Dispersions page": [
         (
             "Pick two sensors in 'X' and 'Y' and a scope in 'Over': every sample of the "
             "instances of the scope is one dot, the density of the samples shaded behind. The "

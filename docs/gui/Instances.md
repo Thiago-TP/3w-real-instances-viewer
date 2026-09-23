@@ -42,6 +42,9 @@ of the process; everything is an analysis of the catalogue, recomputed on every 
   outside its boundary) makes of every label: class by class, the fault instances that *look
   normal* to it and the normal instances that *look anomalous*, each a click away. It is an audit
   of the labels, not a detector; under the *Novelty* coloring the disagreements wear a dark ring.
+  Its left edge drags to widen or narrow it, and **Label audit**, at the right end of the second
+  row, hides it to give the map its width. It hides itself under the DTW representation, which
+  compares the instances of one class, and comes back as it was on leaving it.
 - **Join overlapping instances** makes the points the bars of the joined view, each merged
   recording profiled as the one series it is; the Timelines take the map's colorings only on the
   view it was drawn on.

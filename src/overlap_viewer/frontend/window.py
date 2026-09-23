@@ -48,7 +48,7 @@ HELP_TABS = {
     FaultsPage: "Fault classes",
     FeaturesPage: "Variables",
     MapPage: "Instances map",
-    DispersionPage: "Dispersion",
+    DispersionPage: "Dispersions",
 }
 
 
@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
     launch, and it happens before anything is on screen.
     """
 
-    PAGE_TITLES = ("Timelines", "Availability", "Faults", "Features", "Instances", "Dispersion")
+    PAGE_TITLES = ("Timelines", "Availability", "Faults", "Features", "Instances", "Dispersions")
     PAGE_TIPS = (
         "Every real instance of every well, laid out in time",
         "What the sensors recorded, per fault class, per well, or instance by instance",
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         self.features = FeaturesPage(info, self._frames, passes=self._passes)
         report("Building the Instances page…")
         self.map = MapPage(info, passes=self._passes)
-        report("Building the Dispersion page…")
+        report("Building the Dispersions page…")
         self.dispersion = DispersionPage(info, passes=self._passes)
         # A tab's tooltip is not a widget's, so it is bounded here rather than
         # by the filter ``styling.install_tooltips`` puts on the application.

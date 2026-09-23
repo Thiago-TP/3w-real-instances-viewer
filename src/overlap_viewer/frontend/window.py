@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
         self._windows: list[QMainWindow] = []
         self._help: HelpWindow | None = None
         self._theme_mode = theme_mode
-        self.setWindowTitle(f"3W Overlap Viewer — {info.raw_dir}")
+        self.setWindowTitle(f"3W Real Instances Viewer | {info.raw_dir}")
 
         self._build_toolbar()
         self._tabs = QTabWidget()

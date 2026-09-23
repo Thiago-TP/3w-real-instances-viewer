@@ -122,7 +122,7 @@ def test_the_profile_pass_reads_every_instance_once_and_every_bar_as_the_recordi
     # How the figures are said: durations as such, the infinite and the undefined plainly.
     acf, skew = pr.DESCRIPTOR_CHOICES[0], pr.DESCRIPTOR_CHOICES[3]
     assert acf.format(73.0) == "73 s" and acf.format(444.0) == "7.4 min"
-    assert acf.format(float("inf")) == "> 6.0 h" and acf.format(float("nan")) == "—"
+    assert acf.format(float("inf")) == "> 6.0 h" and acf.format(float("nan")) == "-"
     assert snr.format(35922.0) == "35,922" and snr.format(1.46) == "1.46"
     assert snr.format(float("inf")) == "∞"
     assert skew.format(-0.5) == "-0.50" and skew.format(0.5) == "+0.50"

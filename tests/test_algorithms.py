@@ -84,7 +84,7 @@ def test_a_straight_line_between_two_measurements_is_the_historian_and_not_the_p
         sampling
     )
     assert format_spacing(33) == "33 s" and format_spacing(150) == "2.5 min"
-    assert format_spacing(7200) == "2.0 h" and format_spacing(np.nan) == "—"
+    assert format_spacing(7200) == "2.0 h" and format_spacing(np.nan) == "-"
 
 
 def test_the_descriptors_are_what_the_thesis_defines():

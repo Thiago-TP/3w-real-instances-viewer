@@ -542,7 +542,7 @@ def histogram(
 def format_period(seconds: float) -> str:
     """``30 s``, ``5 min``, ``1.5 h``, ``2 d``: a period as a person would say it."""
     if not np.isfinite(seconds):
-        return "—"
+        return "-"
     if seconds < 60:
         return f"{seconds:.3g} s"
     if seconds < 3600:

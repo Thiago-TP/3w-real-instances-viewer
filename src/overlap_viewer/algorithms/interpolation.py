@@ -164,7 +164,7 @@ def describe_sampling(sampling: Sampling) -> str:
 def format_spacing(seconds: float) -> str:
     """``1 s``, ``33 s``, ``2.5 min``, ``1.2 h``: the interval between two measurements."""
     if not np.isfinite(seconds):
-        return "—"
+        return "-"
     if seconds < 90:
         return f"{seconds:.0f} s" if seconds >= 9.5 else f"{seconds:.1f} s"
     if seconds < 5400:

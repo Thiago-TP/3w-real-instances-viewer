@@ -112,7 +112,7 @@ def restyle_axes(plot_item: pg.PlotItem) -> None:
     pyqtgraph copies the foreground color into an axis's pens when the axis is
     built, so a plot that outlives a theme switch goes on drawing its axis
     lines, its ticks, its tick labels and its grid in the color of the theme it
-    was built under — which over the new background is very nearly the
+    was built under, which over the new background is very nearly the
     background, and the grid appears to vanish. Most pages throw their plots
     away and build them again whenever the catalogue is laid out, and need none
     of this; the pages that keep one plot for their whole life (the Instances

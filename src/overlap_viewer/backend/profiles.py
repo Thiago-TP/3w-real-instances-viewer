@@ -98,7 +98,7 @@ class DescriptorChoice:
     def format(self, value: float) -> str:
         """The value to two digits, a duration as one, the undefined as a dash."""
         if value is None or np.isnan(value):
-            return "—"
+            return "-"
         if np.isinf(value):
             return f"> {format_spacing(ACF_MAX_LAG_S)}" if self.seconds else "∞"
         if self.seconds:

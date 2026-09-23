@@ -1681,7 +1681,7 @@ class InstanceWindow(QMainWindow):
             for feature in self.selected_features():
                 if feature in frame.columns:
                     value = frame[feature].iloc[i]
-                    values.append(f"{feature} = {'—' if pd.isna(value) else f'{value:.4g}'}")
+                    values.append(f"{feature} = {'-' if pd.isna(value) else f'{value:.4g}'}")
             reading = f" | {', '.join(values)}" if values else ""
             parts.append(
                 f"{title}: {label_name(klass, self.info.fault_names, offset)} / {state_name(state)}{reading}"

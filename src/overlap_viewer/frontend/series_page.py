@@ -1822,7 +1822,7 @@ class SeriesPage(QWidget):
                         value = column_as_float(frame, feature)[i]
                         unit = self.info.unit(feature)
                         readings.append(
-                            f"{feature} = {'—' if np.isnan(value) else f'{value:.4g} {unit}'.rstrip()}"
+                            f"{feature} = {'-' if np.isnan(value) else f'{value:.4g} {unit}'.rstrip()}"
                         )
                 if readings:
                     parts.append(", ".join(readings))

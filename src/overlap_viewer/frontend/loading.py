@@ -61,7 +61,7 @@ def progress_dialog(text: str, parent: QWidget | None):
 def _progress_dialog(text: str, parent: QWidget | None):
     """A cancellable progress dialog and the callback that drives it, for a scan of the files."""
     dialog = QProgressDialog(text, "Cancel", 0, 100, parent)
-    dialog.setWindowTitle("3W Overlap Viewer")
+    dialog.setWindowTitle("3W Real Instances Viewer")
     dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
     dialog.setMinimumDuration(400)
     dialog.setMinimumWidth(420)
@@ -93,7 +93,7 @@ class LaunchProgress:
         self._steps = steps
         self._done = 0
         self._dialog = QProgressDialog("Starting the viewer…", "", 0, steps, None)
-        self._dialog.setWindowTitle("3W Overlap Viewer")
+        self._dialog.setWindowTitle("3W Real Instances Viewer")
         self._dialog.setCancelButton(None)
         self._dialog.setMinimumDuration(0)
         self._dialog.setMinimumWidth(460)

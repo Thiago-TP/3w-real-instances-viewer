@@ -719,6 +719,10 @@ class MapPage(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         self._redraw()
+        # Framed afresh only here, where the points have just been placed: a
+        # change of coloring or of theme leaves them where they are, and the
+        # zoom with them.
+        self._plot_widget.getPlotItem().getViewBox().autoRange(padding=0.08)
         self._fill_audit()
         self._scores_label.setText(self._scores.describe() if self._scores else "")
         self._note.setText(" | ".join(part for part in (rep.note, self._caption) if part))
@@ -823,7 +827,6 @@ class MapPage(QWidget):
         else:
             plot.setLabel("bottom", "")
             plot.setLabel("left", "")
-        plot.getViewBox().autoRange(padding=0.08)
 
     def _set_highlight(self, index: int) -> None:
         self._hover = index

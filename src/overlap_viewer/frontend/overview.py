@@ -432,6 +432,18 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
     def _on_manual_range(self, *args) -> None:
         self._auto_view = False
 
+    def view_state(self) -> tuple[bool, list]:
+        """Whether the view still follows the widget, and the ranges it shows; for a rebuild to keep."""
+        return (self._auto_view, self.getPlotItem().getViewBox().viewRange())
+
+    def set_view_state(self, state: tuple[bool, list]) -> None:
+        """Take back what ``view_state`` gave: a zoomed view stays zoomed, a fitted one keeps fitting."""
+        auto, (x_range, y_range) = state
+        if auto:
+            return
+        self._auto_view = False
+        self.getPlotItem().getViewBox().setRange(xRange=x_range, yRange=y_range, padding=0)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         # pyqtgraph resizes the view from its own constructor, before this class has set anything.
@@ -737,7 +749,15 @@ class TimelinesPage(QWidget):
         return bar
 
     def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
-        """Take a new catalogue and its wells: join each, read what they recorded, rebuild the grid."""
+        """Take a new catalogue and its wells: join each, read what they recorded, rebuild the grid.
+
+        The very same catalogue again is the main window laying the pages out
+        in a new theme: the grid is rebuilt for its colors, and every well
+        keeps the stretch of time it was zoomed to and the grid its scroll.
+        """
+        same = catalogue is self._catalogue and bool(self._plots)
+        views = {well: plot.view_state() for well, plot in self._plots.items()}
+        anchor = self._scroll_anchor() if same else None
         self._catalogue = catalogue
         self.wells = list(wells)
         self._joined_wells = [well.joined() for well in self.wells]
@@ -749,7 +769,13 @@ class TimelinesPage(QWidget):
         index = self._sensor.findText(wanted)
         self._sensor.setCurrentIndex(max(index, 0))
         self._sensor.blockSignals(False)
-        self._build_grid()
+        self._build_grid(keep_scroll=same)
+        if same:
+            for well, state in views.items():
+                plot = self._plots.get(well)
+                if plot is not None:
+                    plot.set_view_state(state)
+            self._restore_scroll(anchor)
 
     def _shown_wells(self) -> list[WellData]:
         """The wells as the grid draws them: instance by instance, or joined into bars."""

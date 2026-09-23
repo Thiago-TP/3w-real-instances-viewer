@@ -257,7 +257,17 @@ class FaultsPage(SeriesPage):
     # -- data
 
     def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
-        """Take a new catalogue and its wells; the fault chosen stays chosen where it still exists."""
+        """Take a new catalogue and its wells; the fault chosen stays chosen where it still exists.
+
+        The very same catalogue again is a theme switch: the list is written
+        again for its well colors and the plots drawn again for theirs, with
+        the features and instances ticked and every plot's zoom kept.
+        """
+        if catalogue is self._catalogue and self.ready():
+            self._wells = {well.well: well for well in wells}
+            self._rebuild_instances()
+            self._replot(keep_views=True)
+            return
         self._catalogue = catalogue
         self._wells = {well.well: well for well in wells}
         self._availability = Availability.from_wells(wells, self.info)

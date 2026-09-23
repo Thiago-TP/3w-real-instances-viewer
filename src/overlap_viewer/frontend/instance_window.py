@@ -607,14 +607,35 @@ class InstanceWindow(QMainWindow):
 
         The stack is laid out again rather than recolored: pyqtgraph fixes the
         colors of an axis when it is built, and every plot here is thrown away
-        and rebuilt whenever the feature selection changes anyway.
+        and rebuilt whenever the feature selection changes anyway. The view is
+        kept as it was, only its colors being new.
         """
         self._restyle()
         if self._help is not None:  # its swatches carry the colors of the old theme
             self._help.close()
             self._help.deleteLater()
             self._help = None
+        self._rebuild_keeping_views()
+
+    def _rebuild_keeping_views(self) -> None:
+        """Lay the stack out again with every range and the scroll where they were.
+
+        ``_rebuild`` keeps the stretch of time on screen but fits every value
+        axis to its readings again, which is right when the features change
+        and wrong when only the colors do.
+        """
+        values = {
+            feature: master.getViewBox().viewRange()[1]
+            for feature, master in self._feature_masters.items()
+        }
+        scroll = self._scroll.verticalScrollBar().value()
         self._rebuild()
+        for feature, y_range in values.items():
+            master = self._feature_masters.get(feature)
+            if master is not None:
+                master.getViewBox().setYRange(*y_range, padding=0)
+        bar = self._scroll.verticalScrollBar()
+        QTimer.singleShot(0, lambda: bar.setValue(min(scroll, bar.maximum())))
 
     # -- the views
 

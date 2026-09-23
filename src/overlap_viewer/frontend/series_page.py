@@ -963,15 +963,19 @@ class SeriesPage(QWidget):
 
     # -- drawing
 
-    def _replot(self, *args, keep_range: bool = True) -> None:
+    def _replot(self, *args, keep_range: bool = True, keep_views: bool = False) -> None:
         """Read the ticked instances and lay the plots out again.
 
         The stretch of time on screen is kept, so that ticking a feature or an
         instance does not throw away a zoom; a new question (a new grouping, a
-        new alignment, a new layout) starts from the whole of it.
+        new alignment, a new layout) starts from the whole of it. With
+        ``keep_views`` every plot gets back both of its ranges, as long as the
+        same plots come back: what a theme switch asks, the question being
+        the same and only the colors new.
         """
         if not self.ready():
             return
+        views = [plot.getViewBox().viewRange() for plot in self._plots] if keep_views else []
         self.before_replot()
         if not keep_range:
             self._x_range = None
@@ -986,6 +990,9 @@ class SeriesPage(QWidget):
                 # shared sample is not counted once per window that holds it.
                 self._series = merge_overlapping(self._series, self.pool_key)
             self._lay_out()
+            if views and len(views) == len(self._plots):
+                for plot, (x_range, y_range) in zip(self._plots, views, strict=True):
+                    plot.getViewBox().setRange(xRange=x_range, yRange=y_range, padding=0)
         finally:
             QApplication.restoreOverrideCursor()
         self.summary_changed.emit()

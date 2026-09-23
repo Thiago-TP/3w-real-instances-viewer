@@ -270,7 +270,18 @@ class FeaturesPage(SeriesPage):
     # -- data
 
     def set_catalogue(self, catalogue: pd.DataFrame, wells: list[WellData]) -> None:
-        """Take a new catalogue and its wells; the sensor and the well chosen stay chosen."""
+        """Take a new catalogue and its wells; the sensor and the well chosen stay chosen.
+
+        The very same catalogue again is a theme switch: the lists are written
+        again for their class colors and the plots drawn again for theirs, with
+        the classes and instances ticked and every plot's zoom kept.
+        """
+        if catalogue is self._catalogue and self.ready():
+            self._wells = {well.well: well for well in wells}
+            self._rebuild_classes()
+            self._rebuild_instances(fresh=False)
+            self._replot(keep_views=True)
+            return
         self._catalogue = catalogue
         self._wells = {well.well: well for well in wells}
         self._availability = Availability.from_wells(wells, self.info)

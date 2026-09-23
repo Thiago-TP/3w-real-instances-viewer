@@ -931,7 +931,7 @@ AVAILABILITY_NOTES = [
             "normalisation √(1 − e⁻²ᴵ), which is the Pearson coefficient itself when the two are "
             "jointly Gaussian; two sensors bound by a curve rather than a line score high here and "
             "nothing on Pearson. <b>Nonlinear</b> is Zhang's coefficient, what the second says "
-            "beyond the first, ρ_I·(1 − |ρ|). The title sums each into Melo's global coefficient "
+            "beyond the first, ρ_I × (1 − |ρ|). The title sums each into Melo's global coefficient "
             "over the sensors present (his equations 4.16 and 4.15), and a pair with fewer than "
             "300 co-valid samples is left blank rather than trusted. The valve states are left "
             "out: a position is not a measurement, and its two values would fill the matrix with "
@@ -1559,7 +1559,7 @@ USAGE = {
             "An instance whose labels never reach the moment chosen cannot be aligned on it and "
             "is greyed out in the list on the right. Beyond two dozen instances the earliest are "
             "ticked to start with, and the grid draws at most four dozen of them; tick and untick "
-            "to choose, All and None do it at once."
+            "to choose, All and Clear do it at once."
         ),
         (
             "'Normalize per instance' scales every series to its own level, each reading as "
@@ -1574,6 +1574,13 @@ USAGE = {
             "in the list does the same. Readings outside the plausible range are left out of the "
             "value axis, so one broken gauge does not flatten every other line; the instance "
             "carrying them wears the ⚠ in the list."
+        ),
+        (
+            "Click a plot to open the instance window of its instance on that feature: a small "
+            "plot opens the one instance it holds, an overlaid plot the line the hover has named; "
+            "a pooled curve stands for many instances and opens none. Click an instance's name in "
+            "the list to open its window on the signature of its event; its check box still ticks "
+            "it."
         ),
         (
             "'Signature' ticks the variables whose joint behavior identifies the event: the "
@@ -1622,6 +1629,11 @@ USAGE = {
             "normal operation has no transient and no steady fault state, so anchoring on either "
             "leaves every normal instance greyed out."
         ),
+        (
+            "Click a plot, or an instance's name in the list, to open its instance window, as on "
+            "the Faults page: from a plot on the sensor on show, from the list on the signature of "
+            "its class."
+        ),
     ],
     "Instance window": [
         (
@@ -1658,7 +1670,9 @@ USAGE = {
         (
             "'Signature' ticks the variables whose joint behavior identifies the event: those of "
             "the paper's figure where it illustrates the event, a best effort from the thesis "
-            "where it does not, which the tooltip says."
+            "where it does not, which the tooltip says. A window opens with it ticked, unless it "
+            "was opened on one sensor (from the availability page, or from a plot of the Faults "
+            "or Features page) or none of the signature was recorded."
         ),
         (
             "A crosshair follows the pointer through every plot, and the status bar reads out the "

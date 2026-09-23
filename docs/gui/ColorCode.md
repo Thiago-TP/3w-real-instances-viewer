@@ -44,10 +44,10 @@ their label.
 The faults page colors its lines by **well**, from a palette of twelve that no other page uses,
 fixed per well over the whole catalogue so that a well keeps its color from one fault to the next,
 and cycled only when the dataset holds more wells than the palette has colors; the list on the
-right is its key. The well code and the fault code are drawn in the same plot — a trace over the
-shading of its label periods, the outline of a histogram over stacks in the fault's own hue — so
+right is its key. The well code and the fault code are drawn in the same plot (a trace over the
+shading of its label periods, the outline of a histogram over stacks in the fault's own hue), so
 they are separated by **register** rather than by hue, which ten fault hues leave no room for.
 Every well color sits on the far side of every fault hue in luminance: deeper than all of them in
 the light mode, paler than all of them in the dark one. That is the band the trace color already
-keeps to, and for the same reason — a line has to stay legible over every shading it can be drawn
+keeps to, and for the same reason: a line has to stay legible over every shading it can be drawn
 on.

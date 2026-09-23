@@ -438,9 +438,19 @@ class InstanceWindow(QMainWindow):
             rows.append({"sensor": name, "recorded": recorded, "implausible": flagged.get(name, 0)})
         return pd.DataFrame(rows)
 
-    def _default_feature(self) -> str | None:
+    def _default_features(self) -> set[str]:
+        """What a window opens on: the signature of its event, else the first sensor recorded.
+
+        The signature is the handful of variables the event is read in, which
+        is what a window opened on an instance is usually opened to look at;
+        the first sensor in the alphabet is as likely as not to be one the
+        event leaves untouched.
+        """
+        signature = self._signature_features()
+        if signature:
+            return set(signature)
         recorded = self._features[self._features["recorded"] > 0]
-        return str(recorded["sensor"].iloc[0]) if len(recorded) else None
+        return {str(recorded["sensor"].iloc[0])} if len(recorded) else set()
 
     def selected_features(self) -> list[str]:
         return [name for name, check in self._checks.items() if check.isChecked()]
@@ -712,8 +722,7 @@ class InstanceWindow(QMainWindow):
         checks = QVBoxLayout(inner)
         checks.setContentsMargins(0, 0, 0, 0)
         checks.setSpacing(2)
-        default = self._default_feature()
-        wanted = selected if selected is not None else {default}
+        wanted = selected if selected is not None else self._default_features()
         n = len(self.frames)
         for row in self._features.itertuples():
             unit = self.info.unit(row.sensor)

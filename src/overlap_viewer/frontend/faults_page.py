@@ -26,9 +26,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QPushButton,
     QScrollArea,
@@ -57,12 +55,19 @@ from overlap_viewer.backend.dataset import DatasetInfo, WellData, well_label
 from overlap_viewer.backend.labels import segments_from_json
 from overlap_viewer.frontend.instance_window import PANEL_WIDTH
 from overlap_viewer.frontend.loading import FrameCache
-from overlap_viewer.frontend.series_page import LIST_WIDTH, Section, Series, SeriesPage
+from overlap_viewer.frontend.series_page import (
+    LIST_WIDTH,
+    InstanceList,
+    Section,
+    Series,
+    SeriesPage,
+)
 
 HINT = (
     "Every plot is one real instance of the fault, in the color of its well, on a time axis that "
-    "starts where the event begins in it | hover a trace to name it and read it | tick features "
-    "on the left and instances on the right | Ctrl + wheel to zoom, the wheel scrolls | F1 for help"
+    "starts where the event begins in it | hover a trace to name it and read it, click it to open "
+    "its instance window on that feature | tick features on the left and instances on the right, "
+    "click an instance's name to open it | Ctrl + wheel to zoom, the wheel scrolls | F1 for help"
 )
 
 DOMAIN_TIP = (
@@ -215,18 +220,11 @@ class FaultsPage(SeriesPage):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel("<b>Instances</b>"))
-        buttons = QHBoxLayout()
-        buttons.setSpacing(2)
-        every = QPushButton("All")
-        every.clicked.connect(lambda: self._set_all_instances(True))
-        none = QPushButton("None")
-        none.clicked.connect(lambda: self._set_all_instances(False))
-        buttons.addWidget(every)
-        buttons.addWidget(none)
-        layout.addLayout(buttons)
+        self.add_instance_buttons(layout)
         self.add_sort_control(layout)
-        self._list = QListWidget()
+        self._list = InstanceList()
         self._list.setMouseTracking(True)
+        self._list.open_requested.connect(self._on_item_open)
         self._list.itemChanged.connect(self._on_item_changed)
         self._list.itemEntered.connect(self._on_item_entered)
         self._list.viewportEntered.connect(lambda: self._highlight(-1))
@@ -548,6 +546,11 @@ class FaultsPage(SeriesPage):
     def _on_item_changed(self, item) -> None:
         if not getattr(self, "_building", False):
             self._replot()
+
+    def _on_item_open(self, row: int) -> None:
+        """A click on an instance's name opens its window, on the signature of the fault."""
+        entry = self._instances[row]
+        self.open_instance(entry["well"], entry["position"])
 
     def _checked_instances(self) -> list[dict]:
         return [

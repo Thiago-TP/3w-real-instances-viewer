@@ -416,7 +416,7 @@ def lomb_scargle_power(times_s: np.ndarray, values: np.ndarray, periods: np.ndar
     """The generalised Lomb-Scargle periodogram at each period: the share of the variance a sinusoid explains.
 
     Zechmeister and Kürster's floating-mean form, with equal weights: at each
-    frequency the sinusoid ``a·cos + b·sin + c`` is fitted by least squares to
+    frequency the sinusoid ``a × cos + b × sin + c`` is fitted by least squares to
     the readings at their own instants, and the power is one minus the
     residual variance over the total, so it lies in [0, 1]. Evaluated a few
     periods at a time, since each needs a cosine and a sine of every instant.

@@ -37,7 +37,7 @@ the width of the window.
   tick reads the data (about 15 s for 3W 2.0.0, behind a progress dialog) and keeps the result in
   the cache next to the catalogue.
 - **Measured vs filled** splits the live share of every cell into the samples that were measured,
-  solid, and the samples the historian filled in between measurements, pale — most of every live
+  solid, and the samples the historian filled in between measurements, pale. The filled samples are most of every live
   cell on 3W 2.0.0 (see the note on sampling in the root README.md). The tooltip and
   the status bar then give the share and the interval between measurements. The split is of
   samples, so it rests while the cells count instances, and it applies to the joined bars as much
@@ -105,7 +105,7 @@ between variables three ways at once, and the matrix offers the three
   *Mutual information*, Laarne's coefficient √(1 − e⁻²ᴵ) of the mutual information estimated by
   nearest neighbours on an even subsample of a few thousand of the same samples, 0 for
   independent sensors and 1 for a deterministic relation, equal to |Pearson| when the pair is
-  jointly Gaussian; *Nonlinear*, Zhang's ρ_I·(1 − |ρ|), what the second says beyond the first. The
+  jointly Gaussian; *Nonlinear*, Zhang's ρ_I × (1 − |ρ|), what the second says beyond the first. The
   title sums each into Melo's global coefficient (his equations 4.16 and 4.15). A pair with fewer
   than 300 co-valid samples is left blank, and the valve states are left out: a position is not a
   measurement. The two nonlinear coefficients need the `analysis` extra.

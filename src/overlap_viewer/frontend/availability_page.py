@@ -133,7 +133,7 @@ CORR_TIP = (
     "√(1 − e⁻²ᴵ) of the mutual information estimated by nearest neighbours on an even subsample "
     "of the same samples, 0 for independent variables and 1 for a deterministic relation, equal "
     "to |Pearson| when the two are jointly Gaussian. Nonlinear: what the second says beyond the "
-    "first, ρ_I·(1 − |ρ|), Zhang's coefficient. All three after Melo (thesis §4.1.5)."
+    "first, ρ_I × (1 − |ρ|), Zhang's coefficient. All three after Melo (thesis §4.1.5)."
 )
 SMOOTH_TIP = (
     "A moving average of this many samples applied to every series before the coefficients are "

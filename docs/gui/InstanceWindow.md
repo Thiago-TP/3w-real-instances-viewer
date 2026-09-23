@@ -9,7 +9,7 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
 - A **joined bar opens as one block**: its instances are read as the single continuous recording
   they were cut from, drawn as one series over one set of bands, with a dashed line where each
   further instance begins. Every instant appears once, and what one window says nothing about the
-  others fill in — a sensor it did not record, or a sample its experts left unlabeled. The `class`
+  others fill in: a sensor it did not record, or a sample its experts left unlabeled. The `class`
   band of a merged recording therefore carries far less *Unknown* than its instances did apart: on
   the largest join of 3W 2.0.0, seventy-one windows over six days, 1.6 % of the samples against a
   third of the samples the windows carried separately. That matters because unlabeled samples are
@@ -27,8 +27,10 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   own left to do, so its box is ticked and disabled; a group with nothing to merge disables it too,
   and says which case it is.
 - **Features** are chosen with the checkboxes on the left (features none of the instances recorded
-  are greyed out). By default only the first feature in alphabetical order among the recorded ones
-  is plotted; opened from the availability page, the sensor clicked is.
+  are greyed out). A window opens on the **signature** of its event (below), the variables it is
+  read in; only when none of them was recorded does it fall back to the first recorded feature in
+  alphabetical order. Opened from the availability page, the sensor clicked is drawn instead, and
+  opened from a plot of the Faults or Features page, the feature of that plot.
 - **Signature** ticks, in one click, the handful of variables whose joint behaviour identifies the
   event. For the five events the 3W paper illustrates (Normal Operation, Spurious Closure of DHSV,
   Severe Slugging, Quick Restriction in PCK, Hydrate in Production Line) they are the variables of
@@ -58,7 +60,7 @@ feature. A band at the top marks the stretches recorded by two or more of the ba
   the stretch that is garbage is seen for what it is; the panel's figures call it out, the header
   of the block names the sensors, and the feature's checkbox wears a ⚠.
 
-**Signal views** — two more views of every feature plot of the instance window, each placed
+**Signal views**: two more views of every feature plot of the instance window, each placed
 where it shares an axis with the trace, and a *Domain* box on the Faults and Features pages that
 draws every instance in one of them. The events are slow: severe slugging on WELL-00014 cycles every
 50 to 90 minutes, flow instability on WELL-00001 every 45, so a six-hour instance holds four to
@@ -83,10 +85,10 @@ seven cycles, and the spectral axis is a **period**, logarithmic, not a frequenc
 There was a third view, a **spectrogram** under each trace on the shared time axis. It was dropped:
 it earned its place only over a merged recording of days, where the slugging period drifts, and
 everywhere else it said what the spectrum already said while taking a row of its own from every
-feature of every block — which is the scarce thing in a window that stacks them.
+feature of every block, which is the scarce thing in a window that stacks them.
 - **Plausible only**, beside *Bins*, is what every histogram counts by default: the readings inside
-  the plausible range. That is what a histogram is normally asked for —
-  one gauge reporting 10¹² Pa would otherwise put every genuine reading into the first bin — but it
+  the plausible range. That is what a histogram is normally asked for
+  (one gauge reporting 10¹² Pa would otherwise put every genuine reading into the first bin), but it
   hides the very thing a data review is looking for, so unticking it counts the garbage too, on an
   amber ground beyond the range, with the caption saying how many were *counted* rather than how
   many were left out. The one tick serves the marginal of an instance window, the *Distribution*
@@ -95,7 +97,7 @@ feature of every block — which is the scarce thing in a window that stacks the
 - **Measurements only**, beside it, counts and transforms the measurements alone, leaving out the
   samples the historian filled in between them. A histogram then counts what was read, and says
   so in its caption; a spectrum becomes the **Lomb-Scargle periodogram** of the readings at their
-  own instants, which fits a sinusoid of each period to them by least squares and needs no grid —
+  own instants, which fits a sinusoid of each period to them by least squares and needs no grid:
   the honest spectrum of a series read every ten seconds or every two minutes, where a transform
   of the 1 Hz grid is a transform of the historian's lines. Its caption gives the share of the
   variance a sinusoid of the peak period explains and how many measurements it was taken over;
@@ -109,7 +111,7 @@ feature of every block — which is the scarce thing in a window that stacks the
   ticked the spectrum is the periodogram of everything on screen, the only way to see a slugging
   line, since a segment of a few minutes holds no cycle of it.
 - On the **Faults page**, *Overlaid* spectra read together where overlaid traces did not, the
-  question being whether their peaks line up; **Overall** pools instead of overlaying — on the
+  question being whether their peaks line up; **Overall** pools instead of overlaying: on the
   Faults page into one curve per feature across every well, on the Features page into one curve
   per fault class, which is the feature-level histogram this was built for. A distribution pools
   by putting the readings together; a spectrum never pools by concatenation, since a transform
@@ -117,18 +119,18 @@ feature of every block — which is the scarce thing in a window that stacks the
   a step, so the estimates are averaged band by band on a shared period axis, as Welch's method
   already does one level down. **Join overlapping**, beside it, first reads the windows of a well
   that overlap as the single recording they were cut from, so the samples two windows share are
-  counted once instead of twice — which otherwise inflates a pooled histogram at exactly the
+  counted once instead of twice; counting them twice inflates a pooled histogram at exactly the
   levels that well was recorded twice at. Overall is offered off the time axis only: instances
   cut from different months have no common clock. Histograms are drawn as a share of each
   instance's
-  samples — stacked bars in the grid, a filled area in the series color when overlaid, so that
-  where two distributions sit on top of one another reads as a deeper shade — with the mean and
+  samples (stacked bars in the grid, a filled area in the series color when overlaid, so that
+  where two distributions sit on top of one another reads as a deeper shade), with the mean and
   the median of each as lines in the grid and a **triangle over the fullest bin** of each in
-  either layout — the value that instance spends most of its time at,
+  either layout: the value that instance spends most of its time at,
   which the mean and the median both miss once a fault has skewed the readings or split them in
-  two, and which hovering the curve reads out — and *Normalize per instance*
+  two, and which hovering the curve reads out. *Normalize per instance*
   puts different wells on one z-score axis. The hours before and after the onset pick the stretch
-  transformed, so "2 h after" gives the spectrum of the fault alone — which is the only way *Align
+  transformed, so "2 h after" gives the spectrum of the fault alone, which is the only way *Align
   at* reaches these two domains, nothing being drawn against the hours from the onset, so with both
   hour boxes at *all* the box is greyed and comes back as soon as hours are asked for. **Features**
   and

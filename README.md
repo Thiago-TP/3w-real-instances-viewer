@@ -22,7 +22,7 @@ summarized in the following table and detailed in their own READMEs.
 | Page                                    | Question/Exploration                                                                                 | Content                                                                                                                                                                                                                               |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Timelines](docs/gui/Timelines.md)       | Show at a glance how instances and fault classes spread out across time per well                     | One interactive timeline per well; bars colored by fault, or optionally by sensor availability, measurements, a descriptor, the Toolkit's rule, the map or a loaded model; hover highlights overlaps, click opens the instance window |
-| [Availability](docs/gui/Availability.md) | Show what each sensor actually recorded, not just what the file declares                             | Three matrices — sensor availability (live/frozen/absent shares), sensor pairs (how often two sensors are recorded at the same instant) and sensor correlations — grouped by fault class, well, or the instances of one             |
+| [Availability](docs/gui/Availability.md) | Show what each sensor actually recorded, not just what the file declares                             | Three matrices: sensor availability (live/frozen/absent shares), sensor pairs (how often two sensors are recorded at the same instant) and sensor correlations, grouped by fault class, well, or the instances of one                 |
 | [Faults](docs/gui/Faults.md)             | Compare how one fault looks across every well it occurred on                                         | Every real instance of one fault, aligned at its onset, one section per sensor, as small multiples or overlaid, in the time, distribution or spectrum domain                                                                          |
 | [Features](docs/gui/Features.md)         | Compare what one sensor reads across every fault class                                               | One sensor fixed, one section per fault class, the same layouts, domains and transforms as the Faults page                                                                                                                            |
 | [Instances](docs/gui/Instances.md)       | Place every real instance on one plane by what its sensors amount to                                 | A 2D embedding (PCA, t-SNE or UMAP) of each instance's descriptors or DTW shape, colored by class, well, cluster, typicality, novelty or model agreement, with clustering scores and a label-audit of disagreements                   |
@@ -98,8 +98,8 @@ availability page reads, were added this way). Three figures the footers cannot 
 the data the first time they are asked for, each behind its own progress dialog and cached the same
 way: the merged figures the availability page's join needs, sensor by sensor and pair by pair, in
 one pass (about 30 s); the pair counts of the instances as the dataset stores them (about 9 s); and
-the profiles of every sensor of every instance and bar — which samples are measurements, and what
-each sensor amounts to — which read every file in full (about 100 s). A pass one page has paid for
+the profiles of every sensor of every instance and bar (which samples are measurements, and what
+each sensor amounts to), which read every file in full (about 100 s). A pass one page has paid for
 is shared with every other.
 
 Only real instances (`WELL-*` files) are shown: simulated and hand-drawn instances have no well to
@@ -126,7 +126,7 @@ uv sync --all-extras                      # every group
 
 Each command states the whole set of extras the environment is to have, not an addition to it: a
 group left out of the command is uninstalled if a previous sync had installed it. The viewer keeps
-working either way — a control whose group has gone is greyed again — but a sync meant to add one
+working either way (a control whose group has gone is greyed again), but a sync meant to add one
 capability can quietly take another away, so `uv sync --all-extras` is the simplest habit.
 
 The table lives in [`backend/extras.py`](src/overlap_viewer/backend/extras.py) as well as in
@@ -152,9 +152,9 @@ functions are documented in detail in the [source `README`](src/README.md).
 ├── tests/                    the test suite, one module per subpackage or analysis, sharing a synthetic 3W layout
 └── src/overlap_viewer/
     ├── app.py                command line and start-up
-    ├── backend/              what the data is — pandas, numpy and pyarrow only
-    ├── algorithms/           what is computed from the data — numpy only; anything heavier is an optional extra
-    └── frontend/             how it is shown — PySide6 and pyqtgraph
+    ├── backend/              what the data is: pandas, numpy and pyarrow only
+    ├── algorithms/           what is computed from the data: numpy only; anything heavier is an optional extra
+    └── frontend/             how it is shown: PySide6 and pyqtgraph
 ```
 
 ## Integration with 3W Toolkit
@@ -178,11 +178,11 @@ share of its live sensors the rule keeps, hovering it naming what the rule disca
 header of every block of an instance window names the sensors the rule would discard in it, once
 the rule has been fitted anywhere. One difference is kept on purpose: the profiles describe the
 plausible readings, so a sensor whose readings are instrument garbage is not discarded here by a
-mean of 10⁴² — it wears the amber mark instead, which says more.
+mean of 10⁴²; it wears the amber mark instead, which says more.
 
 **By file.** *Export file list…*, in the main toolbar, writes the instances the current page has on
-show — the wells filtered on the Timelines, the rows of the Availability page, the instances ticked
-on the Faults and Features pages, the points of the Instances map, a joined bar as its instances —
+show (the wells filtered on the Timelines, the rows of the Availability page, the instances ticked
+on the Faults and Features pages, the points of the Instances map, a joined bar as its instances)
 as the JSON of a Toolkit `ParquetDatasetConfig` with `split="list"`, each file a path relative to
 the dataset root, which the Toolkit loads with `ParquetDatasetConfig(**json.load(open(path)))`;
 its provenance is written beside it. [`scripts/export_file_list.py`](scripts/export_file_list.py)
@@ -237,13 +237,13 @@ the 99th percentile of either statistic over the training samples. It was produc
 [`scripts/pca_control_chart.py`](scripts/pca_control_chart.py), whose command, parameters and
 fitted limits are in the example's `model.json`. It agrees with the labels 98 % of the time on the
 normal instances of every one of the four wells, and between 100 % and 5 % on their fault
-instances — the same method and the same event, flow instability, reading 100 % on WELL-00007 and
+instances: the same method and the same event, flow instability, reading 100 % on WELL-00007 and
 5 % on WELL-00001, because a model fitted on two normal instances of a ten-sensor well draws a
 tight normal region and one fitted on ninety-three instances of a five-sensor well draws a wide
 one. The agreement figure says as much about a well's normal data as about the event; the
 [example's README](examples/README.md) gives the figures well by well. It is one producer of
-the format among many — the U-Net segmentation of Lopes *et al.*, the Toolkit's own models with an
-export that carries the instance and the instant, a hand-labeled review — and the model itself is
+the format among many (the U-Net segmentation of Lopes *et al.*, the Toolkit's own models with an
+export that carries the instance and the instant, a hand-labeled review), and the model itself is
 not built into the viewer: its outputs are stored and shown.
 
 ## Note on sampling
@@ -253,23 +253,23 @@ noticed it on the normal instances of WELL-00001 (doctoral thesis, section 4.2.5
 [`docs/papers/`](docs/papers)): the readings sit on straight lines between a few extremes, the
 plant's PI historian having interpolated linearly between the values it archived, and the scatter
 plot of two such series shows trajectories that are nothing but the ups and downs of two
-interpolations — spurious dynamics and spurious correlations, an impediment to the exploratory
+interpolations: spurious dynamics and spurious correlations, an impediment to the exploratory
 analysis he set out to do, so he stopped there. The viewer takes the direct route he considered
 too uncertain to take on the whole dataset: a straight line is a run of samples whose first
 difference is constant.
 
 The rule ([`algorithms/interpolation.py`](src/overlap_viewer/algorithms/interpolation.py)): a
 sample equal to the one before it is **held**; a sample collinear with both its neighbours, with a
-non-zero slope, is **interpolated**; everything else — the ends of every line and the first of
-every held run — is a **measurement**, one per value the historian archived. Interpolated and held
+non-zero slope, is **interpolated**; everything else (the ends of every line and the first of
+every held run) is a **measurement**, one per value the historian archived. Interpolated and held
 together are *filled*. Collinearity needs a tolerance, and the data says which: on the real files
 the second differences along a ramp sit in a clean band at 10⁻⁷ to 10⁻⁶ of the reading (the
 interpolation was evidently done in single precision; every pressure value is exactly
 representable as a 32-bit float) while genuine changes of slope sit at 10⁻⁴ and above, so the
 tolerance is one part in a million of the largest reading, in the gap. Exact equality catches only
-a third of the ramps. What the test cannot decide it counts as filled — a quantized sensor that
+a third of the ramps. What the test cannot decide it counts as filled (a quantized sensor that
 repeats a value for three seconds, or climbs one step a second, draws the very lines the historian
-does — and the valve states are not tested at all.
+does), and the valve states are not tested at all.
 
 On 3W 2.0.0 the finding is stark. Over every live analog sensor of every real instance, **6 % of
 the samples are measurements**, 55 % are interpolated and 39 % held; the median interval between

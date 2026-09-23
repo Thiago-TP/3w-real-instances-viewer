@@ -36,9 +36,9 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
   every two minutes reads apart from one in which it was read every second. Hover a bar for the
   share and the interval. The first time, it reads every instance in full behind a progress dialog
   and keeps the result in the cache.
-- **Bar color: Descriptor of a sensor** tints every bar by one figure of the sensor's series — the
+- **Bar color: Descriptor of a sensor** tints every bar by one figure of the sensor's series (the
   time its autocorrelation takes to halve, its signal-to-noise ratio, the slope of Zhang's
-  Gaussianity regression, its skewness or its kurtosis — ranked among the bars on show, faint for
+  Gaussianity regression, its skewness or its kurtosis), ranked among the bars on show, faint for
   the smallest and full for the largest, so the grid shows which recordings of a sensor were slow,
   noisy, heavy-tailed or skewed. The *on* box takes the figure on the 1 Hz grid or on the
   measurements alone; on the grid the key and the hover carry the caveat that the historian's lines

@@ -13,9 +13,9 @@ starts where the event begins in each instance, so that the shapes line up whate
   two dozen shapes can be read one against the next and the grid says how long each instance
   stayed in normal operation, in the transient and in the steady state, and how much of it the
   experts left unlabeled. *Overlaid* draws them all on one set of axes, which says how far apart
-  the levels are and little else once there are more than a handful — the reason the grid is the
+  the levels are and little else once there are more than a handful, which is why the grid is the
   default.
-- **Columns** sets the width of the grid and **Axis** puts every small plot on its own value axis
+- **Columns** sets the width of the grid, one plot per row to start with, and **Axis** puts every small plot on its own value axis
   or all of them on one. The grid opens on the stretch of time most of the instances cover, so
   that one instance recorded for days does not leave every other plot a sliver against its left
   edge; Ctrl with the wheel zooms out to the rest.
@@ -33,8 +33,13 @@ starts where the event begins in each instance, so that the shapes line up whate
 - **Hover** a line to bring it forward and name it; the status bar gives the instance, its onset,
   the time under the pointer relative to it, the label and the well status at that moment, and the
   readings of the selected features. Pointing at an instance in the list does the same.
+- **Click** a plot to open the instance window of its instance on that feature: a small plot opens
+  the one instance it holds, an overlaid plot the line the hover has named (a pooled *Overall*
+  curve stands for many instances and opens none). Clicking an instance's **name** in the list
+  opens its window too, on the signature of its event; a click on its check box ticks it, as
+  before.
 - Beyond two dozen instances the earliest are ticked to start with, and the grid draws at most
-  four dozen of them; **All** and **None** and the checkboxes choose. Readings outside the
+  four dozen of them; **All** and **Clear** and the checkboxes choose. Readings outside the
   plausible range are left out of the value axis, so one broken gauge does not flatten every other
   line; the instance carrying them wears a ⚠ in the list.
 - **Features** work as in the instance window: **Signature** ticks the variables whose joint

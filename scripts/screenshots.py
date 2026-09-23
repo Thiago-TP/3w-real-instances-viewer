@@ -222,15 +222,20 @@ def main(argv=None) -> int:
     # opening, which declines every transform.
     if shooter.wants("instance_window") or shooter.wants("signal_views"):
         data = next((w for w in window._wells if w.well == 14), window._wells[0])
-        index = next((i for i in range(len(data.rows)) if len(data.partners[i]) > 0), 0)
+        slugging = data.rows["fault_class"].to_numpy() == 3
+        index = next(
+            (i for i in range(len(data.rows)) if slugging[i] and len(data.partners[i]) > 0),
+            next((i for i in range(len(data.rows)) if len(data.partners[i]) > 0), 0),
+        )
         instances = window.open_instances(data, index)
         if instances is None:
             print("could not open the instance window", file=sys.stderr)
         else:
             settle(3.0)
             if shooter.wants("instance_window"):
-                instances.select_features(["P-MON-CKP", "P-TPT"])
-                settle(4.0)
+                # As it opens: on the signature of severe slugging, four
+                # variables cycling in phase.
+                settle(1.0)
                 shooter.save(instances, "instance_window")
             if shooter.wants("signal_views"):
                 instances.select_features(["P-MON-CKP"])

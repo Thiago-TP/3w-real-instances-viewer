@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
         report("Building the Dispersion page…")
         self.dispersion = DispersionPage(info, passes=self._passes)
         # A tab's tooltip is not a widget's, so it is bounded here rather than
-        # by the filter ``styling.install_tooltip_width`` puts on the application.
+        # by the filter ``styling.install_tooltips`` puts on the application.
         for index, (title, page, tip) in enumerate(
             zip(self.PAGE_TITLES, self.pages, self.PAGE_TIPS)
         ):
@@ -146,6 +146,8 @@ class MainWindow(QMainWindow):
         self.availability.open_requested.connect(self._open_bar)
         self.map.open_requested.connect(self.open_instances)
         self.dispersion.open_requested.connect(self.open_instances)
+        self.faults.open_requested.connect(self._open_on_feature)
+        self.features.open_requested.connect(self._open_on_feature)
         self.map.results_changed.connect(self._on_map_results)
 
         self._restyle()
@@ -421,7 +423,11 @@ class MainWindow(QMainWindow):
         data = next((w for w in self._wells if w.well == well), None)
         if data is None:
             return
-        window = self.open_instances(data.joined() if joined else data, bar)
+        self._open_on_feature(data.joined() if joined else data, bar, sensor)
+
+    def _open_on_feature(self, data: WellData, index: int, sensor) -> None:
+        """Open one bar with ``sensor`` drawn, or on the window's own default without one."""
+        window = self.open_instances(data, index)
         if window is not None and sensor:
             window.select_features([sensor])
 

@@ -36,8 +36,8 @@ Its `.provenance.json` carries the dataset version, the count and the timestamp 
 
 The viewer draws a model's verdicts onto the data when they come in its model-output format
 (`src/overlap_viewer/backend/model_outputs.py`, and the *Model outputs* tab of the help): a folder
-holding `model.json` — the model's `name`, its `kind` (`detection` or `classification`), the meaning
-of its `labels`, a `description` and its `provenance` — beside one `<fault_class>/<instance>.parquet`
+holding `model.json` (the model's `name`, its `kind` (`detection` or `classification`), the meaning
+of its `labels`, a `description` and its `provenance`) beside one `<fault_class>/<instance>.parquet`
 per instance scored, each indexed by `timestamp` with an integer `label` column and an optional
 float `score`. *Load model outputs…* in the main toolbar opens such a folder.
 
@@ -64,7 +64,7 @@ fitted on two normal instances of a well that carries ten sensors draws a tight 
 almost anything outside it anomalous; one fitted on 93 instances of a well that carries five draws
 a region wide enough to swallow the event. The agreement figure the viewer colours and sorts by is
 therefore as much about a well's normal data as about the event, which is worth knowing before
-reading it anywhere in the viewer — and is why the example covers four wells rather than the one it
+reading it anywhere in the viewer, and it is why the example covers four wells rather than the one it
 started with.
 
 **On the size.** 319 instances of one verdict and one score per second come to 6.4 MB, which took

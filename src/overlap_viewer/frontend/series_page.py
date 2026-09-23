@@ -46,9 +46,12 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -75,7 +78,13 @@ from overlap_viewer.algorithms.spectral import (
 )
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES, plausible_range
-from overlap_viewer.backend.dataset import DatasetInfo, join_groups, merge_instances, well_label
+from overlap_viewer.backend.dataset import (
+    DatasetInfo,
+    WellData,
+    join_groups,
+    merge_instances,
+    well_label,
+)
 from overlap_viewer.backend.labels import (
     Segment,
     at_index_unit,
@@ -209,6 +218,54 @@ LIST_WIDTH = 380  # the instances panel: room for a title, the mark and an onset
 CHIP_PX = 12  # the square of a series color before an instance
 HOVER_PX = 10  # a line closer than this to the pointer, in pixels, is the one named
 FADE_ALPHA = 70  # the other lines while one is named
+DEFAULT_COLUMNS = 1  # small plots per row of the grid, until the user asks for more
+
+
+class InstanceList(QListWidget):
+    """The list of instances beside the plots: its check boxes draw, its names open.
+
+    A click on an instance's check box ticks or unticks it, as in any list; a
+    click anywhere else on its row asks for its instance window. The two are
+    told apart by whether the click changed the check state, which leaves the
+    question of where the box is drawn to the style that draws it. A greyed
+    instance, which cannot be ticked, can still be opened.
+
+    Signals
+    -------
+    open_requested(int)
+        The row whose name was clicked.
+    """
+
+    open_requested = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pressed = None
+        self._double = False
+
+    def mousePressEvent(self, event) -> None:
+        self._pressed = self.itemAt(event.position().toPoint())
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        # The release that ends a double click would open the window a second time.
+        self._double = True
+        super().mouseDoubleClickEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        item = self.itemAt(event.position().toPoint())
+        before = item.checkState() if item is not None else None
+        super().mouseReleaseEvent(event)
+        double, self._double = self._double, False
+        if (
+            item is not None
+            and item is self._pressed
+            and event.button() == Qt.MouseButton.LeftButton
+            and not double
+            and item.checkState() == before
+        ):
+            self.open_requested.emit(self.row(item))
+        self._pressed = None
 
 
 @dataclass
@@ -318,10 +375,15 @@ class SeriesPage(QWidget):
         pointer and its reading, or the page's hint.
     summary_changed()
         The one-line count of what is on show has changed.
+    open_requested(WellData, int, object)
+        Open the instance window of one instance: its well, its position in
+        the well's instance table, and the sensor to draw in it, or ``None``
+        for the window's own default.
     """
 
     status = Signal(str)
     summary_changed = Signal()
+    open_requested = Signal(object, int, object)
 
     HINT = ""
 
@@ -335,8 +397,10 @@ class SeriesPage(QWidget):
         # Where the profiles of the instances come from, when a sort order asks
         # for them; without it the descriptor orders are not offered.
         self._passes = passes
+        self._wells: dict[int, WellData] = {}
         self._series: list[Series] = []
         self._plots: list[pg.PlotItem] = []
+        self._plot_features: list[str] = []  # per plot: the sensor it draws
         self._curves: dict[int, list[pg.PlotDataItem]] = {}  # series index -> its curve per plot
         self._plot_series: list[
             list[tuple[int, np.ndarray, np.ndarray]]
@@ -359,6 +423,27 @@ class SeriesPage(QWidget):
         self._shading_actions: list = []
 
     # -- construction, the parts every page shares
+
+    def add_instance_buttons(self, layout) -> None:
+        """*All* and *Clear* over an instance list, stacked as over the list on the left."""
+        buttons = QVBoxLayout()
+        buttons.setSpacing(2)
+        every = QPushButton("All")
+        every.clicked.connect(lambda: self._set_all_instances(True))
+        clear = QPushButton("Clear")
+        clear.clicked.connect(lambda: self._set_all_instances(False))
+        buttons.addWidget(every)
+        buttons.addWidget(clear)
+        layout.addLayout(buttons)
+
+    def _set_all_instances(self, checked: bool) -> None:
+        """Tick, or untick, every instance of the list that can be; a page supplies its own."""
+
+    def open_instance(self, well: int, position: int, feature: str | None = None) -> None:
+        """Ask for the instance window of one instance, with ``feature`` drawn if one is given."""
+        data = self._wells.get(well)
+        if data is not None:
+            self.open_requested.emit(data, int(position), feature)
 
     def add_sort_control(self, layout) -> QComboBox:
         """The *Sort* box of an instance list, its map orders greyed until the map has run."""
@@ -601,6 +686,7 @@ class SeriesPage(QWidget):
         if right is not None:
             layout.addWidget(right)
         self._stack.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self._stack.scene().sigMouseClicked.connect(self._on_mouse_clicked)
         return body
 
     def add_alignment_control(self, bar: QToolBar) -> None:
@@ -638,7 +724,7 @@ class SeriesPage(QWidget):
         self._grid_only.append(bar.addWidget(QLabel(" Columns ")))
         self._columns = QSpinBox()
         self._columns.setRange(1, 8)
-        self._columns.setValue(3)
+        self._columns.setValue(DEFAULT_COLUMNS)
         self._columns.setToolTip("Small plots per row of the grid")
         self._columns.valueChanged.connect(self._replot)
         self._grid_only.append(bar.addWidget(self._columns))
@@ -1175,6 +1261,7 @@ class SeriesPage(QWidget):
         stack = self._stack
         stack.clear()
         self._plots = []
+        self._plot_features = []
         self._curves = {i: [] for i in range(len(self._series))}
         self._plot_series = []
         self._spectra_by_plot = {}
@@ -1258,6 +1345,7 @@ class SeriesPage(QWidget):
             if lows:
                 plot.getViewBox().setYRange(*padded_range(min(lows), max(highs)), padding=0)
             self._plots.append(plot)
+            self._plot_features.append(feature)
             self._plot_series.append(drawn)
         return PLOT_PX * len(sections) + 8
 
@@ -1334,6 +1422,7 @@ class SeriesPage(QWidget):
                 self._curves[i].append(self._add_curve(plot, self._series[i], x, y, kinds))
                 self._corner_label(plot, self._series[i])
                 self._plots.append(plot)
+                self._plot_features.append(feature)
                 self._plot_series.append([(i, x, y)])
             row += n_rows
             height += n_rows * SMALL_PLOT_PX + SMALL_AXIS_PX + 8
@@ -1521,6 +1610,7 @@ class SeriesPage(QWidget):
                     boxed=False,
                 ).attach(plot)
             self._plots.append(plot)
+            self._plot_features.append(feature)
             self._plot_series.append(drawn)
         return PLOT_PX * len(sections) + 8
 
@@ -1651,6 +1741,7 @@ class SeriesPage(QWidget):
                             master_vb.setYRange(min(lo, top[0]), max(hi, top[1]), padding=0)
                 self._corner_label(plot, self._series[i])
                 self._plots.append(plot)
+                self._plot_features.append(feature)
                 self._plot_series.append([(i, x, y)])
             row += n_rows
             height += n_rows * SMALL_PLOT_PX + SMALL_AXIS_PX + 8
@@ -1742,9 +1833,12 @@ class SeriesPage(QWidget):
                 curve.setPen(pen)
                 curve.setFillBrush(pg.mkBrush(fill))
 
-    def _on_mouse_moved(self, pos) -> None:
-        """Name the line nearest the pointer, and read the instance at that moment."""
-        for plot, drawn in zip(self._plots, self._plot_series):
+    def _series_at(self, pos) -> tuple[int, int, float] | None:
+        """The plot under a scene position, the series nearest it there (or -1) and the x under it.
+
+        ``None`` when the position is over no plot at all.
+        """
+        for k, (plot, drawn) in enumerate(zip(self._plots, self._plot_series)):
             vb = plot.getViewBox()
             if not vb.sceneBoundingRect().contains(pos):
                 continue
@@ -1752,22 +1846,53 @@ class SeriesPage(QWidget):
             px_per_y = vb.viewPixelSize()[1]
             best, best_px = -1, HOVER_PX
             for i, x, y in drawn:
-                k = int(np.searchsorted(x, point.x()))
-                candidates = [j for j in (k - 1, k) if 0 <= j < len(x)]
+                j0 = int(np.searchsorted(x, point.x()))
+                candidates = [j for j in (j0 - 1, j0) if 0 <= j < len(x)]
                 for j in candidates:
                     if np.isnan(y[j]):
                         continue
                     distance = abs(y[j] - point.y()) / px_per_y if px_per_y > 0 else np.inf
                     if distance < best_px:
                         best, best_px = i, distance
-            self._highlight(best)
-            if best >= 0:
-                self.status.emit(self._describe(best, plot, float(point.x())))
-            else:
-                self.status.emit(self.hint())
+            return k, best, float(point.x())
+        return None
+
+    def _on_mouse_moved(self, pos) -> None:
+        """Name the line nearest the pointer, and read the instance at that moment."""
+        found = self._series_at(pos)
+        if found is None:
+            self._highlight(-1)
+            self.status.emit(self.hint())
             return
-        self._highlight(-1)
-        self.status.emit(self.hint())
+        k, best, x = found
+        self._highlight(best)
+        if best >= 0:
+            self.status.emit(self._describe(best, self._plots[k], x))
+        else:
+            self.status.emit(self.hint())
+
+    def _on_mouse_clicked(self, event) -> None:
+        """Open the instance clicked in its own window, on the sensor of the plot clicked.
+
+        A small plot holds one instance, so a click anywhere in it names it; an
+        overlaid plot holds many, and the one opened is the line the hover has
+        named, the one nearest the pointer. A pooled curve stands for many
+        instances and opens none.
+        """
+        if event.button() != Qt.MouseButton.LeftButton or event.double() or self.overall:
+            return
+        found = self._series_at(event.scenePos())
+        if found is None:
+            return
+        k, best, _x = found
+        drawn = self._plot_series[k]
+        if self.small_multiples and len(drawn) == 1:
+            best = drawn[0][0]
+        if best < 0:
+            return
+        event.accept()
+        series = self._series[best]
+        self.open_instance(series.well, series.position, self._plot_features[k])
 
     def _describe(self, index: int, plot, hours: float | None) -> str:
         series = self._series[index]

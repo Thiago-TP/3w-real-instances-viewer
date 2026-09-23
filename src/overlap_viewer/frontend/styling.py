@@ -16,7 +16,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPalette
 from PySide6.QtGui import Qt as GuiQt  # ``mightBeRichText`` is on QtGui's Qt, not QtCore's
-from PySide6.QtWidgets import QApplication, QToolTip, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QTabBar, QToolTip, QWidget
 
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.theme import Theme
@@ -167,33 +167,77 @@ def bounded_tooltip(text: str) -> str:
     return f'{_BOUNDED}><tr><td width="{TOOLTIP_WIDTH_PX}">{body}</td></tr></table>'
 
 
-class _ToolTipWidth(QObject):
-    """Bounds every tooltip set on a widget, wherever in the viewer it is set.
+# -- How long a tooltip stays -----------------------------------------------------
 
-    A tooltip reaches a reader three ways, and this catches the common one.
-    Setting one on a widget sends it ``ToolTipChange``, and a tool button
-    copies the tooltip of its action, so one filter on the application covers
-    every ``setToolTip`` of every page. The two paths it cannot see, a tab's
-    tooltip and a ``QToolTip.showText`` of a widget's own, call
+# Qt takes a tooltip down after ten seconds and a little more per character,
+# which is less than it takes to read the longer explanations this viewer puts
+# in them. A tooltip here stays until the pointer leaves what it explains (or a
+# key or a button is pressed), as Qt already does on those; only the clock is
+# taken away. The duration is a timer's, so the longest a timer can run, some
+# twenty-four days, is what never means.
+TOOLTIP_FOREVER_MS = 2**31 - 1
+
+
+class _ToolTips(QObject):
+    """Bounds the width of every tooltip set on a widget, and keeps every tooltip up until the pointer moves off.
+
+    **Width.** A tooltip reaches a reader three ways, and this catches the
+    common one. Setting one on a widget sends it ``ToolTipChange``, and a tool
+    button copies the tooltip of its action, so one filter on the application
+    covers every ``setToolTip`` of every page. The two paths it cannot see, a
+    tab's tooltip and a ``QToolTip.showText`` of a widget's own, call
     ``bounded_tooltip`` themselves.
+
+    **Duration.** A widget passes its own ``toolTipDuration`` when it shows its
+    tooltip, so it is given one that never runs out just before. The item of a
+    list and the tab of a tab bar are shown by Qt with the default duration
+    and no way to set another, so those two are shown here instead, over the
+    item or the tab they belong to; a widget that shows tooltips of its own
+    (the availability map) passes ``TOOLTIP_FOREVER_MS`` itself.
     """
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() == QEvent.Type.ToolTipChange and isinstance(watched, QWidget):
+        if not isinstance(watched, QWidget):
+            return False
+        kind = event.type()
+        if kind == QEvent.Type.ToolTipChange:
             bounded = bounded_tooltip(watched.toolTip())
             if bounded != watched.toolTip():
                 watched.setToolTip(bounded)
+        elif kind == QEvent.Type.ToolTip:
+            return self._show(watched, event)
         return False
 
+    @staticmethod
+    def _show(watched: QWidget, event) -> bool:
+        """Show the tooltip of an item or a tab with no clock on it; let Qt show a widget's own."""
+        view = watched.parent()
+        if isinstance(view, QAbstractItemView) and watched is view.viewport():
+            index = view.indexAt(event.pos())
+            text = index.data(Qt.ItemDataRole.ToolTipRole) if index.isValid() else None
+            rect = view.visualRect(index)
+        elif isinstance(watched, QTabBar):
+            index = watched.tabAt(event.pos())
+            text = watched.tabToolTip(index) if index >= 0 else None
+            rect = watched.tabRect(index)
+        else:
+            if watched.toolTipDuration() != TOOLTIP_FOREVER_MS:
+                watched.setToolTipDuration(TOOLTIP_FOREVER_MS)
+            return False
+        if not text:
+            return False  # nothing to say: Qt takes down whatever is up
+        QToolTip.showText(event.globalPos(), str(text), watched, rect, TOOLTIP_FOREVER_MS)
+        return True
 
-_tooltip_width: _ToolTipWidth | None = None
+
+_tooltips: _ToolTips | None = None
 
 
-def install_tooltip_width() -> None:
-    """Bound the tooltips of this application, once, before its widgets are built."""
-    global _tooltip_width
+def install_tooltips() -> None:
+    """Bound the tooltips of this application and take their clock away, once, before its widgets are built."""
+    global _tooltips
     app = QApplication.instance()
-    if app is None or _tooltip_width is not None:
+    if app is None or _tooltips is not None:
         return
-    _tooltip_width = _ToolTipWidth(app)
-    app.installEventFilter(_tooltip_width)
+    _tooltips = _ToolTips(app)
+    app.installEventFilter(_tooltips)

@@ -27,8 +27,8 @@ of the process; everything is an analysis of the catalogue, recomputed on every 
   carries, and on a DTW representation it becomes the principal coordinates of the distances),
   *t-SNE* and *UMAP*, which keep neighbourhoods rather than distances and take a few seconds on
   the whole dataset.
-- **Clustering** groups the points — k-means, a Gaussian mixture, agglomerative clustering, DBSCAN,
-  the list Siqueira's notebooks on 3W work through — and the line beside it scores the result: the
+- **Clustering** groups the points (k-means, a Gaussian mixture, agglomerative clustering, DBSCAN,
+  the list Siqueira's notebooks on 3W work through), and the line beside it scores the result: the
   silhouette, and the agreement with the fault classes and with the wells as the adjusted Rand
   index and the normalised mutual information, 1 for a clustering that is the classes (or the
   wells) under other names. That is the question the page asks: whether what places the instances

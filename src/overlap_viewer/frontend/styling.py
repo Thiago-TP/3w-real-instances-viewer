@@ -13,10 +13,18 @@ choice is remembered between runs; ``--theme`` overrides it for one run.
 from html import escape
 
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QFontMetrics, QPalette
+from PySide6.QtCore import QEvent, QObject, QRectF, QSettings, Qt
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtGui import Qt as GuiQt  # ``mightBeRichText`` is on QtGui's Qt, not QtCore's
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QTabBar, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QProxyStyle,
+    QStyle,
+    QTabBar,
+    QToolTip,
+    QWidget,
+)
 
 from overlap_viewer.backend import theme
 from overlap_viewer.backend.theme import Theme
@@ -130,6 +138,55 @@ def apply(mode: str) -> Theme:
     if app is not None:
         app.setPalette(qt_palette(colors))
     return colors
+
+
+# -- Check boxes that can be seen in the dark -------------------------------------
+
+# Fusion edges a check box with a darker shade of the window behind it, which
+# on a light window is a clear grey line and on a dark one very nearly black
+# on near-black: an empty box all but disappears, and an unticked item of a
+# list shows no box at all. The dark mode gets an edge of its own, in the
+# weight of text the theme keeps for a hint, which reads as a box without
+# competing with the labels beside it.
+CHECKS = (
+    QStyle.PrimitiveElement.PE_IndicatorCheckBox,
+    QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck,
+)
+
+
+class _VisibleChecks(QProxyStyle):
+    """Fusion, with a check box edged in the theme's own colors in the dark mode.
+
+    Whether the mode is dark, and the colors of the edge, are read off the
+    palette the box is painted with rather than off the theme in force, so
+    that a window keeping a theme of its own gets the edge its own theme asks
+    for (``qt_palette`` puts the hint's weight in ``PlaceholderText`` and the
+    border in ``Mid``).
+    """
+
+    def drawPrimitive(self, element, option, painter, widget=None) -> None:
+        super().drawPrimitive(element, option, painter, widget)
+        palette = option.palette
+        if element not in CHECKS or palette.color(QPalette.ColorRole.Window).lightness() >= 128:
+            return
+        enabled = bool(option.state & QStyle.StateFlag.State_Enabled)
+        role = QPalette.ColorRole.PlaceholderText if enabled else QPalette.ColorRole.Mid
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(palette.color(QPalette.ColorGroup.Active, role), 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        # Fusion's own box is drawn a pixel inside the rectangle it is given.
+        box = QRectF(option.rect).adjusted(1.5, 1.5, -1.5, -1.5)
+        painter.drawRoundedRect(box, 1.5, 1.5)
+        painter.restore()
+
+
+def install_style() -> None:
+    """Paint the application with Fusion, whose every color comes from the palette, and visible checks."""
+    app = QApplication.instance()
+    if app is None or isinstance(app.style(), _VisibleChecks):
+        return
+    app.setStyle(_VisibleChecks("Fusion"))
 
 
 # -- The width of a tooltip -------------------------------------------------------

@@ -104,6 +104,7 @@ def build_window(args: argparse.Namespace, launch: bool = False) -> MainWindow |
     which nothing else is on screen.
     """
     mode = args.theme or styling.saved_mode()
+    styling.install_style()
     styling.apply(mode)
     styling.install_tooltips()  # before any widget is built, so none is missed
     raw_dir = resolve_raw_dir(args.raw_dir)

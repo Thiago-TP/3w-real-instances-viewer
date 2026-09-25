@@ -128,6 +128,7 @@ SIDE_PX = (
 )
 BAND_PX = 18
 HEADER_PX = 24
+CONTENTS_PX = 15  # the header's second line: what the block holds
 PLOT_MIN_PX = 150
 AXIS_PX = 28
 ROW_SPACING = 2  # between two rows of one instance block
@@ -1070,9 +1071,37 @@ class InstanceWindow(QMainWindow):
             f"&nbsp;&nbsp;{squares}{warning}{cleaning}"
             f'<span style="font-size:9pt; color:{colors.muted};"> {what} | {joined}'
             f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} | "
-            f"{row['hours']:.1f} h | {int(row['n_samples']):,} samples | level {int(row['lane']) + 1} | "
+            f"{row['hours']:.1f} h | level {int(row['lane']) + 1} | "
             f"overlaps {partners} shown</span>"
+            f"<br>{self._contents_html(position)}"
         )
+
+    def _contents_html(self, position: int) -> str:
+        """The header's second line: what the block holds, on a line of its own.
+
+        The first line names the block and runs long enough that a window of
+        ordinary width clips its tail, so the counts are not put at the end of
+        it, where they would be the first thing lost.
+        """
+        samples = int(self.rows.iloc[position]["n_samples"])
+        return (
+            f'<span style="font-size:9pt; color:{theme.current().muted};">{samples:,} samples'
+            f"{self._measurements_text(position)}</span>"
+        )
+
+    def _measurements_text(self, position: int) -> str:
+        """`` | measurements: P-PDG 8,103, P-TPT 8,824``: what the historian archived of each ticked feature.
+
+        The share and the interval stand beside each trace; the header gives
+        the counts, to be read against the block's samples just before them.
+        A valve state is not tested and is left out.
+        """
+        counts = []
+        for feature in self.selected_features():
+            kinds = self._kinds_of(position, feature)
+            if kinds is not None:
+                counts.append(f"{feature} {int((kinds == GENUINE).sum()):,}")
+        return f" | measurements: {', '.join(counts)}" if counts else ""
 
     def _overlaps(self, a: int, b: int) -> bool:
         ra, rb = self.rows.iloc[a], self.rows.iloc[b]
@@ -1157,7 +1186,7 @@ class InstanceWindow(QMainWindow):
         for position in range(len(self.rows)):
             # Every block but the first carries the room that separates it from
             # the one above, so the header reads as the title of what follows it.
-            header_px = HEADER_PX + (BLOCK_SPACING if position else 0)
+            header_px = HEADER_PX + CONTENTS_PX + (BLOCK_SPACING if position else 0)
             label = HeaderLabel(justify="left")
             label.setText(self._instance_html(position))
             label.setFixedHeight(header_px)

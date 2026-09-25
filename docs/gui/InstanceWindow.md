@@ -1,8 +1,10 @@
 # Instance window 
 One block per bar of the timelines, stacked chronologically on a shared time
-axis, so the overlapping stretches line up vertically. Each block has a header line, the well
+axis, so the overlapping stretches line up vertically. Each block has a header, the well
 operational status (`state`) and the label (`class`) as thin bands, then one plot per selected
-feature. A band at the top marks the stretches recorded by two or more of the bars shown.
+feature. The header's first line names the block (its event, flags, span and stack level); the
+second says what it holds: its samples and, for every ticked feature, how many of them the PI
+historian actually archived (the share and the interval stand beside each trace). A band at the top marks the stretches recorded by two or more of the bars shown.
 
 ![Instance window](../assets/instance_window.png)
 

@@ -17,6 +17,7 @@ from overlap_viewer.algorithms.faults import (
     window_mask,
     zscore,
 )
+from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
 from overlap_viewer.backend import dataset as ds
 from overlap_viewer.backend import help_text, theme
 from overlap_viewer.backend.availability import (
@@ -81,6 +82,7 @@ from overlap_viewer.backend.palette import (
 from overlap_viewer.backend.timemap import TimeMap
 from overlap_viewer.frontend.legend import row_breaks
 from overlap_viewer.frontend.overview import bar_tooltip
+from overlap_viewer.frontend.series_page import SeriesPage, sample_counts
 
 
 def segments(*spans) -> list[Segment]:
@@ -796,6 +798,23 @@ def test_pressures_are_shown_in_mpa_and_ruled_in_pa():
         assert info.shown_unit(sensor) == info.unit(sensor) and info.shown_scale(sensor) == 1.0
         assert info.shown_range(sensor) == plausible_range(info.unit(sensor))
     assert info.shown_unit("ESTADO-W1") == ""  # a valve state has no unit to convert
+
+
+def test_section_headings_count_samples_and_measurements():
+    """A reading is a sample; a measurement is a sample the historian archived; a valve has none."""
+    ramp = np.array([1.0, 2.0, 3.0, 4.0, 4.0, np.nan, 5.0])
+    kinds = sample_kinds(ramp)
+    samples, measured = sample_counts(ramp, kinds)
+    assert samples == 6 and measured == int((kinds == GENUINE).sum()) and 0 < measured < samples
+    # A normalized series has its implausible readings blanked; the kinds still count them.
+    blanked = ramp.copy()
+    blanked[0] = np.nan
+    assert sample_counts(blanked, kinds) == (samples, measured)
+    assert sample_counts(np.array([0.0, 1.0, np.nan]), None) == (2, None)
+    text = SeriesPage._counts_text([(100, 10), (50, 5), (30, None)])
+    assert text == " | 180 samples, 15 measurements (8.3%)"
+    assert SeriesPage._counts_text([(30, None)]) == " | 30 samples"
+    assert SeriesPage._counts_text([]) == ""
 
 
 def test_availability_folds_bars_into_groups(raw_dir: Path, tmp_path: Path, monkeypatch):

@@ -6,6 +6,12 @@ silence between bursts of recording are collapsed to narrow dashed blanks, and t
 uniform everywhere else: a bar's length is a duration and two bars overlap on screen exactly when
 the instances overlap in time. Untick *Compress silences* for a true calendar axis.
 
+The line above each plot sums the well up: its instances (or, joined, its bars), its samples, its
+deepest pile-up, the hours recorded and the span. A sample two overlapping instances share is
+counted in each, and once when *Join overlapping instances* is ticked. Under a *Bar color* that
+names a sensor it adds that sensor's measurements on the well, out of its readings, once the
+profiles have been read (the *Measurements* coloring reads them; a header never starts the pass).
+
 ![Timelines page](../assets/overview.png)
 
 - **Hover** a bar: it gets a heavy outline, every instance of the well that overlaps it gets a

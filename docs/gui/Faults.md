@@ -8,7 +8,8 @@ starts where the event begins in each instance, so that the shapes line up whate
 ![Faults page](../assets/faults.png)
 
 - **Layout** chooses between the two ways of showing them. *Small multiples*, the default, give
-  every instance a plot of its own in a grid under a heading per feature, each with its own value
+  every instance a plot of its own in a grid under a heading per feature (which gives the samples
+  the section draws in the window of hours chosen, and how many were measured), each with its own value
   axis and its **label periods shaded behind the trace**, hatched where nobody labeled it, so that
   two dozen shapes can be read one against the next and the grid says how long each instance
   stayed in normal operation, in the transient and in the steady state, and how much of it the

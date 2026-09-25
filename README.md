@@ -82,7 +82,7 @@ equivalent entry points.
 | Option             | Default             | Meaning                                                                         |
 | ------------------ | ------------------- | ------------------------------------------------------------------------------- |
 | `--raw-dir PATH` | see above           | root of the 3W dataset (the folder holding`0/` … `9/` and `dataset.ini`) |
-| `--columns N`    | 2                   | plots per row of the timelines (1 to 4)                                         |
+| `--columns N`    | 1                   | plots per row of the timelines (1 to 4)                                         |
 | `--gap-hours H`  | 12                  | a silence at least this long splits a well's recording into two bursts          |
 | `--theme MODE`   | the last one chosen | `light`, `dark`, or `system` to follow the desktop                        |
 | `--no-cache`     | off                 | read every instance again instead of using the cached catalogue                 |

@@ -36,6 +36,7 @@ from overlap_viewer.backend import theme
 from overlap_viewer.backend.availability import ABSENT, FROZEN, LIVE, Availability
 from overlap_viewer.backend.config import (
     BAR_HEIGHT,
+    DEFAULT_COLUMNS,
     DEFAULT_GAP_HOURS,
     GRID_SPACING,
     MAX_LANE_SLOTS,
@@ -579,7 +580,7 @@ class TimelinesPage(QWidget):
         self,
         info: DatasetInfo,
         gap_hours: float = DEFAULT_GAP_HOURS,
-        columns: int = 2,
+        columns: int = DEFAULT_COLUMNS,
         passes: Passes | None = None,
         parent=None,
     ):

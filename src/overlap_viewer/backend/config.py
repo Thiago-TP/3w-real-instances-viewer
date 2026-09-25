@@ -230,6 +230,10 @@ BACKGROUND_TINTS: dict[str, float] = {"steady": 0.62, "transient": 0.38, "normal
 DEFAULT_GAP_HOURS = 12.0
 GAP_SHARE = 0.12
 
+# Plots per row of the Timelines when the viewer opens (1 to 4): one gives
+# every well's timeline the full width of the window.
+DEFAULT_COLUMNS = 1
+
 # Bars taller than this share of a stack level would touch their neighbours.
 BAR_HEIGHT = 0.62
 

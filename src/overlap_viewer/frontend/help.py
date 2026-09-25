@@ -26,6 +26,7 @@ from overlap_viewer.backend.config import (
     PLAUSIBLE_RANGES,
     WELL_STATES,
     asset_path,
+    display_unit,
 )
 from overlap_viewer.backend.dataset import DatasetInfo
 from overlap_viewer.backend.help_text import (
@@ -286,9 +287,10 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
         (
             "<p>Every instance file carries all of these columns, whether or not the well recorded "
             "them, so a column that is entirely missing is normal rather than an error. Readings "
-            "are one per second. Pressures are stored in pascal, temperatures in degrees Celsius, "
-            "choke openings in percent, flow rates in cubic metres per second; a valve state is "
-            "0 closed, 1 open, 0.5 anything else.</p>"
+            "are one per second. Pressures are stored in pascal and shown in MPa (1 MPa = 1e6 Pa) "
+            "in every plot, readout and table of the viewer, this one included; temperatures are "
+            "in degrees Celsius, choke openings in percent, flow rates in cubic metres per second; "
+            "a valve state is 0 closed, 1 open, 0.5 anything else.</p>"
         ),
     ]
     if figures is not None:
@@ -309,7 +311,7 @@ def variable_page(info: DatasetInfo, figures: "Figures | None" = None) -> str:
     ]
     for name in info.sensor_names:
         entry = VARIABLES.get(name)
-        unit = info.unit(name)
+        unit = info.shown_unit(name)
         described = info.sensor_descriptions.get(name, "")
         if unit:
             unit_cell = unit
@@ -407,15 +409,19 @@ def availability_help_page(figures: "Figures | None" = None) -> str:
     ]
     for unit, (low, high) in PLAUSIBLE_RANGES.items():
         quantity, why = PLAUSIBLE_RANGE_NOTES.get(unit, (unit, ""))
+        shown, scale = display_unit(unit)
         parts.append(
             f'<tr><td valign="top"><b>{quantity}</b></td>'
-            f'<td valign="top" align="center">{unit}</td>'
-            f'<td valign="top">{low:g} to {high:g}</td><td valign="top" class="sub">{why}</td></tr>'
+            f'<td valign="top" align="center">{shown}</td>'
+            f'<td valign="top">{low * scale:g} to {high * scale:g}</td>'
+            f'<td valign="top" class="sub">{why}</td></tr>'
         )
     parts.append(
         f'<tr><td valign="top"><b>Everything</b></td><td valign="top" align="center">&mdash;</td>'
         f'<td valign="top">|reading| below '
-        f'{EXTREME_VALUE_LIMIT:g}</td><td valign="top" class="sub">{MAGNITUDE_NOTE}</td></tr>'
+        f"{EXTREME_VALUE_LIMIT:.0e}".replace("e+0", "e")
+        + " in the file's unit (Pa for a pressure)</td>"
+        f'<td valign="top" class="sub">{MAGNITUDE_NOTE}</td></tr>'
     )
     parts.append("</table>")
     for title, text in AVAILABILITY_NOTES:

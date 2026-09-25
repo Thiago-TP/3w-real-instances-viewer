@@ -68,12 +68,14 @@ from overlap_viewer.backend.labels import (
     coverage_counts,
     feature_stats,
     format_delta,
+    format_duration,
     label_fault,
     label_kind,
     label_name,
     label_segments,
     merge_label_runs,
     padded_range,
+    period_durations,
     segments_from_json,
     sensor_columns,
     sensor_stats_from_json,
@@ -128,11 +130,18 @@ SIDE_PX = (
 )
 BAND_PX = 18
 HEADER_PX = 24
+CONTENTS_PX = 15  # the header's second line: what the block holds
+# How the header's second line names the label periods.
+PERIOD_NAMES = {
+    "normal": "normal operation",
+    "transient": "transient",
+    "steady": "steady state",
+    "unknown": "unlabeled",
+}
 PLOT_MIN_PX = 150
 AXIS_PX = 28
 ROW_SPACING = 2  # between two rows of one instance block
 BLOCK_SPACING = 16  # added above the header of every block but the first
-SI_UNITS = ("Pa",)  # units pyqtgraph may prefix (kPa, MPa); the others stay literal
 STRETCH_DELAY_MS = 150  # a pan or zoom settles this long before the stretch views are recounted
 
 # The views of a signal beyond its time series, in the order of the toolbar.
@@ -399,7 +408,7 @@ class InstanceWindow(QMainWindow):
         self._seams = [self._seam_positions(members) for members in self.members]
         self._groups_cache: dict[int, tuple[np.ndarray, list]] = {}
         self._kinds_cache: dict[tuple[int, str], np.ndarray | None] = {}
-        self._scaled_cache: dict[tuple[int, str], np.ndarray] = {}
+        self._scaled_cache: dict[tuple[int, str, bool], np.ndarray] = {}
         self._features = self._feature_table()
         self._signature = self._signature_for_group()
 
@@ -750,32 +759,36 @@ class InstanceWindow(QMainWindow):
         self._rebuild()
 
     def _display_values(self, position: int, feature: str) -> np.ndarray:
-        """The readings of one feature of one block as drawn: in its unit, or as z-scores.
+        """The readings of one feature of one block as drawn: in its shown unit, or as z-scores.
 
         Every view reads its values through here (the trace, the value axis,
         the histogram, the spectrum, the readout under the crosshair), so that
-        they always agree on what is on the axis. Scaled, the readings outside
-        the plausible range are left out first, as the pipelines mask the
-        garbage before they normalize: one absurd level would otherwise squash
-        every genuine reading into zero.
+        they always agree on what is on the axis. A pressure is converted to
+        MPa. Scaled, the readings outside the plausible range are left out
+        first, as the pipelines mask the garbage before they normalize: one
+        absurd level would otherwise squash every genuine reading into zero.
         """
         frame = self.frames[position]
         if feature not in frame.columns:
             return np.full(len(frame), np.nan)
         values = frame[feature].to_numpy(dtype=float)
-        if not self.normalized:
+        scale = self.info.shown_scale(feature)
+        if not self.normalized and scale == 1.0:
             return values
-        key = (position, feature)
+        key = (position, feature, self.normalized)
         if key not in self._scaled_cache:
-            low, high = plausible_range(self.info.unit(feature))
-            self._scaled_cache[key] = zscore(
-                np.where((values >= low) & (values <= high), values, np.nan)
-            )
+            if self.normalized:
+                low, high = plausible_range(self.info.unit(feature))
+                self._scaled_cache[key] = zscore(
+                    np.where((values >= low) & (values <= high), values, np.nan)
+                )
+            else:
+                self._scaled_cache[key] = values * scale
         return self._scaled_cache[key]
 
     def _display_unit(self, feature: str) -> str:
-        """The unit of what is drawn of a feature: its own, or none for z-scores."""
-        return "" if self.normalized else self.info.unit(feature)
+        """The unit of what is drawn of a feature: its shown unit, or none for z-scores."""
+        return "" if self.normalized else self.info.shown_unit(feature)
 
     def view_on(self, view: str) -> bool:
         check = self._views.get(view)
@@ -879,7 +892,7 @@ class InstanceWindow(QMainWindow):
         wanted = selected if selected is not None else self._default_features()
         n = len(self.frames)
         for row in self._features.itertuples():
-            unit = self.info.unit(row.sensor)
+            unit = self.info.shown_unit(row.sensor)
             text = f"{row.sensor} [{unit}]" if unit else row.sensor
             # The mark of a reading no instrument could have produced, on the
             # name itself: the tooltip says how many blocks and what range.
@@ -887,7 +900,7 @@ class InstanceWindow(QMainWindow):
             description = self.info.sensor_descriptions.get(row.sensor, "")
             recorded = f"recorded in {row.recorded} of {n} {self._noun}{'s' if n > 1 else ''}"
             if row.implausible:
-                low, high = plausible_range(unit)
+                low, high = self.info.shown_range(row.sensor)
                 recorded += (
                     f"\n⚠ readings outside the plausible range ({low:g} to {high:g} {unit}) "
                     f"in {row.implausible} of them"
@@ -1067,9 +1080,56 @@ class InstanceWindow(QMainWindow):
             f"&nbsp;&nbsp;{squares}{warning}{cleaning}"
             f'<span style="font-size:9pt; color:{colors.muted};"> {what} | {joined}'
             f"{start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} | "
-            f"{row['hours']:.1f} h | {int(row['n_samples']):,} samples | level {int(row['lane']) + 1} | "
+            f"{row['hours']:.1f} h | level {int(row['lane']) + 1} | "
             f"overlaps {partners} shown</span>"
+            f"<br>{self._contents_html(position)}"
         )
+
+    def _contents_html(self, position: int) -> str:
+        """The header's second line: what the block holds, on a line of its own.
+
+        The first line names the block and runs long enough that a window of
+        ordinary width clips its tail, so the counts are not put at the end of
+        it, where they would be the first thing lost.
+        """
+        samples = int(self.rows.iloc[position]["n_samples"])
+        return (
+            f'<span style="font-size:9pt; color:{theme.current().muted};">{samples:,} samples'
+            f"{self._periods_text(position)}{self._measurements_text(position)}</span>"
+        )
+
+    def _periods_text(self, position: int) -> str:
+        """`` | normal operation 1 h 26 min (24%), steady state 4 h 30 min (76%)``: the time in each label period.
+
+        Summed over the block's label runs, which tile it, so the shares add
+        up to the block's span; a period the block never enters is left out.
+        """
+        durations = period_durations(
+            [run for run, _source in self._class_runs(position)], self.info.transient_offset
+        )
+        total = sum(durations.values())
+        if total <= 0:
+            return ""
+        parts = [
+            f"{PERIOD_NAMES[kind]} {format_duration(seconds)} ({seconds / total:.0%})"
+            for kind, seconds in durations.items()
+            if seconds > 0
+        ]
+        return " | " + ", ".join(parts)
+
+    def _measurements_text(self, position: int) -> str:
+        """`` | measurements: P-PDG 8,103, P-TPT 8,824``: what the historian archived of each ticked feature.
+
+        The share and the interval stand beside each trace; the header gives
+        the counts, to be read against the block's samples just before them.
+        A valve state is not tested and is left out.
+        """
+        counts = []
+        for feature in self.selected_features():
+            kinds = self._kinds_of(position, feature)
+            if kinds is not None:
+                counts.append(f"{feature} {int((kinds == GENUINE).sum()):,}")
+        return f" | measurements: {', '.join(counts)}" if counts else ""
 
     def _overlaps(self, a: int, b: int) -> bool:
         ra, rb = self.rows.iloc[a], self.rows.iloc[b]
@@ -1154,7 +1214,7 @@ class InstanceWindow(QMainWindow):
         for position in range(len(self.rows)):
             # Every block but the first carries the room that separates it from
             # the one above, so the header reads as the title of what follows it.
-            header_px = HEADER_PX + (BLOCK_SPACING if position else 0)
+            header_px = HEADER_PX + CONTENTS_PX + (BLOCK_SPACING if position else 0)
             label = HeaderLabel(justify="left")
             label.setText(self._instance_html(position))
             label.setFixedHeight(header_px)
@@ -1183,9 +1243,7 @@ class InstanceWindow(QMainWindow):
                     self._display_unit(feature),
                     # Scaled readings have had the implausible ones taken out
                     # already, and have no range of their own to be held to.
-                    (-np.inf, np.inf)
-                    if self.normalized
-                    else plausible_range(self.info.unit(feature)),
+                    (-np.inf, np.inf) if self.normalized else self.info.shown_range(feature),
                 )
                 self._add_feature_plot(row, position, feature, show_axis=trace_axis)
                 if self.view_on("distribution"):
@@ -1323,16 +1381,14 @@ class InstanceWindow(QMainWindow):
         vb = plot.getViewBox()
         vb.setMouseEnabled(x=True, y=True)
         frame = self.frames[position]
-        unit = self.info.unit(feature)
+        unit = self.info.shown_unit(feature)
         axis = plot.getAxis("left")
+        # One unit per quantity on every axis: pyqtgraph's own prefix would
+        # label one pressure kPa and the next MPa.
+        axis.enableAutoSIPrefix(False)
         if self.normalized:
-            axis.enableAutoSIPrefix(False)
             plot.setLabel("left", f"{feature} (z-score)")
-        elif unit in SI_UNITS:
-            axis.enableAutoSIPrefix(True)
-            plot.setLabel("left", feature, units=unit)
         else:
-            axis.enableAutoSIPrefix(False)
             plot.setLabel("left", f"{feature} [{unit}]" if unit else feature)
 
         shading = SegmentsItem(z=-10)
@@ -1351,16 +1407,18 @@ class InstanceWindow(QMainWindow):
             # The measurements as dots, the historian's lines faint between them.
             kinds = self._kinds_of(position, feature)
             add_trace(plot, x, y, colors.trace, 1.0, kinds if self.dots_shown else None)
-            note = format_delta(stats.delta, unit) + (" (flat)" if stats.flat else "")
+            note = format_delta(stats.delta * self.info.shown_scale(feature), unit) + (
+                " (flat)" if stats.flat else ""
+            )
             if kinds is not None and not stats.flat:
                 note += " | " + describe_sampling(sampling_of(kinds))
             # A reading no instrument could have produced is drawn in the
             # warning color over the trace, sample by sample, so that the
             # stretch that is garbage is seen for what it is, and called out
             # beside the figures of the panel.
-            bounds = plausible_range(unit)
+            bounds = self.info.shown_range(feature)
             warning = ""
-            if outside_range(stats.low, stats.high, bounds):
+            if outside_range(stats.low, stats.high, plausible_range(self.info.unit(feature))):
                 if not self.normalized:  # scaled, they were left out before the scaling
                     self._mark_implausible(plot, x, y, bounds)
                 warning = (
@@ -1573,7 +1631,7 @@ class InstanceWindow(QMainWindow):
 
         def figure(value: float) -> str:
             # A z-score's mean is zero up to rounding, which would print as 1e-16.
-            return f"{value:+.2f} σ" if self.normalized else format_width(value, panel.unit)
+            return f"{value:+.2f} &sigma;" if self.normalized else format_width(value, panel.unit)
 
         panel.hist_note.setHtml(
             f'<span style="font-size:8pt; color:{colors.text};">{result.total:,} {noun}<br>'
@@ -1804,6 +1862,7 @@ class InstanceWindow(QMainWindow):
         x_range = self._x_range or (-pad, self.timemap.span + pad)
         self._master.getViewBox().setXRange(*x_range, padding=0)
         for feature, master in self._feature_masters.items():
+            scale = self.info.shown_scale(feature)
             lows, highs = [], []
             for position in range(len(self.rows)):
                 if self.normalized:
@@ -1814,8 +1873,8 @@ class InstanceWindow(QMainWindow):
                     continue
                 stats: FeatureStats = feature_stats(self.frames[position], feature)
                 if stats.recorded:
-                    lows.append(stats.low)
-                    highs.append(stats.high)
+                    lows.append(stats.low * scale)
+                    highs.append(stats.high * scale)
             low, high = (min(lows), max(highs)) if lows else (np.nan, np.nan)
             master.getViewBox().setYRange(*padded_range(low, high), padding=0)
 
@@ -1863,8 +1922,13 @@ class InstanceWindow(QMainWindow):
             for feature in self.selected_features():
                 if feature in frame.columns:
                     value = self._display_values(position, feature)[i]
-                    shown = "-" if pd.isna(value) else f"{value:.4g}"
-                    values.append(f"{feature} = {shown}{' σ' if self.normalized else ''}")
+                    unit = (
+                        " &sigma;"
+                        if self.normalized
+                        else f" {self._display_unit(feature)}".rstrip()
+                    )
+                    shown = "-" if pd.isna(value) else f"{value:.4g}{unit}"
+                    values.append(f"{feature} = {shown}")
             reading = f" | {', '.join(values)}" if values else ""
             parts.append(
                 f"{title}: {label_name(klass, self.info.fault_names, offset)} / {state_name(state)}{reading}"

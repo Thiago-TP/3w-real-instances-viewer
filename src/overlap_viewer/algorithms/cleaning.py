@@ -23,7 +23,7 @@ amber mark of an implausible reading instead, which says more.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -68,7 +68,9 @@ class Cleaning:
     event; ``by_mean`` and ``by_std`` say which test discarded a cell (both
     can). ``mean_bounds`` and ``std_bounds`` are the fitted bounds per
     sensor, NaN for a sensor no event recorded; ``exempt`` marks the sensors
-    the rule leaves alone.
+    the rule leaves alone. ``shown`` gives, per sensor, the unit ``why``
+    states a bound in and the factor that converts it there (a pressure to
+    MPa); empty, the bounds are stated as fitted, without a unit.
     """
 
     sensors: list[str]
@@ -81,6 +83,7 @@ class Cleaning:
     std_bounds: tuple[np.ndarray, np.ndarray]
     exempt: np.ndarray
     rule: CleanRule
+    shown: tuple[tuple[str, float], ...] = ()
 
     @property
     def n_events(self) -> int:
@@ -104,13 +107,14 @@ class Cleaning:
 
     def why(self, event: int, sensor: int) -> str:
         """One clause saying which test discarded a cell, with the bound it failed."""
+        unit, scale = self.shown[sensor] if self.shown else ("", 1.0)
         parts = []
         if self.by_mean[event, sensor]:
-            lo, hi = self.mean_bounds[0][sensor], self.mean_bounds[1][sensor]
-            parts.append(f"mean outside {lo:.4g} to {hi:.4g}")
+            lo, hi = self.mean_bounds[0][sensor] * scale, self.mean_bounds[1][sensor] * scale
+            parts.append(f"mean outside {lo:.4g} to {hi:.4g} {unit}".rstrip())
         if self.by_std[event, sensor]:
-            lo, hi = self.std_bounds[0][sensor], self.std_bounds[1][sensor]
-            parts.append(f"spread outside {lo:.4g} to {hi:.4g}")
+            lo, hi = self.std_bounds[0][sensor] * scale, self.std_bounds[1][sensor] * scale
+            parts.append(f"spread outside {lo:.4g} to {hi:.4g} {unit}".rstrip())
         return " and ".join(parts)
 
 
@@ -252,4 +256,8 @@ def clean_profiles(
     stds = np.where(missing, np.nan, stds)
     live = (n_valid > 0) & (np.nan_to_num(stds) > 0)
     exempt = [name for name in sensors if info.is_enumerated(name)]
-    return Cleaned(clean_signals(means, stds, missing, sensors, exempt, rule), keys, joined, live)
+    cleaning = replace(
+        clean_signals(means, stds, missing, sensors, exempt, rule),
+        shown=tuple((info.shown_unit(name), info.shown_scale(name)) for name in sensors),
+    )
+    return Cleaned(cleaning, keys, joined, live)

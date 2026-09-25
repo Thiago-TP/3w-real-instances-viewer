@@ -167,10 +167,16 @@ class Cloud:
         y: str,
         periods: Sequence[int] | None = None,
         genuine_only: bool = False,
+        scales: tuple[float, float] = (1.0, 1.0),
     ) -> Pair:
-        """The co-valid rows of two sensors, in the label periods asked for, measured on both if asked."""
+        """The co-valid rows of two sensors, in the label periods asked for, measured on both if asked.
+
+        ``scales`` multiplies the readings of ``x`` and ``y``: the factors that
+        take each sensor to the unit it is shown in (a pressure to MPa).
+        """
         i, j = self.sensors.index(x), self.sensors.index(y)
-        xs, ys = self.values[:, i].astype(float), self.values[:, j].astype(float)
+        xs = self.values[:, i].astype(float) * scales[0]
+        ys = self.values[:, j].astype(float) * scales[1]
         keep = np.isfinite(xs) & np.isfinite(ys)
         if periods is not None:
             keep &= np.isin(self.period, list(periods))

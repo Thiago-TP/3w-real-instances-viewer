@@ -6,6 +6,12 @@ silence between bursts of recording are collapsed to narrow dashed blanks, and t
 uniform everywhere else: a bar's length is a duration and two bars overlap on screen exactly when
 the instances overlap in time. Untick *Compress silences* for a true calendar axis.
 
+The line above each plot sums the well up: its instances (or, joined, its bars), its samples, its
+deepest pile-up, the hours recorded and the span. A sample two overlapping instances share is
+counted in each, and once when *Join overlapping instances* is ticked. Under a *Bar color* that
+names a sensor it adds that sensor's measurements on the well, out of its readings, once the
+profiles have been read (the *Measurements* coloring reads them; a header never starts the pass).
+
 ![Timelines page](../assets/overview.png)
 
 - **Hover** a bar: it gets a heavy outline, every instance of the well that overlaps it gets a
@@ -13,7 +19,9 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
   the instance, its fault, how far the fault got, its time span, size, stack level and partners,
   and the sensors, if any, that read outside their plausible range in it. The colors those
   instances carry light up in the key above the grid, and the rest dim, so the color under the
-  pointer can be named without leaving the plot.
+  pointer can be named without leaving the plot. Resting the pointer on the bar brings up a tooltip
+  with its start and end stamps and its duration (a joined bar spans from its first instance's
+  start to its last's end).
 - **Click** a bar: an instance window opens with the time series of that instance and of every
   instance it overlaps.
 - **Click a color in the key**: the grid shows only the wells that recorded that fault. Clicking it

@@ -9,6 +9,7 @@ constant value, their names, the reach of the instance) is computed here.
 
 import json
 from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 
@@ -364,8 +365,42 @@ def padded_range(low: float, high: float, pad: float = 0.06) -> tuple[float, flo
 
 
 def format_delta(delta: float, unit: str) -> str:
-    """``Δ = 6.38e+05 Pa``, unit omitted when unknown."""
+    """``Δ = 0.638 MPa``, unit omitted when unknown."""
     return f"Δ = {delta:.3g} {unit}".rstrip()
+
+
+# The label periods in the order an event develops, as ``label_kind`` names them.
+PERIOD_KINDS = ("normal", "transient", "steady", "unknown")
+
+
+def period_durations(
+    runs: Sequence[Segment], offset: int = DEFAULT_TRANSIENT_OFFSET
+) -> dict[str, float]:
+    """The seconds a recording spends in each label period, in ``PERIOD_KINDS`` order.
+
+    ``runs`` are label runs that tile the recording (``label_segments``,
+    ``merge_label_runs``), so the durations add up to its span; a period it
+    never enters has zero.
+    """
+    durations = dict.fromkeys(PERIOD_KINDS, 0.0)
+    for run in runs:
+        seconds = (pd.Timestamp(run.end) - pd.Timestamp(run.start)).total_seconds()
+        durations[label_kind(run.value, offset)] += max(seconds, 0.0)
+    return durations
+
+
+def format_duration(seconds: float) -> str:
+    """``5 h 56 min 15 s``: days, hours, minutes and seconds, the ones that are zero left out."""
+    total = round(max(float(seconds), 0.0))
+    days, rest = divmod(total, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [
+        f"{value} {name}"
+        for value, name in ((days, "d"), (hours, "h"), (minutes, "min"), (secs, "s"))
+        if value
+    ]
+    return " ".join(parts) or "0 s"
 
 
 def coverage_counts(starts, ends) -> list[tuple[pd.Timestamp, pd.Timestamp, int]]:

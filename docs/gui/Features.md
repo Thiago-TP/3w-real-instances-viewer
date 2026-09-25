@@ -17,7 +17,8 @@ three domains, the same window of hours around an onset, the same transforms and
   rather than the earliest few overall (a class whose instances all come later would otherwise
   open with nothing in its section), and the grid spends its cap per class for the same reason.
 - **Layout** means something particular here. *Small multiples* give every instance a plot of its
-  own in a grid under a heading per class; because the heading already names the class, the trace
+  own in a grid under a heading per class (with the samples it draws and how many were measured);
+  because the heading already names the class, the trace
   takes the neutral color and the class hues are left to the shading of the label periods behind it
   and to the stacks of a histogram, which a line of the same hue would vanish into. **Overlaid**
   puts every class on one set of axes, each instance in its class's color: the view the page

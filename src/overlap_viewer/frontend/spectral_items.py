@@ -599,9 +599,7 @@ def caption_for(spectrum: Spectrum, unit: str, compact: bool = False) -> str:
 
 
 def format_width(width: float, unit: str) -> str:
-    """The width of a bin with its unit, prefixed (``31.1 kPa``) when the unit takes a prefix."""
-    if unit == "Pa":
-        return pg.siFormat(width, precision=3, suffix=unit)
+    """The width of a bin with its unit (``0.0311 MPa``), in the unit given and never prefixed."""
     return f"{width:.3g} {unit}".rstrip()
 
 

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from overlap_viewer.backend import theme
-from overlap_viewer.backend.config import DEFAULT_GAP_HOURS
+from overlap_viewer.backend.config import DEFAULT_COLUMNS, DEFAULT_GAP_HOURS
 from overlap_viewer.backend.dataset import DatasetInfo, ScanCancelled, WellData, split_wells
 from overlap_viewer.backend.export import write_file_list
 from overlap_viewer.backend.model_outputs import ModelOutputs
@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
         info: DatasetInfo,
         catalogue,
         gap_hours: float = DEFAULT_GAP_HOURS,
-        columns: int = 2,
+        columns: int = DEFAULT_COLUMNS,
         frames: FrameCache | None = None,
         theme_mode: str = "system",
         progress: Callable[[str], None] | None = None,

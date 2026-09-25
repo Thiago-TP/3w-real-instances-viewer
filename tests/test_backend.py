@@ -17,6 +17,7 @@ from overlap_viewer.algorithms.faults import (
     window_mask,
     zscore,
 )
+from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
 from overlap_viewer.backend import dataset as ds
 from overlap_viewer.backend import help_text, theme
 from overlap_viewer.backend.availability import (
@@ -51,12 +52,14 @@ from overlap_viewer.backend.labels import (
     coverage_counts,
     fault_reach,
     feature_stats,
+    format_duration,
     label_kind,
     label_name,
     label_segments,
     labels_agree,
     merge_label_runs,
     padded_range,
+    period_durations,
     runs,
     segments_from_json,
     segments_to_json,
@@ -79,6 +82,8 @@ from overlap_viewer.backend.palette import (
 )
 from overlap_viewer.backend.timemap import TimeMap
 from overlap_viewer.frontend.legend import row_breaks
+from overlap_viewer.frontend.overview import bar_tooltip
+from overlap_viewer.frontend.series_page import SeriesPage, sample_counts
 
 
 def segments(*spans) -> list[Segment]:
@@ -308,6 +313,30 @@ def test_joined_well_merges_agreeing_instances_and_carries_every_color():
     assert well.joined() is joined and joined.joined() is joined
     assert ds.instance_title(rows.iloc[0]) == "WELL-00007_20170201010000 +1"
     assert ds.instance_title(well.rows.iloc[0]) == "WELL-00007_20170201010000"
+
+
+def test_a_bar_tooltip_gives_its_start_end_and_duration():
+    """A plain bar spans its instance; a joined one, from its first instance's start to its last's end."""
+    assert format_duration(0) == "0 s"
+    assert format_duration(59.6) == "1 min"
+    assert format_duration(5 * 3600 + 56 * 60 + 15) == "5 h 56 min 15 s"
+    assert format_duration(2 * 86400 + 3600) == "2 d 1 h"
+    n = 3600
+    catalogue = pd.DataFrame(
+        [
+            instance_row(7, 0, hours(0), [0] * (2 * n)),
+            instance_row(7, 8, hours(1), [0] * n + [108] * n + [8] * n),
+        ]
+    )
+    well = ds.WellData.from_catalogue(catalogue, 7)
+    plain = bar_tooltip(well, 0)
+    assert "<b>WELL-00007_20170201010000</b>" in plain and "joined" not in plain
+    assert "2017-02-01 01:00:00" in plain and "2017-02-01 02:59:59" in plain
+    assert "1 h 59 min 59 s (2.00 h)" in plain
+    joined = bar_tooltip(well.joined(), 0)
+    assert "(2 instances joined)" in joined
+    assert "2017-02-01 01:00:00" in joined and "2017-02-01 04:59:59" in joined
+    assert "3 h 59 min 59 s (4.00 h)" in joined
 
 
 def test_joining_a_chosen_set_says_what_that_set_alone_amounts_to():
@@ -756,6 +785,53 @@ def test_sensor_states_and_plausible_ranges():
     info = ds.DatasetInfo(Path("."))
     stats = {"P-PDG": (5, -1.2e42, 0.0), "T-TPT": (5, 20.0, 30.0), "QGL": (0, np.nan, np.nan)}
     assert implausible_sensors(stats, info) == ["P-PDG"]
+
+
+def test_pressures_are_shown_in_mpa_and_ruled_in_pa():
+    """What is shown converts; the unit the rules and ranges are keyed on does not."""
+    info = ds.DatasetInfo(Path("."))
+    assert info.unit("P-PDG") == "Pa"  # the file's unit, which the ranges are keyed on
+    assert info.shown_unit("P-PDG") == "MPa" and info.shown_scale("P-PDG") == 1e-6
+    assert info.shown_range("P-PDG") == (0.0, 100.0)
+    assert info.shown_range("P-PDG") != plausible_range(info.unit("P-PDG"))
+    # Every other quantity is shown as recorded.
+    for sensor in ("T-TPT", "ABER-CKP", "QGL"):
+        assert info.shown_unit(sensor) == info.unit(sensor) and info.shown_scale(sensor) == 1.0
+        assert info.shown_range(sensor) == plausible_range(info.unit(sensor))
+    assert info.shown_unit("ESTADO-W1") == ""  # a valve state has no unit to convert
+
+
+def test_period_durations_add_up_to_the_span():
+    """Normal, transient, steady and unlabeled time, from runs that tile a recording."""
+    n = 3600
+    frame = pd.DataFrame(
+        {"class": [np.nan] * 600 + [0.0] * n + [108.0] * (n // 2) + [8.0] * (2 * n)},
+        index=pd.date_range(T0, periods=600 + n + n // 2 + 2 * n, freq="1s"),
+    )
+    durations = period_durations(label_segments(frame, "class"), offset=100)
+    assert list(durations) == ["normal", "transient", "steady", "unknown"]
+    assert durations == {"normal": n, "transient": n / 2, "steady": 2 * n, "unknown": 600}
+    assert sum(durations.values()) == len(frame)  # one second per sample: the whole span
+    # A recording that never leaves normal operation has nothing in the other periods.
+    calm = period_durations(label_segments(frame.iloc[600 : 600 + n], "class"), offset=100)
+    assert calm == {"normal": n, "transient": 0, "steady": 0, "unknown": 0}
+
+
+def test_section_headings_count_samples_and_measurements():
+    """A reading is a sample; a measurement is a sample the historian archived; a valve has none."""
+    ramp = np.array([1.0, 2.0, 3.0, 4.0, 4.0, np.nan, 5.0])
+    kinds = sample_kinds(ramp)
+    samples, measured = sample_counts(ramp, kinds)
+    assert samples == 6 and measured == int((kinds == GENUINE).sum()) and 0 < measured < samples
+    # A normalized series has its implausible readings blanked; the kinds still count them.
+    blanked = ramp.copy()
+    blanked[0] = np.nan
+    assert sample_counts(blanked, kinds) == (samples, measured)
+    assert sample_counts(np.array([0.0, 1.0, np.nan]), None) == (2, None)
+    text = SeriesPage._counts_text([(100, 10), (50, 5), (30, None)])
+    assert text == " | 180 samples, 15 measurements (8.3%)"
+    assert SeriesPage._counts_text([(30, None)]) == " | 30 samples"
+    assert SeriesPage._counts_text([]) == ""
 
 
 def test_availability_folds_bars_into_groups(raw_dir: Path, tmp_path: Path, monkeypatch):

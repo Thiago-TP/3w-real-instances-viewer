@@ -468,7 +468,7 @@ class FaultsPage(SeriesPage):
         best = sorted(recorded, key=lambda name: (-recorded[name], name))
         default = set(signature) or {next((name for name in best if recorded[name] > 0), None)}
         for name in sorted(recorded):
-            unit = self.info.unit(name)
+            unit = self.info.shown_unit(name)
             check = QCheckBox(f"{name} [{unit}]" if unit else name)
             description = self.info.sensor_descriptions.get(name, "")
             count = f"recorded in {recorded[name]} of {n} instances of the fault"

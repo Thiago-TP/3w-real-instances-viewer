@@ -31,6 +31,7 @@ Rabelo's pipeline does) so that shapes can be compared where the readings
 themselves cannot.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import ceil
 
@@ -64,7 +65,7 @@ from overlap_viewer.algorithms.faults import (
     window_mask,
     zscore,
 )
-from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
+from overlap_viewer.algorithms.interpolation import GENUINE, MISSING, sample_kinds
 from overlap_viewer.algorithms.spectral import (
     Histogram,
     Spectrum,
@@ -77,7 +78,7 @@ from overlap_viewer.algorithms.spectral import (
     welch,
 )
 from overlap_viewer.backend import theme
-from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES, plausible_range
+from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES
 from overlap_viewer.backend.dataset import (
     DatasetInfo,
     WellData,
@@ -219,6 +220,18 @@ CHIP_PX = 12  # the square of a series color before an instance
 HOVER_PX = 10  # a line closer than this to the pointer, in pixels, is the one named
 FADE_ALPHA = 70  # the other lines while one is named
 DEFAULT_COLUMNS = 1  # small plots per row of the grid, until the user asks for more
+
+
+def sample_counts(y: np.ndarray, kinds: np.ndarray | None) -> tuple[int, int | None]:
+    """How many samples of one series carry a reading, and how many of those were measured.
+
+    Counted on the kinds when there are some, since a normalized series has
+    already had its implausible readings blanked; ``None`` measurements for an
+    enumerated variable, which is not tested.
+    """
+    if kinds is None:
+        return int((~np.isnan(y)).sum()), None
+    return int((kinds != MISSING).sum()), int((kinds == GENUINE).sum())
 
 
 class InstanceList(QListWidget):
@@ -409,6 +422,8 @@ class SeriesPage(QWidget):
         # (plot, series) -> the fullest bin of its histogram and its share, for
         # the marker on the plot and the reading in the status bar.
         self._peaks_by_plot: dict[tuple[int, int], tuple[float, float]] = {}
+        # Per section, the ``sample_counts`` of every instance the grid draws off the time axis.
+        self._section_counts: dict[object, list[tuple[int, int | None]]] = {}
         # While the instances are pooled: the series that stands for a group,
         # and the ones it stands for, so the status bar can say so.
         self._pool: dict[int, list[int]] = {}
@@ -904,8 +919,8 @@ class SeriesPage(QWidget):
         return self._controls.params().clamp
 
     def bounds_of(self, feature: str) -> tuple[float, float]:
-        """The range a reading of ``feature`` has to be in to be believed."""
-        return plausible_range(self.info.unit(feature))
+        """The range a reading of ``feature`` has to be in to be believed, in its shown unit."""
+        return self.info.shown_range(feature)
 
     def hist_bounds(self, feature: str, normalize: bool) -> tuple[float, float] | None:
         """What a histogram of ``feature`` leaves out: nothing, unless the clamp is on.
@@ -1028,9 +1043,10 @@ class SeriesPage(QWidget):
 
         The kinds (``interpolation.sample_kinds``: measured, interpolated,
         held, missing) are found on the raw readings, before any scaling, and
-        are ``None`` for an enumerated variable, which is not tested. ``None``
-        altogether when this instance says nothing about the feature, so that
-        a plot is never built for a blank.
+        are ``None`` for an enumerated variable, which is not tested. The
+        readings come in their shown unit (a pressure in MPa), which is also
+        the unit of ``bounds``. ``None`` altogether when this instance says
+        nothing about the feature, so that a plot is never built for a blank.
         """
         frame = series.frame
         if feature not in frame.columns:
@@ -1039,6 +1055,9 @@ class SeriesPage(QWidget):
         if not (~np.isnan(y)).any():
             return None
         kinds = None if self.info.is_enumerated(feature) else sample_kinds(y)
+        scale = self.info.shown_scale(feature)
+        if scale != 1.0:
+            y = y * scale
         if normalize:
             # Scaled over the plausible readings only, as the pipelines mask the
             # garbage before they normalize: one absurd level would otherwise
@@ -1106,7 +1125,7 @@ class SeriesPage(QWidget):
         if self.domain == "time":
             return ALIGNMENT_AXES[self.alignment]
         if self.domain == "distribution":
-            unit = "z-score" if normalize else self.info.unit(feature)
+            unit = "z-score" if normalize else self.info.shown_unit(feature)
             return f"{feature} [{unit}]" if unit else feature
         return "period"
 
@@ -1130,7 +1149,7 @@ class SeriesPage(QWidget):
             if label:
                 plot.setLabel("left", "% of samples")
         else:
-            unit = "" if normalize else self.info.unit(feature)
+            unit = "" if normalize else self.info.shown_unit(feature)
             power_axis(plot, "left", power_label(unit) if label else "")
         if not values:
             axis.setStyle(showValues=False)
@@ -1154,14 +1173,13 @@ class SeriesPage(QWidget):
         """Give a plot its left axis: the same width everywhere, so a grid of them lines up."""
         axis = plot.getAxis("left")
         axis.setWidth(width)
-        unit = self.info.unit(feature)
-        prefixed = unit == "Pa" and not normalize
-        axis.enableAutoSIPrefix(prefixed)
+        unit = self.info.shown_unit(feature)
+        # One unit per quantity on every axis: pyqtgraph's own prefix would
+        # label one pressure kPa and the next MPa.
+        axis.enableAutoSIPrefix(False)
         if label:
             if normalize:
                 plot.setLabel("left", f"{feature} (z-score)")
-            elif prefixed:
-                plot.setLabel("left", feature, units=unit)
             else:
                 plot.setLabel("left", f"{feature} [{unit}]" if unit else feature)
         if not values:
@@ -1385,7 +1403,10 @@ class SeriesPage(QWidget):
             shared = padded_range(min(lows), max(highs)) if lows else None
 
             heading = HeaderLabel(justify="left")
-            heading.setText(self._section_html(section, normalize, len(prepared), len(members)))
+            counts = [sample_counts(y, kinds) for _i, _x, y, kinds in prepared]
+            heading.setText(
+                self._section_html(section, normalize, len(prepared), len(members), counts)
+            )
             heading.setFixedHeight(SECTION_PX)
             self._stack.addItem(heading, row=row, col=0, colspan=columns)
             row += 1
@@ -1451,11 +1472,13 @@ class SeriesPage(QWidget):
         before, after = self._before.value(), self._after.value()
         genuine = self._controls.params().genuine
         prepared: dict[object, list] = {}
+        self._section_counts = {}
         for section in sections:
             feature = section.feature
             bounds = self.bounds_of(feature)
             hist_bounds = self.hist_bounds(feature, normalize)
             rows = []
+            counts = self._section_counts.setdefault(section.key, [])
             for i in self._drawn_members(section):
                 got = self._window_values(
                     self._series[i], feature, normalize, before, after, bounds
@@ -1463,6 +1486,7 @@ class SeriesPage(QWidget):
                 if got is None:
                     continue
                 x, values, codes, kinds = got
+                counts.append(sample_counts(values, kinds))
                 # The measurements alone, when asked: the historian's lines
                 # between them are left out of the count and of the transform.
                 measured = genuine and kinds is not None
@@ -1634,7 +1658,13 @@ class SeriesPage(QWidget):
             hist_bounds = self.hist_bounds(feature, normalize)
             heading = HeaderLabel(justify="left")
             heading.setText(
-                self._section_html(section, normalize, len(rows), len(self._drawn_members(section)))
+                self._section_html(
+                    section,
+                    normalize,
+                    len(rows),
+                    len(self._drawn_members(section)),
+                    self._section_counts.get(section.key, []),
+                )
             )
             heading.setFixedHeight(SECTION_PX)
             self._stack.addItem(heading, row=row, col=0, colspan=columns)
@@ -1754,10 +1784,22 @@ class SeriesPage(QWidget):
             height += n_rows * SMALL_PLOT_PX + SMALL_AXIS_PX + 8
         return height + 8
 
-    def _section_html(self, section: Section, normalize: bool, drawn: int, total: int) -> str:
-        """The heading above one section's grid: what it groups, and what its axes mean."""
+    def _section_html(
+        self,
+        section: Section,
+        normalize: bool,
+        drawn: int,
+        total: int,
+        counts: Sequence[tuple[int, int | None]] = (),
+    ) -> str:
+        """The heading above one section's grid: what it groups, what it holds, and what its axes mean.
+
+        ``counts`` are ``sample_counts`` of every instance drawn, over the
+        window of hours chosen: the heading gives their sum, and how many of
+        those samples the historian actually archived.
+        """
         colors = theme.current()
-        unit = "z-score" if normalize else self.info.unit(section.feature)
+        unit = "z-score" if normalize else self.info.shown_unit(section.feature)
         head = f"{section.title}" + (f" [{unit}]" if unit else "")
         what = {
             "time": "value axis",
@@ -1770,8 +1812,22 @@ class SeriesPage(QWidget):
         return (
             f'<span style="font-size:10pt; color:{colors.text};"><b>{head}</b></span>'
             f'<span style="font-size:8pt; color:{colors.muted};">&nbsp;&nbsp;'
-            f"{drawn} of {total} instances | {axis}{self.section_note(section, drawn, total)}</span>"
+            f"{drawn} of {total} instances{self._counts_text(counts)} | {axis}"
+            f"{self.section_note(section, drawn, total)}</span>"
         )
+
+    @staticmethod
+    def _counts_text(counts: Sequence[tuple[int, int | None]]) -> str:
+        """`` | 21,376 samples, 1,712 measurements (8.0 %)``, or nothing with no instance drawn."""
+        if not counts:
+            return ""
+        samples = sum(n for n, _m in counts)
+        text = f" | {samples:,} samples"
+        measured = [m for _n, m in counts if m is not None]
+        if measured and samples:
+            total = sum(measured)
+            text += f", {total:,} measurements ({total / samples:.1%})"
+        return text
 
     def _apply_x_range(self) -> None:
         if not self._plots or self.domain != "time":
@@ -1951,8 +2007,8 @@ class SeriesPage(QWidget):
                 readings = []
                 for feature in self.read_out_features():
                     if feature in frame.columns:
-                        value = column_as_float(frame, feature)[i]
-                        unit = self.info.unit(feature)
+                        value = column_as_float(frame, feature)[i] * self.info.shown_scale(feature)
+                        unit = self.info.shown_unit(feature)
                         readings.append(
                             f"{feature} = {'-' if np.isnan(value) else f'{value:.4g} {unit}'.rstrip()}"
                         )

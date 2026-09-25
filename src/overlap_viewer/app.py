@@ -21,7 +21,12 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from overlap_viewer import __version__
 from overlap_viewer.backend import theme
-from overlap_viewer.backend.config import DEFAULT_GAP_HOURS, RAW_DIR_CANDIDATES, RAW_DIR_ENV
+from overlap_viewer.backend.config import (
+    DEFAULT_COLUMNS,
+    DEFAULT_GAP_HOURS,
+    RAW_DIR_CANDIDATES,
+    RAW_DIR_ENV,
+)
 from overlap_viewer.backend.dataset import DatasetInfo, ScanCancelled
 from overlap_viewer.frontend import styling
 from overlap_viewer.frontend.loading import LaunchProgress, catalogue_with_progress
@@ -81,7 +86,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         help=f"silence that splits a well's recording into two bursts (default: {DEFAULT_GAP_HOURS:g})",
     )
     parser.add_argument(
-        "--columns", type=int, default=2, choices=range(1, 5), help="plots per row (default: 2)"
+        "--columns",
+        type=int,
+        default=DEFAULT_COLUMNS,
+        choices=range(1, 5),
+        help=f"plots per row of the timelines (default: {DEFAULT_COLUMNS})",
     )
     parser.add_argument(
         "--theme",

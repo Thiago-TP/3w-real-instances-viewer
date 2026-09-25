@@ -68,12 +68,14 @@ from overlap_viewer.backend.labels import (
     coverage_counts,
     feature_stats,
     format_delta,
+    format_duration,
     label_fault,
     label_kind,
     label_name,
     label_segments,
     merge_label_runs,
     padded_range,
+    period_durations,
     segments_from_json,
     sensor_columns,
     sensor_stats_from_json,
@@ -129,6 +131,13 @@ SIDE_PX = (
 BAND_PX = 18
 HEADER_PX = 24
 CONTENTS_PX = 15  # the header's second line: what the block holds
+# How the header's second line names the label periods.
+PERIOD_NAMES = {
+    "normal": "normal operation",
+    "transient": "transient",
+    "steady": "steady state",
+    "unknown": "unlabeled",
+}
 PLOT_MIN_PX = 150
 AXIS_PX = 28
 ROW_SPACING = 2  # between two rows of one instance block
@@ -1086,8 +1095,27 @@ class InstanceWindow(QMainWindow):
         samples = int(self.rows.iloc[position]["n_samples"])
         return (
             f'<span style="font-size:9pt; color:{theme.current().muted};">{samples:,} samples'
-            f"{self._measurements_text(position)}</span>"
+            f"{self._periods_text(position)}{self._measurements_text(position)}</span>"
         )
+
+    def _periods_text(self, position: int) -> str:
+        """`` | normal operation 1 h 26 min (24%), steady state 4 h 30 min (76%)``: the time in each label period.
+
+        Summed over the block's label runs, which tile it, so the shares add
+        up to the block's span; a period the block never enters is left out.
+        """
+        durations = period_durations(
+            [run for run, _source in self._class_runs(position)], self.info.transient_offset
+        )
+        total = sum(durations.values())
+        if total <= 0:
+            return ""
+        parts = [
+            f"{PERIOD_NAMES[kind]} {format_duration(seconds)} ({seconds / total:.0%})"
+            for kind, seconds in durations.items()
+            if seconds > 0
+        ]
+        return " | " + ", ".join(parts)
 
     def _measurements_text(self, position: int) -> str:
         """`` | measurements: P-PDG 8,103, P-TPT 8,824``: what the historian archived of each ticked feature.

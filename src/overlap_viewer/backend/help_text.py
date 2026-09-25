@@ -1643,8 +1643,9 @@ USAGE = {
             "One block per bar of the overview, stacked in chronological order on one shared time "
             "axis, so the stretches they share line up vertically. The band at the very top marks "
             "those stretches. A block's header names it on its first line and says what it holds "
-            "on the second: its samples and how many of them the historian archived for every "
-            "ticked feature."
+            "on the second: its samples, the time it spends in normal operation, in the transient, "
+            "in the steady state and unlabeled, and how many of its samples the historian archived "
+            "for every ticked feature."
         ),
         (
             "A bar the overview has joined opens as one block: its instances are read as the "

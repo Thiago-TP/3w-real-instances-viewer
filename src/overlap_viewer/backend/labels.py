@@ -368,6 +368,20 @@ def format_delta(delta: float, unit: str) -> str:
     return f"Δ = {delta:.3g} {unit}".rstrip()
 
 
+def format_duration(seconds: float) -> str:
+    """``5 h 56 min 15 s``: days, hours, minutes and seconds, the ones that are zero left out."""
+    total = round(max(float(seconds), 0.0))
+    days, rest = divmod(total, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [
+        f"{value} {name}"
+        for value, name in ((days, "d"), (hours, "h"), (minutes, "min"), (secs, "s"))
+        if value
+    ]
+    return " ".join(parts) or "0 s"
+
+
 def coverage_counts(starts, ends) -> list[tuple[pd.Timestamp, pd.Timestamp, int]]:
     """How many instances cover each stretch of time.
 

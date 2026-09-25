@@ -51,6 +51,7 @@ from overlap_viewer.backend.labels import (
     coverage_counts,
     fault_reach,
     feature_stats,
+    format_duration,
     label_kind,
     label_name,
     label_segments,
@@ -79,6 +80,7 @@ from overlap_viewer.backend.palette import (
 )
 from overlap_viewer.backend.timemap import TimeMap
 from overlap_viewer.frontend.legend import row_breaks
+from overlap_viewer.frontend.overview import bar_tooltip
 
 
 def segments(*spans) -> list[Segment]:
@@ -308,6 +310,30 @@ def test_joined_well_merges_agreeing_instances_and_carries_every_color():
     assert well.joined() is joined and joined.joined() is joined
     assert ds.instance_title(rows.iloc[0]) == "WELL-00007_20170201010000 +1"
     assert ds.instance_title(well.rows.iloc[0]) == "WELL-00007_20170201010000"
+
+
+def test_a_bar_tooltip_gives_its_start_end_and_duration():
+    """A plain bar spans its instance; a joined one, from its first instance's start to its last's end."""
+    assert format_duration(0) == "0 s"
+    assert format_duration(59.6) == "1 min"
+    assert format_duration(5 * 3600 + 56 * 60 + 15) == "5 h 56 min 15 s"
+    assert format_duration(2 * 86400 + 3600) == "2 d 1 h"
+    n = 3600
+    catalogue = pd.DataFrame(
+        [
+            instance_row(7, 0, hours(0), [0] * (2 * n)),
+            instance_row(7, 8, hours(1), [0] * n + [108] * n + [8] * n),
+        ]
+    )
+    well = ds.WellData.from_catalogue(catalogue, 7)
+    plain = bar_tooltip(well, 0)
+    assert "<b>WELL-00007_20170201010000</b>" in plain and "joined" not in plain
+    assert "2017-02-01 01:00:00" in plain and "2017-02-01 02:59:59" in plain
+    assert "1 h 59 min 59 s (2.00 h)" in plain
+    joined = bar_tooltip(well.joined(), 0)
+    assert "(2 instances joined)" in joined
+    assert "2017-02-01 01:00:00" in joined and "2017-02-01 04:59:59" in joined
+    assert "3 h 59 min 59 s (4.00 h)" in joined
 
 
 def test_joining_a_chosen_set_says_what_that_set_alone_amounts_to():

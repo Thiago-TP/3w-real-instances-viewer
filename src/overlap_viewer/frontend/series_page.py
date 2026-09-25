@@ -31,6 +31,7 @@ Rabelo's pipeline does) so that shapes can be compared where the readings
 themselves cannot.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import ceil
 
@@ -64,7 +65,7 @@ from overlap_viewer.algorithms.faults import (
     window_mask,
     zscore,
 )
-from overlap_viewer.algorithms.interpolation import GENUINE, sample_kinds
+from overlap_viewer.algorithms.interpolation import GENUINE, MISSING, sample_kinds
 from overlap_viewer.algorithms.spectral import (
     Histogram,
     Spectrum,
@@ -219,6 +220,18 @@ CHIP_PX = 12  # the square of a series color before an instance
 HOVER_PX = 10  # a line closer than this to the pointer, in pixels, is the one named
 FADE_ALPHA = 70  # the other lines while one is named
 DEFAULT_COLUMNS = 1  # small plots per row of the grid, until the user asks for more
+
+
+def sample_counts(y: np.ndarray, kinds: np.ndarray | None) -> tuple[int, int | None]:
+    """How many samples of one series carry a reading, and how many of those were measured.
+
+    Counted on the kinds when there are some, since a normalized series has
+    already had its implausible readings blanked; ``None`` measurements for an
+    enumerated variable, which is not tested.
+    """
+    if kinds is None:
+        return int((~np.isnan(y)).sum()), None
+    return int((kinds != MISSING).sum()), int((kinds == GENUINE).sum())
 
 
 class InstanceList(QListWidget):
@@ -409,6 +422,8 @@ class SeriesPage(QWidget):
         # (plot, series) -> the fullest bin of its histogram and its share, for
         # the marker on the plot and the reading in the status bar.
         self._peaks_by_plot: dict[tuple[int, int], tuple[float, float]] = {}
+        # Per section, the ``sample_counts`` of every instance the grid draws off the time axis.
+        self._section_counts: dict[object, list[tuple[int, int | None]]] = {}
         # While the instances are pooled: the series that stands for a group,
         # and the ones it stands for, so the status bar can say so.
         self._pool: dict[int, list[int]] = {}
@@ -1388,7 +1403,10 @@ class SeriesPage(QWidget):
             shared = padded_range(min(lows), max(highs)) if lows else None
 
             heading = HeaderLabel(justify="left")
-            heading.setText(self._section_html(section, normalize, len(prepared), len(members)))
+            counts = [sample_counts(y, kinds) for _i, _x, y, kinds in prepared]
+            heading.setText(
+                self._section_html(section, normalize, len(prepared), len(members), counts)
+            )
             heading.setFixedHeight(SECTION_PX)
             self._stack.addItem(heading, row=row, col=0, colspan=columns)
             row += 1
@@ -1454,11 +1472,13 @@ class SeriesPage(QWidget):
         before, after = self._before.value(), self._after.value()
         genuine = self._controls.params().genuine
         prepared: dict[object, list] = {}
+        self._section_counts = {}
         for section in sections:
             feature = section.feature
             bounds = self.bounds_of(feature)
             hist_bounds = self.hist_bounds(feature, normalize)
             rows = []
+            counts = self._section_counts.setdefault(section.key, [])
             for i in self._drawn_members(section):
                 got = self._window_values(
                     self._series[i], feature, normalize, before, after, bounds
@@ -1466,6 +1486,7 @@ class SeriesPage(QWidget):
                 if got is None:
                     continue
                 x, values, codes, kinds = got
+                counts.append(sample_counts(values, kinds))
                 # The measurements alone, when asked: the historian's lines
                 # between them are left out of the count and of the transform.
                 measured = genuine and kinds is not None
@@ -1637,7 +1658,13 @@ class SeriesPage(QWidget):
             hist_bounds = self.hist_bounds(feature, normalize)
             heading = HeaderLabel(justify="left")
             heading.setText(
-                self._section_html(section, normalize, len(rows), len(self._drawn_members(section)))
+                self._section_html(
+                    section,
+                    normalize,
+                    len(rows),
+                    len(self._drawn_members(section)),
+                    self._section_counts.get(section.key, []),
+                )
             )
             heading.setFixedHeight(SECTION_PX)
             self._stack.addItem(heading, row=row, col=0, colspan=columns)
@@ -1757,8 +1784,20 @@ class SeriesPage(QWidget):
             height += n_rows * SMALL_PLOT_PX + SMALL_AXIS_PX + 8
         return height + 8
 
-    def _section_html(self, section: Section, normalize: bool, drawn: int, total: int) -> str:
-        """The heading above one section's grid: what it groups, and what its axes mean."""
+    def _section_html(
+        self,
+        section: Section,
+        normalize: bool,
+        drawn: int,
+        total: int,
+        counts: Sequence[tuple[int, int | None]] = (),
+    ) -> str:
+        """The heading above one section's grid: what it groups, what it holds, and what its axes mean.
+
+        ``counts`` are ``sample_counts`` of every instance drawn, over the
+        window of hours chosen: the heading gives their sum, and how many of
+        those samples the historian actually archived.
+        """
         colors = theme.current()
         unit = "z-score" if normalize else self.info.shown_unit(section.feature)
         head = f"{section.title}" + (f" [{unit}]" if unit else "")
@@ -1773,8 +1812,22 @@ class SeriesPage(QWidget):
         return (
             f'<span style="font-size:10pt; color:{colors.text};"><b>{head}</b></span>'
             f'<span style="font-size:8pt; color:{colors.muted};">&nbsp;&nbsp;'
-            f"{drawn} of {total} instances | {axis}{self.section_note(section, drawn, total)}</span>"
+            f"{drawn} of {total} instances{self._counts_text(counts)} | {axis}"
+            f"{self.section_note(section, drawn, total)}</span>"
         )
+
+    @staticmethod
+    def _counts_text(counts: Sequence[tuple[int, int | None]]) -> str:
+        """`` | 21,376 samples, 1,712 measurements (8.0 %)``, or nothing with no instance drawn."""
+        if not counts:
+            return ""
+        samples = sum(n for n, _m in counts)
+        text = f" | {samples:,} samples"
+        measured = [m for _n, m in counts if m is not None]
+        if measured and samples:
+            total = sum(measured)
+            text += f", {total:,} measurements ({total / samples:.1%})"
+        return text
 
     def _apply_x_range(self) -> None:
         if not self._plots or self.domain != "time":

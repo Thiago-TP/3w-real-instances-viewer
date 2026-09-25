@@ -478,8 +478,12 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         if getattr(self, "_auto_view", False) and getattr(self, "_timemap", None) is not None:
             self.reset_view()
 
-    def title_html(self) -> str:
-        """The well's name and a one-line summary of its recording, for the label above the plot."""
+    def title_html(self, extra: str = "") -> str:
+        """The well's name and a one-line summary of its recording, for the label above the plot.
+
+        ``extra`` is appended to the summary: what the page's coloring adds,
+        such as the measurements of the sensor the bars are tinted by.
+        """
         data, bursts = self.data, self._bursts
         rows = data.rows
         first, last = pd.Timestamp(rows["start"].min()), pd.Timestamp(rows["end"].max())
@@ -499,10 +503,12 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
                 f"{data.n_instances} instance{'s' if data.n_instances > 1 else ''} | "
                 f"{data.n_overlapping} overlap another"
             )
+        samples = int(rows["n_samples"].sum())
         summary = (
-            f"{counts} | deepest pile-up {data.n_lanes} | "
+            f"{counts} | {samples:,} samples | deepest pile-up {data.n_lanes} | "
             f"{bursts.recorded_hours:,.1f} h in {n_blocks} burst{'s' if n_blocks > 1 else ''} over "
             f"{days:,.0f} day{'s' if round(days) != 1 else ''} ({share:.1%}) | {first:%Y-%m-%d} → {last:%Y-%m-%d}"
+            + (f" | {extra}" if extra else "")
         )
         return (
             f'<span style="font-size:10pt; font-weight:bold;">{data.label}</span>'
@@ -595,13 +601,13 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
 class WellCell(QWidget):
     """One cell of the grid: the well's title, wrapping as needed, above its timeline."""
 
-    def __init__(self, plot: WellTimelinePlot, parent=None):
+    def __init__(self, plot: WellTimelinePlot, extra: str = "", parent=None):
         super().__init__(parent)
         self.plot = plot
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(1)
-        self.title = QLabel(plot.title_html())
+        self.title = QLabel(plot.title_html(extra))
         self.title.setTextFormat(Qt.TextFormat.RichText)
         self.title.setWordWrap(True)
         self.title.setContentsMargins(6, 0, 6, 0)
@@ -873,7 +879,7 @@ class TimelinesPage(QWidget):
             plot.hovered.connect(partial(self._on_hover, plot))
             plot.clicked.connect(partial(self._on_click, plot))
             self._plots[well.well] = plot
-            self._cells[well.well] = WellCell(plot)
+            self._cells[well.well] = WellCell(plot, self._title_extra(well))
 
         present = set().union(*(well.present_colors() for well in shown))
         self._legend.set_entries(
@@ -950,6 +956,24 @@ class TimelinesPage(QWidget):
             if self._passes is not None
             else None
         )
+
+    def _title_extra(self, data: WellData) -> str:
+        """What a well's header adds under a sensor coloring: that sensor's measurements on the well.
+
+        Read from the profiles, and only when some page has already paid for
+        them, so a header never starts a pass. Counted over the bars on show,
+        as the samples of the header are: a sample two instances share is
+        counted in each, and once in the joined view.
+        """
+        sensor, profiles = self.sensor_coloring, self._loaded_profiles()
+        if sensor is None or profiles is None or self.info.is_enumerated(sensor):
+            return ""
+        keys = [self._bar_key(data, index) for index in range(data.n_instances)]
+        genuine = float(np.nansum(profiles.matrix(keys, data.joined_view, "n_genuine", [sensor])))
+        valid = float(np.nansum(profiles.matrix(keys, data.joined_view, "n_valid", [sensor])))
+        if valid <= 0:
+            return f"{sensor}: no readings"
+        return f"{sensor}: {genuine:,.0f} measurements of {valid:,.0f} readings ({genuine / valid:.1%})"
 
     def _rank_descriptors(self) -> None:
         """Look up the chosen descriptor of the chosen sensor for every bar on show, and rank them."""
@@ -1217,6 +1241,8 @@ class TimelinesPage(QWidget):
             self._descriptor_values, self._descriptor_ranks = {}, {}
         for plot in self._plots.values():
             plot.set_coloring(*self._coloring_of(plot.data))
+        for cell in self._cells.values():
+            cell.title.setText(cell.plot.title_html(self._title_extra(cell.plot.data)))
         self._show_key()
         self.status.emit(HINT)
 

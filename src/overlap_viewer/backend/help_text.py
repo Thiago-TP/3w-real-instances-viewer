@@ -1378,7 +1378,10 @@ USAGE = {
         (
             "Every plot is one well; every bar is one real instance, from its first to its last "
             "sample. Bars that overlap in time are stacked, so the stack level is how many "
-            "instances cover that moment."
+            "instances cover that moment. The line above a plot counts the well's instances and "
+            "samples (a shared sample once per instance, or once when joined) and, under a bar "
+            "color that names a sensor, that sensor's measurements on the well once the profiles "
+            "have been read."
         ),
         (
             "Hover a bar to outline it, outline the instances it overlaps, hatch the stretch they "
@@ -1542,8 +1545,9 @@ USAGE = {
         ),
         (
             "'Layout' chooses among three. <b>Small multiples</b>, the default, give every "
-            "instance a plot of its own in a grid under a heading per feature, each with its own "
-            "value axis and its label periods shaded behind the trace (hatched where nobody "
+            "instance a plot of its own in a grid under a heading per feature (which counts the "
+            "samples drawn in the window of hours and how many of them were measured), each with "
+            "its own value axis and its label periods shaded behind the trace (hatched where nobody "
             "labeled it, as everywhere else in the viewer), so that two dozen shapes can be read "
             "one against the next; 'Columns' sets the width of the grid and 'Axis' "
             "puts every plot on its own value axis or all of them on one, which says how far "
@@ -1614,7 +1618,8 @@ USAGE = {
         ),
         (
             "<b>Layout</b> means something particular here. Small multiples give every instance a "
-            "plot of its own in a grid under a heading per class; because the heading already "
+            "plot of its own in a grid under a heading per class (with the samples drawn and how "
+            "many were measured); because the heading already "
             "names the class, the trace takes the neutral color and the class hues are left to "
             "the shading of the label periods behind it and to the stacks of a histogram, which "
             "a line of the same hue would vanish into. <b>Overlaid</b> puts every class on one "
@@ -1637,7 +1642,9 @@ USAGE = {
         (
             "One block per bar of the overview, stacked in chronological order on one shared time "
             "axis, so the stretches they share line up vertically. The band at the very top marks "
-            "those stretches."
+            "those stretches. A block's header names it on its first line and says what it holds "
+            "on the second: its samples and how many of them the historian archived for every "
+            "ticked feature."
         ),
         (
             "A bar the overview has joined opens as one block: its instances are read as the "

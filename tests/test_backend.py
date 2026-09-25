@@ -59,6 +59,7 @@ from overlap_viewer.backend.labels import (
     labels_agree,
     merge_label_runs,
     padded_range,
+    period_durations,
     runs,
     segments_from_json,
     segments_to_json,
@@ -798,6 +799,22 @@ def test_pressures_are_shown_in_mpa_and_ruled_in_pa():
         assert info.shown_unit(sensor) == info.unit(sensor) and info.shown_scale(sensor) == 1.0
         assert info.shown_range(sensor) == plausible_range(info.unit(sensor))
     assert info.shown_unit("ESTADO-W1") == ""  # a valve state has no unit to convert
+
+
+def test_period_durations_add_up_to_the_span():
+    """Normal, transient, steady and unlabeled time, from runs that tile a recording."""
+    n = 3600
+    frame = pd.DataFrame(
+        {"class": [np.nan] * 600 + [0.0] * n + [108.0] * (n // 2) + [8.0] * (2 * n)},
+        index=pd.date_range(T0, periods=600 + n + n // 2 + 2 * n, freq="1s"),
+    )
+    durations = period_durations(label_segments(frame, "class"), offset=100)
+    assert list(durations) == ["normal", "transient", "steady", "unknown"]
+    assert durations == {"normal": n, "transient": n / 2, "steady": 2 * n, "unknown": 600}
+    assert sum(durations.values()) == len(frame)  # one second per sample: the whole span
+    # A recording that never leaves normal operation has nothing in the other periods.
+    calm = period_durations(label_segments(frame.iloc[600 : 600 + n], "class"), offset=100)
+    assert calm == {"normal": n, "transient": 0, "steady": 0, "unknown": 0}
 
 
 def test_section_headings_count_samples_and_measurements():

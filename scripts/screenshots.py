@@ -197,12 +197,12 @@ def main(argv=None) -> int:
         shooter.save(window, "instances")
 
     # -- Dispersions -----------------------------------------------------------
-    # A handful of readings at 8e7 Pa push the whole cloud into the bottom
+    # A handful of readings at 80 MPa push the whole cloud into the bottom
     # fifth of an auto-ranged view, so the frame is set on the cloud itself.
     if page(window.dispersion, "dispersion", wait=1.0):
         settle(240.0)  # reads every instance of the scope the first time
         box = window.dispersion._plot_widget.getPlotItem().getViewBox()
-        box.setRange(xRange=(-30, 125), yRange=(0, 2.9e7), padding=0.0)
+        box.setRange(xRange=(-30, 125), yRange=(0, 29), padding=0.0)
         settle(1.0)
         shooter.save(window, "dispersion")
 

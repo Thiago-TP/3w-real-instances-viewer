@@ -43,11 +43,12 @@ sentinel value or an instrument off by orders of magnitude in every case surveye
 pressure or choke opening is physically impossible and so is an opening above 100 %, and the
 temperature band is wide enough to hold a genuine blowdown (as cold as −33.8 °C) while still
 catching the sentinels (−999, 30,000 °C). Flow rates are held to the magnitude rule only, having no
-sentinel-free band of their own the way pressure and temperature do.
+sentinel-free band of their own the way pressure and temperature do. Pressures are recorded in
+pascals and shown in MPa everywhere in the GUI, so the table gives them in MPa too.
 
 | Physical quantity | Unit  | Plausible Min. | Plausible Max. |
 | ----------------- | ----- | -------------- | -------------- |
-| Pressure          | Pa    | 0              | 1×10⁸        |
+| Pressure          | MPa   | 0              | 100            |
 | Temperature       | °C   | −50           | 250            |
 | Valve opening     | %     | 0              | 100            |
 | Flow rate         | m³/s | −1×10⁸      | 1×10⁸        |

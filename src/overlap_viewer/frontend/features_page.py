@@ -305,7 +305,7 @@ class FeaturesPage(SeriesPage):
             self._feature.addItem(f"{name} ({count})", name)
             item = self._feature.model().item(self._feature.count() - 1)
             item.setEnabled(count > 0)
-            unit = self.info.unit(name)
+            unit = self.info.shown_unit(name)
             description = self.info.sensor_descriptions.get(name, "")
             item.setToolTip(
                 f"{name}{f' [{unit}]' if unit else ''}\n{description}\n"
@@ -738,7 +738,7 @@ class FeaturesPage(SeriesPage):
         if feature is None or self._catalogue is None:
             return ""
         version = f"3W {self.info.version} | " if self.info.version else ""
-        unit = self.info.unit(feature)
+        unit = self.info.shown_unit(feature)
         where = "" if self.well_filter is None else f" | {well_label(self.well_filter)}"
         return (
             f"{version}{feature}{f' [{unit}]' if unit else ''}{where} | recorded in "

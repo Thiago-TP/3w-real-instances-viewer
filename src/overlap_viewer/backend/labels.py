@@ -364,7 +364,7 @@ def padded_range(low: float, high: float, pad: float = 0.06) -> tuple[float, flo
 
 
 def format_delta(delta: float, unit: str) -> str:
-    """``Δ = 6.38e+05 Pa``, unit omitted when unknown."""
+    """``Δ = 0.638 MPa``, unit omitted when unknown."""
     return f"Δ = {delta:.3g} {unit}".rstrip()
 
 

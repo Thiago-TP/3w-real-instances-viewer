@@ -184,6 +184,23 @@ def plausible_range(unit: str) -> tuple[float, float]:
     return PLAUSIBLE_RANGES.get(unit, PLAUSIBLE_RANGE_DEFAULT)
 
 
+# -- Units on display -------------------------------------------------------------
+
+# The unit a reading is shown in, where it is not the one the dataset records it
+# in, and the factor that converts it. The files record pressures in pascals,
+# which put readings of 1.2e7 on an axis, and left to itself pyqtgraph prefixed
+# one axis kPa and the next MPa while the histograms, the hovers and the
+# Dispersion page printed plain pascals. Every pressure the viewer shows is in
+# MPa instead. Only what is shown is converted: the frames, the caches, the
+# plausible ranges and the Toolkit's thresholds stay in the dataset's own unit.
+DISPLAY_UNITS: dict[str, tuple[str, float]] = {"Pa": ("MPa", 1e-6)}
+
+
+def display_unit(unit: str) -> tuple[str, float]:
+    """The unit a reading recorded in ``unit`` is shown in, and the factor that converts it."""
+    return DISPLAY_UNITS.get(unit, (unit, 1.0))
+
+
 # -- The color ladder -----------------------------------------------------------
 
 # The hues themselves are a property of the light or dark mode in force and live

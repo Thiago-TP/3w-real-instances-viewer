@@ -354,7 +354,7 @@ class DispersionPage(QWidget):
                 box.addItem(f"{name} ({live[name]})", name)
                 item = box.model().item(box.count() - 1)
                 item.setEnabled(live[name] > 0)
-                unit = self.info.unit(name)
+                unit = self.info.shown_unit(name)
                 item.setToolTip(
                     f"{name}{f' [{unit}]' if unit else ''}\n"
                     f"{self.info.sensor_descriptions.get(name, '')}\n"
@@ -557,7 +557,8 @@ class DispersionPage(QWidget):
         if cloud is None or x is None or y is None or x not in cloud.sensors:
             self._pair = None
             return
-        pair = cloud.pair(x, y, self.periods, self.genuine_only)
+        scales = (self.info.shown_scale(x), self.info.shown_scale(y))
+        pair = cloud.pair(x, y, self.periods, self.genuine_only, scales)
         self._pair = pair
         self._dots = pair.dots(di.MAX_DOTS)
         self._dot_instances = cloud.instance[pair.rows[self._dots]]
@@ -609,7 +610,7 @@ class DispersionPage(QWidget):
                 plot.addItem(item)
                 self._groups.append(item)
         self._key.set_entries(key)
-        unit_x, unit_y = self.info.unit(x), self.info.unit(y)
+        unit_x, unit_y = self.info.shown_unit(x), self.info.shown_unit(y)
         plot.setLabel("bottom", f"{x}{f' [{unit_x}]' if unit_x else ''}")
         plot.setLabel("left", f"{y}{f' [{unit_y}]' if unit_y else ''}")
         # Framed afresh only when what is drawn changes: a new cloud, pair or
@@ -784,7 +785,7 @@ class DispersionPage(QWidget):
         ref = cloud.ref(row)
         when = cloud.timestamp(row)
         period = di.PERIOD_NAMES[di.PERIODS[int(cloud.period[row])]]
-        unit_x, unit_y = self.info.unit(self.x), self.info.unit(self.y)
+        unit_x, unit_y = self.info.shown_unit(self.x), self.info.shown_unit(self.y)
         i, j = cloud.sensors.index(self.x), cloud.sensors.index(self.y)
         measured = [
             f"{name} {'measured' if cloud.genuine[row, k] else 'filled in'}"

@@ -32,6 +32,8 @@ from overlap_viewer.backend.config import (
     REACH_TINTS,
     REAL_PREFIX,
     cache_dir,
+    display_unit,
+    plausible_range,
 )
 from overlap_viewer.backend.labels import (
     Segment,
@@ -128,6 +130,20 @@ class DatasetInfo:
     def unit(self, sensor: str) -> str:
         unit = self.sensor_units.get(sensor, "")
         return "" if unit == "-" else unit
+
+    def shown_unit(self, sensor: str) -> str:
+        """The unit the viewer shows a variable's readings in (MPa for a pressure)."""
+        return display_unit(self.unit(sensor))[0]
+
+    def shown_scale(self, sensor: str) -> float:
+        """The factor that takes a reading from the file's unit to ``shown_unit``."""
+        return display_unit(self.unit(sensor))[1]
+
+    def shown_range(self, sensor: str) -> tuple[float, float]:
+        """The plausible range of a variable, in ``shown_unit``."""
+        low, high = plausible_range(self.unit(sensor))
+        scale = self.shown_scale(sensor)
+        return low * scale, high * scale
 
     def is_enumerated(self, sensor: str) -> bool:
         """Whether a variable takes a few discrete values (a valve state) rather than measuring.

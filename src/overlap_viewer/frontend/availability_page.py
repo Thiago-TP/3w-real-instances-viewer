@@ -1355,7 +1355,7 @@ class AvailabilityPage(QWidget):
     def _describe_cell(self, row: int, column: int) -> str:
         table, info = self._table, self.info
         name = table.sensors[column]
-        unit = info.unit(name)
+        unit, scale = info.shown_unit(name), info.shown_scale(name)
         n_instances = int(table.n_instances[row])
         shares = table.shares[row, column]
         counts = table.instances[row, column]
@@ -1380,13 +1380,12 @@ class AvailabilityPage(QWidget):
         measured = self._measured_clause(row, column)
         if measured:
             parts.append(measured)
-        low, high = table.low[row, column], table.high[row, column]
+        low, high = table.low[row, column] * scale, table.high[row, column] * scale
         if not np.isnan(low):
             parts.append(f"readings {low:.4g} to {_quantity(high, unit)}")
         flagged = int(table.implausible[row, column])
         if flagged:
-            availability = self.availability
-            lo, hi = availability.ranges[availability.sensors.index(name)]
+            lo, hi = info.shown_range(name)
             who = "readings" if n_instances == 1 else f"{_plural(flagged, noun)} with readings"
             parts.append(f"⚠ {who} outside the plausible range {lo:g} to {hi:g} {unit}".rstrip())
         cleaned = self._cleaning_clause(row, column)
@@ -1438,9 +1437,9 @@ class AvailabilityPage(QWidget):
         return f"measurements {share:.1%} of its live samples{interval}, the rest filled in"
 
     def _describe_sensor(self, column: int) -> str:
-        table, info, availability = self._table, self.info, self.availability
+        table, info = self._table, self.info
         name = table.sensors[column]
-        unit = info.unit(name)
+        unit, scale = info.shown_unit(name), info.shown_scale(name)
         noun = "bar" if self.joined else "instance"
         parts = [f"{name}" + (f" [{unit}]" if unit else "")]
         described = info.sensor_descriptions.get(name, "")
@@ -1456,7 +1455,7 @@ class AvailabilityPage(QWidget):
             f"of the samples, live in {counts[LIVE]}, frozen in {counts[FROZEN]}, "
             f"absent from {counts[ABSENT]}"
         )
-        lo, hi = availability.ranges[availability.sensors.index(name)]
+        lo, hi = info.shown_range(name)
         parts.append(f"plausible range {lo:g} to {hi:g} {unit}".rstrip())
         if self.cleaning_on and name in self._cleaned.cleaning.sensors:
             cleaning = self._cleaned.cleaning
@@ -1467,11 +1466,11 @@ class AvailabilityPage(QWidget):
                     f"of the {noun}s"
                 )
             elif not cleaning.exempt[j]:
-                lo_m, hi_m = cleaning.mean_bounds[0][j], cleaning.mean_bounds[1][j]
-                lo_s, hi_s = cleaning.std_bounds[0][j], cleaning.std_bounds[1][j]
+                lo_m, hi_m = cleaning.mean_bounds[0][j] * scale, cleaning.mean_bounds[1][j] * scale
+                lo_s, hi_s = cleaning.std_bounds[0][j] * scale, cleaning.std_bounds[1][j] * scale
                 parts.append(
-                    f"CleanSignals keeps a mean between {lo_m:.4g} and {hi_m:.4g} and a spread "
-                    f"between {lo_s:.4g} and {hi_s:.4g}; discarded in "
+                    f"CleanSignals keeps a mean between {lo_m:.4g} and {_quantity(hi_m, unit)} "
+                    f"and a spread between {lo_s:.4g} and {_quantity(hi_s, unit)}; discarded in "
                     f"{int(cleaning.discarded[:, j].sum())} {noun}s"
                 )
         return " | ".join(parts)
@@ -1542,7 +1541,7 @@ class AvailabilityPage(QWidget):
             return " | ".join(
                 part
                 for part in (
-                    f"{name}" + (f" [{info.unit(name)}]" if info.unit(name) else ""),
+                    f"{name}" + (f" [{info.shown_unit(name)}]" if info.shown_unit(name) else ""),
                     described,
                     f"recorded in {own:.1%} of the samples on show",
                     (
@@ -1592,7 +1591,7 @@ class AvailabilityPage(QWidget):
     def _cell_tooltip(self, row: int, column: int) -> str:
         table, info, colors = self._table, self.info, theme.current()
         name = table.sensors[column]
-        unit = info.unit(name)
+        unit, scale = info.shown_unit(name), info.shown_scale(name)
         noun = "bar" if self.joined else "instance"
         n = int(table.n_instances[row])
         by_bars = self.by_instances
@@ -1627,7 +1626,7 @@ class AvailabilityPage(QWidget):
         cleaned = self._cleaning_clause(row, column)
         if cleaned:
             lines.append(f'<span style="color:{colors.text};">{cleaned}</span>')
-        low, high = table.low[row, column], table.high[row, column]
+        low, high = table.low[row, column] * scale, table.high[row, column] * scale
         if not np.isnan(low):
             lines.append(
                 f'<span style="color:{colors.muted};">readings {low:.4g} to '
@@ -1635,8 +1634,7 @@ class AvailabilityPage(QWidget):
             )
         flagged = int(table.implausible[row, column])
         if flagged:
-            availability = self.availability
-            lo, hi = availability.ranges[availability.sensors.index(name)]
+            lo, hi = info.shown_range(name)
             who = "readings" if n == 1 else _plural(flagged, noun)
             lines.append(
                 f'<span style="color:{colors.warning};">⚠ {who} outside {lo:g} to {hi:g} '
@@ -1647,7 +1645,7 @@ class AvailabilityPage(QWidget):
     def _sensor_tooltip(self, column: int) -> str:
         table, info, colors = self._table, self.info, theme.current()
         name = table.sensors[column]
-        unit = info.unit(name)
+        unit = info.shown_unit(name)
         total = len(table) - 1
         noun = "bar" if self.joined else "instance"
         counts = table.instances[total, column]
@@ -1688,7 +1686,7 @@ class AvailabilityPage(QWidget):
             j = column if row < 0 else row
             name = table.sensors[j]
             lines = [
-                f"<b>{name}</b>{_unit_html(info.unit(name), colors.muted)}",
+                f"<b>{name}</b>{_unit_html(info.shown_unit(name), colors.muted)}",
                 (
                     f'<span style="font-size:13pt; color:{colors.live};">'
                     f"<b>{table.shares[j, j]:.1%}</b></span> of the samples on show"

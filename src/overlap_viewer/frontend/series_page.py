@@ -77,7 +77,7 @@ from overlap_viewer.algorithms.spectral import (
     welch,
 )
 from overlap_viewer.backend import theme
-from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES, plausible_range
+from overlap_viewer.backend.config import MAX_SMALL_MULTIPLES
 from overlap_viewer.backend.dataset import (
     DatasetInfo,
     WellData,
@@ -904,8 +904,8 @@ class SeriesPage(QWidget):
         return self._controls.params().clamp
 
     def bounds_of(self, feature: str) -> tuple[float, float]:
-        """The range a reading of ``feature`` has to be in to be believed."""
-        return plausible_range(self.info.unit(feature))
+        """The range a reading of ``feature`` has to be in to be believed, in its shown unit."""
+        return self.info.shown_range(feature)
 
     def hist_bounds(self, feature: str, normalize: bool) -> tuple[float, float] | None:
         """What a histogram of ``feature`` leaves out: nothing, unless the clamp is on.
@@ -1028,9 +1028,10 @@ class SeriesPage(QWidget):
 
         The kinds (``interpolation.sample_kinds``: measured, interpolated,
         held, missing) are found on the raw readings, before any scaling, and
-        are ``None`` for an enumerated variable, which is not tested. ``None``
-        altogether when this instance says nothing about the feature, so that
-        a plot is never built for a blank.
+        are ``None`` for an enumerated variable, which is not tested. The
+        readings come in their shown unit (a pressure in MPa), which is also
+        the unit of ``bounds``. ``None`` altogether when this instance says
+        nothing about the feature, so that a plot is never built for a blank.
         """
         frame = series.frame
         if feature not in frame.columns:
@@ -1039,6 +1040,9 @@ class SeriesPage(QWidget):
         if not (~np.isnan(y)).any():
             return None
         kinds = None if self.info.is_enumerated(feature) else sample_kinds(y)
+        scale = self.info.shown_scale(feature)
+        if scale != 1.0:
+            y = y * scale
         if normalize:
             # Scaled over the plausible readings only, as the pipelines mask the
             # garbage before they normalize: one absurd level would otherwise
@@ -1106,7 +1110,7 @@ class SeriesPage(QWidget):
         if self.domain == "time":
             return ALIGNMENT_AXES[self.alignment]
         if self.domain == "distribution":
-            unit = "z-score" if normalize else self.info.unit(feature)
+            unit = "z-score" if normalize else self.info.shown_unit(feature)
             return f"{feature} [{unit}]" if unit else feature
         return "period"
 
@@ -1130,7 +1134,7 @@ class SeriesPage(QWidget):
             if label:
                 plot.setLabel("left", "% of samples")
         else:
-            unit = "" if normalize else self.info.unit(feature)
+            unit = "" if normalize else self.info.shown_unit(feature)
             power_axis(plot, "left", power_label(unit) if label else "")
         if not values:
             axis.setStyle(showValues=False)
@@ -1154,14 +1158,13 @@ class SeriesPage(QWidget):
         """Give a plot its left axis: the same width everywhere, so a grid of them lines up."""
         axis = plot.getAxis("left")
         axis.setWidth(width)
-        unit = self.info.unit(feature)
-        prefixed = unit == "Pa" and not normalize
-        axis.enableAutoSIPrefix(prefixed)
+        unit = self.info.shown_unit(feature)
+        # One unit per quantity on every axis: pyqtgraph's own prefix would
+        # label one pressure kPa and the next MPa.
+        axis.enableAutoSIPrefix(False)
         if label:
             if normalize:
                 plot.setLabel("left", f"{feature} (z-score)")
-            elif prefixed:
-                plot.setLabel("left", feature, units=unit)
             else:
                 plot.setLabel("left", f"{feature} [{unit}]" if unit else feature)
         if not values:
@@ -1757,7 +1760,7 @@ class SeriesPage(QWidget):
     def _section_html(self, section: Section, normalize: bool, drawn: int, total: int) -> str:
         """The heading above one section's grid: what it groups, and what its axes mean."""
         colors = theme.current()
-        unit = "z-score" if normalize else self.info.unit(section.feature)
+        unit = "z-score" if normalize else self.info.shown_unit(section.feature)
         head = f"{section.title}" + (f" [{unit}]" if unit else "")
         what = {
             "time": "value axis",
@@ -1951,8 +1954,8 @@ class SeriesPage(QWidget):
                 readings = []
                 for feature in self.read_out_features():
                     if feature in frame.columns:
-                        value = column_as_float(frame, feature)[i]
-                        unit = self.info.unit(feature)
+                        value = column_as_float(frame, feature)[i] * self.info.shown_scale(feature)
+                        unit = self.info.shown_unit(feature)
                         readings.append(
                             f"{feature} = {'-' if np.isnan(value) else f'{value:.4g} {unit}'.rstrip()}"
                         )

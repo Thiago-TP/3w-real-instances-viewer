@@ -758,6 +758,20 @@ def test_sensor_states_and_plausible_ranges():
     assert implausible_sensors(stats, info) == ["P-PDG"]
 
 
+def test_pressures_are_shown_in_mpa_and_ruled_in_pa():
+    """What is shown converts; the unit the rules and ranges are keyed on does not."""
+    info = ds.DatasetInfo(Path("."))
+    assert info.unit("P-PDG") == "Pa"  # the file's unit, which the ranges are keyed on
+    assert info.shown_unit("P-PDG") == "MPa" and info.shown_scale("P-PDG") == 1e-6
+    assert info.shown_range("P-PDG") == (0.0, 100.0)
+    assert info.shown_range("P-PDG") != plausible_range(info.unit("P-PDG"))
+    # Every other quantity is shown as recorded.
+    for sensor in ("T-TPT", "ABER-CKP", "QGL"):
+        assert info.shown_unit(sensor) == info.unit(sensor) and info.shown_scale(sensor) == 1.0
+        assert info.shown_range(sensor) == plausible_range(info.unit(sensor))
+    assert info.shown_unit("ESTADO-W1") == ""  # a valve state has no unit to convert
+
+
 def test_availability_folds_bars_into_groups(raw_dir: Path, tmp_path: Path, monkeypatch):
     """The table a page draws: shares of samples and of bars per state, counts, bounds, marks."""
     monkeypatch.setenv(CACHE_HOME, str(tmp_path / "cache"))

@@ -3,7 +3,8 @@
 Every plot is one well. Each real instance recorded on it is a bar from its
 first to its last timestamp, stacked on the instances it overlaps in time, so a
 well recorded twice shows at a glance. Hovering a bar highlights the instances
-it overlaps and hatches the stretch they share; clicking it asks the main
+it overlaps and hatches the stretch they share, and a tooltip gives its span;
+clicking it asks the main
 window for an ``InstanceWindow`` with their time series. The bars are colored
 by their fault folder, or, at the user's choice, by how much of one sensor
 each instance recorded, which turns the grid into the history of that sensor
@@ -15,7 +16,7 @@ from functools import partial
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFontMetrics
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QToolBar,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -49,6 +51,7 @@ from overlap_viewer.backend.dataset import (
     instance_title,
     lane_slots,
 )
+from overlap_viewer.backend.labels import format_duration
 from overlap_viewer.backend.palette import (
     bar_color,
     fault_color,
@@ -74,6 +77,7 @@ from overlap_viewer.frontend.items import (
 )
 from overlap_viewer.frontend.legend import LegendBar
 from overlap_viewer.frontend.passes import Passes
+from overlap_viewer.frontend.styling import TOOLTIP_FOREVER_MS
 
 HINT = (
     "Hover a bar to see the instance and the instances it overlaps | click a bar to open their "
@@ -205,6 +209,29 @@ def describe_instance(
         f"{instance_title(row)} | {what} | {start:%Y-%m-%d %H:%M:%S} → {end.strftime(end_fmt)} "
         f"({row['hours']:.1f} h, {int(row['n_samples']):,} samples) | stack level {int(row['lane']) + 1} | {overlap}"
         f"{warning}"
+    )
+
+
+def bar_tooltip(data: WellData, index: int) -> str:
+    """The tooltip of one bar: its name, where it starts and ends, and how long it lasts.
+
+    The status bar says this too, but at the other end of the window and in
+    the middle of a long line; the tooltip puts the span where the pointer is.
+    A joined bar spans from the first sample of its earliest instance to the
+    last sample of its latest.
+    """
+    row = data.rows.iloc[index]
+    start, end = pd.Timestamp(row["start"]), pd.Timestamp(row["end"])
+    seconds = (end - start).total_seconds()
+    members = len(data.members[index])
+    joined = f" ({members} instances joined)" if members > 1 else ""
+    return (
+        f"<nobr><b>{instance_title(row)}</b>{joined}</nobr>"
+        '<table cellspacing="0" cellpadding="1">'
+        f"<tr><td>start</td><td>&nbsp;{start:%Y-%m-%d %H:%M:%S}</td></tr>"
+        f"<tr><td>end</td><td>&nbsp;{end:%Y-%m-%d %H:%M:%S}</td></tr>"
+        f"<tr><td>duration</td><td>&nbsp;{format_duration(seconds)} ({seconds / 3600:.2f} h)"
+        "</td></tr></table>"
     )
 
 
@@ -526,6 +553,35 @@ class WellTimelinePlot(WheelToParent, pg.PlotWidget):
         super().leaveEvent(event)
         if self._hover != -1:
             self._set_hover(-1)
+
+    def viewportEvent(self, event) -> bool:
+        """Show the span of the bar under the pointer as a tooltip, up until the pointer leaves it."""
+        if event.type() != QEvent.Type.ToolTip:
+            return super().viewportEvent(event)
+        index = self._hit(self.mapToScene(event.pos()))
+        if index < 0:
+            QToolTip.hideText()
+            event.ignore()
+            return True
+        # Three short lines: not put through ``bounded_tooltip``, whose fixed
+        # width would leave most of the box empty.
+        QToolTip.showText(
+            event.globalPos(),
+            bar_tooltip(self.data, index),
+            self.viewport(),
+            self._bar_rect(index),
+            TOOLTIP_FOREVER_MS,
+        )
+        return True
+
+    def _bar_rect(self, index: int) -> QRect:
+        """Where one bar is on the viewport, as wide as ``_hit`` takes it to be."""
+        vb = self.getPlotItem().getViewBox()
+        lane = float(self.data.rows["lane"].iloc[index])
+        tolerance = 2.0 * vb.viewPixelSize()[0]
+        corner = vb.mapViewToScene(QPointF(self._x0[index] - tolerance, lane - BAR_HEIGHT / 2))
+        opposite = vb.mapViewToScene(QPointF(self._x1[index] + tolerance, lane + BAR_HEIGHT / 2))
+        return self.mapFromScene(QRectF(corner, opposite).normalized()).boundingRect()
 
     def _on_mouse_clicked(self, event) -> None:
         if event.button() != Qt.MouseButton.LeftButton or event.double():

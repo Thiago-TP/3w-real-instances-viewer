@@ -13,7 +13,9 @@ the instances overlap in time. Untick *Compress silences* for a true calendar ax
   the instance, its fault, how far the fault got, its time span, size, stack level and partners,
   and the sensors, if any, that read outside their plausible range in it. The colors those
   instances carry light up in the key above the grid, and the rest dim, so the color under the
-  pointer can be named without leaving the plot.
+  pointer can be named without leaving the plot. Resting the pointer on the bar brings up a tooltip
+  with its start and end stamps and its duration (a joined bar spans from its first instance's
+  start to its last's end).
 - **Click** a bar: an instance window opens with the time series of that instance and of every
   instance it overlaps.
 - **Click a color in the key**: the grid shows only the wells that recorded that fault. Clicking it

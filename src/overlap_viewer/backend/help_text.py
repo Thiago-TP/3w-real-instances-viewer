@@ -1383,7 +1383,9 @@ USAGE = {
         (
             "Hover a bar to outline it, outline the instances it overlaps, hatch the stretch they "
             "share and dim the rest. The status bar names them and the color key lights up the "
-            "matching entries."
+            "matching entries. Rest the pointer on the bar for a tooltip with its start, its end "
+            "and its duration; a joined bar spans from its first instance's start to its last's "
+            "end."
         ),
         "Click a bar to open the time series of that instance and of every instance it overlaps.",
         (
